@@ -19,6 +19,12 @@ cd ai-workbench
 
 ![AI数字员工协作工作台当前预览](deliverables/preview-desktop.png)
 
+## 直接用网址体验
+
+[GitHub Pages 一次性开启步骤](docs/网址预览部署.md)：在仓库 Settings → Pages 选择 `Deploy from a branch`，分支 `gh-pages`，目录 `/ (root)`。站点发布成功后，GitHub 会在该页显示访问链接。
+
+这是浏览器交互演示；真实后端、外部 Agent 和多人数据不会由 Pages 托管。后续可运行 `npm run deploy:preview` 更新专用发布分支。
+
 ## 先看交互，无需安装
 
 直接用 Chrome、Edge 或 Safari 打开 `deliverables/ai-platform-preview.html`；启动包根目录同一文件名为 `先打开预览.html`。界面、目标状态机和两个代码 Agent 与当前版本一致，可新建目标、群聊、配置测试、补录资料和查看运行记录。所有样式和脚本均已内嵌，不需要网络、Node.js 或启动服务器。
