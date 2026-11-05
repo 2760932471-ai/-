@@ -1,0 +1,60 @@
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+const root=new URL('../',import.meta.url);
+const read=file=>readFile(new URL(file,root),'utf8');
+function moduleBundle(name,source,prelude=''){
+ const names=[...source.matchAll(/^export (?:async )?(?:function|const) (\w+)/gm)].map(m=>m[1]);
+ return `const ${name}=(()=>{\n${prelude}\n${source.replace(/^import .*;\n/gm,'').replace(/^export /gm,'')}\nreturn {${names.join(',')}};\n})();`;
+}
+const builtins=moduleBundle('previewBuiltins',await read('src/agents/builtins.js'));
+const goals=moduleBundle('previewGoals',await read('src/goals.js'),'const goalUUID=previewUUID;');
+const registrySource=await read('src/agents/registry.js');
+// Keep production configuration/output validators; omit server DNS, credentials and HTTP transport.
+const registry=moduleBundle('previewRegistry',registrySource.slice(registrySource.indexOf('export function validateConfig'),registrySource.indexOf('function publicAddress'))+registrySource.slice(registrySource.indexOf('export function validateOutput'),registrySource.indexOf('export async function invokeAgent'))+`
+export function defaultConfigs(){return structuredClone(seeds);}
+export async function invokeAgent(config,input){if(!config.enabled)throw new Error('Agent已停用');if(config.adapter!=='builtin')throw new Error('外部Agent需要运行完整后端；免安装预览不会发送网络请求');return validateOutput(await builtins[config.id](input,config));}
+`,"const {builtins,seeds}=previewBuiltins;const process={env:{}};const isIP=s=>s.includes(':')?6:/^\\d+(?:\\.\\d+){3}$/.test(s)?4:0;");
+const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;`);
+const bootstrap=`
+const localPlatform=await previewPlatform.createPlatform('/preview');
+if(!localPlatform.goals().length){
+ const g=await localPlatform.create({requestId:'preview-seed-listing',text:'【演示样例】为黄铜角阀准备上新，发布前由我审批',kind:'listing',members:['product','insight'],permission:'approval'});
+ await localPlatform.action(g.id,{kind:'facts',expectedVersion:g.version,facts:previewBuiltins.testSample('product').facts,confirmed:true});
+ const saved=localPlatform.goals()[0];await localPlatform.action(g.id,{kind:'plan',expectedVersion:saved.version});
+ await localPlatform.pump();await localPlatform.pump();
+}
+const previewAPI=async(route,options={})=>{
+ const method=options.method||'GET',input=options.body?JSON.parse(options.body):{};const [resource,id,action]=route.split('/');
+ if(resource==='agents'){
+  if(!id&&method==='GET')return localPlatform.agents();
+  if(id&&method==='PUT'){if(input.adapter==='http')throw new Error('免安装预览只运行内置代码Agent。请启动完整版后配置外部HTTP接口。');return localPlatform.saveAgent(id,input);}
+  if(action==='sample')return localPlatform.sample(id);
+  if(action==='test'&&method==='POST')return localPlatform.testAgent(id,input.input);
+ }
+ if(resource==='goals'){
+  if(!id)return method==='POST'?localPlatform.create(input):localPlatform.goals();
+  if(action==='actions'&&method==='POST')return localPlatform.action(id,input);
+ }
+ if(resource==='runs'&&method==='GET')return id?localPlatform.run(id):localPlatform.runs();
+ if(resource==='goal-preview'&&method==='POST')return previewBuiltins.previewGoal(input.text);
+ throw new Error('预览中未提供此操作');
+};
+setInterval(()=>localPlatform.pump().catch(error=>{previewBar.textContent='本地运行未完成：'+error.message;}),300);
+`;
+let app=await read('public/app.js');
+if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
+app=app.replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
+const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['访问令牌可由服务端 PLATFORM_TOKEN 启用，当前仍是单工作空间。','预览没有联网鉴权或多人同步；完整版可配置访问令牌。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['服务端','当前浏览器'],['后端','本地'],['代码 / HTTP 能力','本地代码能力']];
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,platform,bootstrap,app].join('\n');
+for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
+let html=await read('public/index.html');
+html=html.replace('<link rel="stylesheet" href="/style.css">',`<style>${await read('public/style.css')}\n.preview-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 28px;background:var(--tint);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink)}.preview-bar p{color:var(--ink)}.preview-bar button{white-space:nowrap;min-height:44px}.preview-bar~main{min-height:calc(100dvh - 164px)}@media(max-width:760px){.preview-bar{padding:8px 12px;font-size:11px}.preview-bar p{line-height:1.7}}\n</style>`)
+ .replace('<script type="module" src="/app.js"></script>','')
+ .replace('</header><main','</header><div class="preview-bar"><p id="preview-status" role="status">正在打开本地预览…</p><button class="text-button" id="preview-reset">重置样例</button></div><main')
+ .replace('服务端工作空间','免安装预览')
+ .replace('Agent 在后端执行 · 店铺发布为模拟连接器 · 未接入大模型','免安装预览 · Agent 在当前浏览器执行 · 无真实店铺连接 · 未接入大模型')
+ .replace('<option value="http">外部 HTTP Agent</option>','<option value="http" disabled>外部 HTTP Agent（完整版可用）</option>')
+ .replace('这里只保存变量名。密钥值由服务器环境提供；域名需加入服务端 AGENT_ALLOWED_HOSTS。','外部 Agent 配置与密钥仅在完整后端中使用，预览不发送网络请求。');
+html=html.replace('</body>',`<noscript><p>请用支持 JavaScript 的浏览器打开此文件。</p></noscript><script>\n(async()=>{\n${code.replace(/<\/script/gi,'<\\/script')}\n})().catch(error=>{document.querySelector('#preview-status').textContent='预览未能加载：'+error.message+'。可点击“重置样例”清理此预览的本地数据后重试。';});\n</script></body>`);
+await mkdir(new URL('deliverables/',root),{recursive:true});
+for(const file of ['ai-platform-preview.html','AI数字员工协作工作台.html','慕雅居-交互演示.html'])await writeFile(new URL('deliverables/'+file,root),html);
+console.log(`Built current offline preview: ${Buffer.byteLength(html)} bytes; no network or backend required. Historical V1 stays archived.`);

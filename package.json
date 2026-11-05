@@ -1,0 +1,17 @@
+{
+  "name": "muyaju-digital-employee",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/engine.js && node --check src/chat.js && node --check public/app.js && node --check src/goals.js && node --check scripts/build-demo.mjs && node --check src/platform.js && node --check src/agents/builtins.js && node --check src/agents/registry.js",
+    "demo": "node scripts/build-demo.mjs",
+    "pack": "npm run demo && python3 scripts/pack-platform.py"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

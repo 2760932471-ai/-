@@ -1,0 +1,86 @@
+import { previewGoal } from './agents/builtins.js';
+import { createPlatform } from './platform.js';
+import { createGoal, goalAction, tickGoal } from './goals.js';
+import http from 'node:http';
+import { createRoom, sendMessage, tickRoom } from './chat.js';
+import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { agents, createTask, tick, decide, planGoal } from './engine.js';
+
+const root = fileURLToPath(new URL('../', import.meta.url));
+const dataDir = process.env.DATA_DIR || path.join(root, '.data');
+await mkdir(dataDir, { recursive: true });
+const storeFile = path.join(dataDir, 'tasks.json');
+let tasks = [];
+try { tasks = JSON.parse(await readFile(storeFile, 'utf8')); if (!Array.isArray(tasks)) throw new Error('任务存储格式错误'); }
+catch (error) { if (error.code !== 'ENOENT') throw error; }
+let saving = Promise.resolve();
+function save() {
+  const snapshot = JSON.stringify(tasks, null, 2);
+  saving = saving.then(async () => { await writeFile(storeFile + '.tmp', snapshot); await rename(storeFile + '.tmp', storeFile); });
+  return saving;
+}
+const roomsFile=path.join(dataDir,'rooms.json');
+let rooms=[];
+try { rooms=JSON.parse(await readFile(roomsFile,'utf8')); if(!Array.isArray(rooms))throw new Error('群存储格式错误'); } catch(error){if(error.code!=='ENOENT')throw error;}
+let roomSaving=Promise.resolve();
+function saveRooms(){const snapshot=JSON.stringify(rooms,null,2);roomSaving=roomSaving.then(async()=>{await writeFile(roomsFile+'.tmp',snapshot);await rename(roomsFile+'.tmp',roomsFile);});return roomSaving;}
+const platform=await createPlatform(dataDir);
+function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
+async function body(req) {
+  let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > 64000) throw new Error('请求内容过长'); }
+  try { return JSON.parse(raw); } catch { throw new Error('请求 JSON 无效'); }
+}
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    if(url.pathname.startsWith('/api/')&&url.pathname!=='/api/health'){
+      if(process.env.PLATFORM_TOKEN&&req.headers.authorization!==`Bearer ${process.env.PLATFORM_TOKEN}`)return json(res,401,{error:'请填写工作空间访问令牌'});
+      if(req.method!=='GET'&&req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)return json(res,403,{error:'不允许跨站修改工作空间'});
+    }
+    if(url.pathname==='/api/goal-preview'&&req.method==='POST')return json(res,200,previewGoal((await body(req)).text));
+    if(url.pathname==='/api/goals'&&req.method==='GET')return json(res,200,platform.goals());
+    if(url.pathname==='/api/goals'&&req.method==='POST')return json(res,201,await platform.create(await body(req)));
+    const goalMatch=url.pathname.match(/^\/api\/goals\/([^/]+)\/actions$/);
+    if(goalMatch&&req.method==='POST')return json(res,200,await platform.action(goalMatch[1],await body(req)));
+    if(url.pathname==='/api/agents'&&req.method==='GET')return json(res,200,platform.agents());
+    const agentMatch=url.pathname.match(/^\/api\/agents\/([^/]+)(?:\/(test|sample))?$/);
+    if(agentMatch&&req.method==='PUT'&&!agentMatch[2])return json(res,200,await platform.saveAgent(agentMatch[1],await body(req)));
+    if(agentMatch&&req.method==='POST'&&agentMatch[2]==='test')return json(res,202,await platform.testAgent(agentMatch[1],(await body(req)).input));
+    if(agentMatch&&req.method==='GET'&&agentMatch[2]==='sample')return json(res,200,platform.sample(agentMatch[1]));
+    if(url.pathname==='/api/runs'&&req.method==='GET')return json(res,200,platform.runs());
+    if(url.pathname.startsWith('/api/runs/')&&req.method==='GET')return json(res,200,platform.run(url.pathname.slice('/api/runs/'.length)));
+    if(url.pathname==='/api/rooms'&&req.method==='GET')return json(res,200,rooms);
+    if(url.pathname==='/api/rooms'&&req.method==='POST'){const input=await body(req);const room=createRoom(input.goal,input.agents);rooms.unshift(room);await saveRooms();return json(res,201,room);}
+    const roomMatch=url.pathname.match(/^\/api\/rooms\/([^/]+)\/(messages|pause)$/);
+    if(roomMatch&&req.method==='POST'){const room=rooms.find(r=>r.id===roomMatch[1]);if(!room)return json(res,404,{error:'协作群不存在'});const input=await body(req);if(roomMatch[2]==='messages')sendMessage(room,input.text,input.target);else{if(typeof input.paused!=='boolean')throw new Error('无效暂停状态');room.paused=input.paused;}await saveRooms();return json(res,200,room);}
+    if (url.pathname === '/api/health') return json(res, 200, { ok: true, mode: 'platform', storeAdapter: 'simulation', authenticationRequired: !!process.env.PLATFORM_TOKEN });
+    if (url.pathname === '/api/plan' && req.method === 'POST') return json(res, 200, planGoal((await body(req)).goal));
+    if (url.pathname === '/api/tasks' && req.method === 'GET') return json(res, 200, tasks);
+    if (url.pathname === '/api/tasks' && req.method === 'POST') {
+      const input = await body(req); const task = createTask(input.goal, input.agents); tasks.unshift(task); await save(); return json(res, 201, task);
+    }
+    const match = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(decision|cancel)$/);
+    if (match && req.method === 'POST') {
+      const task = tasks.find(t => t.id === match[1]); if (!task) return json(res, 404, { error: '任务不存在' });
+      if (match[2] === 'decision') decide(task, (await body(req)).decision);
+      else { if (task.status !== 'running') throw new Error('只能暂停正在执行的任务'); task.status = 'cancelled'; task.events.push({ type: 'cancel', title: '任务已停止', detail: '已保留当前执行记录与交付物。', at: new Date().toISOString() }); }
+      await save(); return json(res, 200, task);
+    }
+    if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
+    res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
+  } catch (error) { json(res, error.status || 400, { error: error.message }); }
+});
+let ticking = false;
+const timer = setInterval(async () => {
+  if (ticking) return; ticking = true;
+  try { await platform.pump(); const activeRooms=rooms.filter(r=>!r.paused&&r.queue.length);for(const room of activeRooms)await tickRoom(room);if(activeRooms.length)await saveRooms(); const active = tasks.filter(t => t.status === 'running'); for (const task of active) await tick(task); if (active.length) await save(); }
+  catch (error) { console.error('任务保存失败:', error.message); }
+  finally { ticking = false; }
+}, 600);
+server.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('慕雅居数字员工 · port ' + (process.env.PORT || 3000) + ' · PLATFORM / simulated store'));
+function shutdown() { clearInterval(timer); server.close(() => process.exit(0)); }
+process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
