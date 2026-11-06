@@ -13,8 +13,8 @@ const make=async options=>createPlatform(await mkdtemp(path.join(os.tmpdir(),'wo
 const startInput={requestId:'workforce-test-001',text:'为角阀准备资料、内容与经营测算',kind:'listing',permission:'draft',employeeIds:defaultEmployees().map(e=>e.id)};
 const tool=(name,args='{}')=>({message:{role:'assistant',content:null,tool_calls:[{id:'call-1',type:'function',function:{name,arguments:args}}]}});
 const answer={message:{role:'assistant',content:'根据实际校验结果形成草案，尚未发布。'}};
-test('V2.4 catalog separates 12 roles, 134 planned entries and 10 executable skills',()=>{
- assert.equal(roles.length,12);assert.equal(capabilities.length,134);assert.equal(new Set(capabilities.map(c=>c.id)).size,134);assert.equal(skillDefinitions.length,10);
+test('V2.4 catalog separates 12 roles, 134 planned entries and 14 executable skills',()=>{
+ assert.equal(roles.length,12);assert.equal(capabilities.length,134);assert.equal(new Set(capabilities.map(c=>c.id)).size,134);assert.equal(skillDefinitions.length,14);
  assert.equal(capabilities.filter(c=>c.state==='implemented').length,1);assert(capabilities.filter(c=>c.state==='planned').length>100);
  for(const c of capabilities)for(const id of c.skillIds)assert(skillDefinitions.some(s=>s.id===id));
 });

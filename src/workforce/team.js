@@ -1,3 +1,5 @@
+import {validateExternal,publicExternal,externalDefinitions,externalBlockers} from './external.js';
+import {recipes,matchingRecipes} from './commerce.js';
 import {randomUUID} from 'node:crypto';
 import {createGoal} from '../goals.js';
 import {validateEmployee,employeeReadiness,workforceView} from './employees.js';
@@ -9,10 +11,10 @@ const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status
 export function createTeamManager({getData,transaction,enqueue,inputs,event,sources,knowledge}){
  const models=d=>d.models.map(publicModel);
  const employee=(d,id)=>d.employees.find(e=>e.id===id)||fail('员工不存在',404);
- function requireReady(d,id){const e=employee(d,id),r=employeeReadiness(e,models(d));if(!r.ready)fail(e.name+'：'+r.blockers.join('；'));return e;}
+ function requireReady(d,id){const e=employee(d,id),r=employeeReadiness(e,models(d),d.externalSkills.map(publicExternal));if(!r.ready)fail(e.name+'：'+r.blockers.join('；'));return e;}
  function enqueueEmployee(d,id,input,meta){
   const e=requireReady(d,id),model=e.mode==='model'?d.models.find(m=>m.id===e.modelId):null;
-  return enqueue(d,id,input,{...meta}, {id:e.id,name:e.name,revision:e.revision,employee:structuredClone(e),model:model?structuredClone(model):null,enabled:true,adapter:e.mode});
+  return enqueue(d,id,input,{...meta}, {id:e.id,name:e.name,revision:e.revision,employee:structuredClone(e),model:model?structuredClone(model):null,externalSkills:d.externalSkills.filter(s=>e.skillIds.includes(s.id)),enabled:true,adapter:e.mode});
  }
  function update(g){
   const completed=g.runtime?.completed||[];
@@ -22,7 +24,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(g.paused||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime.status))return;
   const completed=g.runtime.completed||[],id=g.members.find(id=>!completed.includes(id));
   if(!id){g.stage='review';g.runtime={status:'completed',completed};event(g,'所选员工已完成本轮交付，请人工验收；未执行真实业务写入。','review');update(g);return;}
-  try{const run=enqueueEmployee(d,id,inputs(g),{goalId:g.id,goalVersion:g.version,purpose:'draft'});g.runtime={status:'queued',completed,runId:run.id};event(g,`已交给${run.agentName}：${run.config.employee.mode==='model'?'模型选择已装配Skill':'按装配顺序执行规则Skill'}。`);}
+  try{const run=enqueueEmployee(d,id,inputs(g),{goalId:g.id,goalVersion:g.version,purpose:'draft'});g.runtime={status:'queued',completed,runId:run.id};event(g,`已交给${run.agentName}：${run.config.employee.mode==='model'?'模型选择已装配Skill':'按装配顺序执行代码 / 外部能力'}。`);}
   catch(e){g.runtime={status:'failed',completed,error:e.message};}
   update(g);
  }
@@ -52,9 +54,10 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
    if(g.paused)fail('请先恢复目标');
    if(k==='inputs'){
     if(!['plan','draft'].includes(g.stage))fail('当前阶段不能修改Skill业务资料');const context=input.data;
-    if(!context||typeof context!=='object'||Array.isArray(context)||Object.keys(context).some(k=>!['candidates','unitCosts','inventory'].includes(k)))fail('只接受候选商品、单件成本与库存资料');
+    if(!context||typeof context!=='object'||Array.isArray(context)||Object.keys(context).some(k=>!['candidates','unitCosts','inventory','commerce','campaign','replenishment','serviceQuestion'].includes(k)))fail('只接受已定义的业务资料字段');
     if(context.candidates&&(!Array.isArray(context.candidates)||context.candidates.length>50||context.candidates.some(c=>!c||typeof c!=='object'||Array.isArray(c))))fail('候选商品最多50项且每项需为对象');
     for(const key of ['unitCosts','inventory'])if(context[key]&&(typeof context[key]!=='object'||Array.isArray(context[key])))fail('成本或库存资料格式错误');
+    for(const key of ['commerce','campaign','replenishment'])if(context[key]&&(typeof context[key]!=='object'||Array.isArray(context[key])))fail('业务输入必须为对象');if(context.serviceQuestion!==undefined&&(typeof context.serviceQuestion!=='string'||context.serviceQuestion.length>2000))fail('客户问题最多2000字');
     g.skillData=structuredClone(context);revise(g);
    }else if(k==='knowledge'){
     if(!['plan','draft'].includes(g.stage))fail('当前阶段不能修改知识检索范围');g.knowledge=knowledge.validateScope(input.knowledge,d);revise(g);
@@ -96,12 +99,16 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
  function pumpMessages(d,g){
   if(g.repliesPaused||!g.queue.length)return;const job=g.queue.shift(),source=g.messages.find(m=>m.id===job.source);
   if(job.intent!=='discuss'){event(g,'已记录背景或变更请求。业务事实请在资料页更新，确认后生成新版本。');return;}
-  const id=job.target==='coordinator'?(g.members.find(id=>employee(d,id).roleId==='coordination')||g.members[0]):job.target;
+  const desired=matchingRecipes(source.text).flatMap(r=>r.skillIds);const id=job.target==='coordinator'?(g.members.find(id=>employee(d,id).skillIds.some(s=>desired.includes(s)))||g.members.find(id=>employee(d,id).roleId==='coordination')||g.members[0]):job.target;
   try{enqueueEmployee(d,id,{...inputs(g),question:source.text},{goalId:g.id,goalVersion:g.version,purpose:'chat',messageId:source.id});}catch(e){event(g,e.message);}
  }
  return {create,action,schedule,apply,pumpMessages,
-  view:()=>workforceView(getData(),models(getData())),
-  saveEmployee:(id,input)=>transaction(d=>{const previous=id?employee(d,id):null,next=validateEmployee(input,previous);if(next.modelId&&!d.models.some(m=>m.id===next.modelId))fail('所选模型不存在');next.id=previous?.id||randomUUID();if(previous)d.employees[d.employees.indexOf(previous)]=next;else d.employees.push(next);return next;}),
+  view:()=>({...workforceView(getData(),models(getData()),getData().externalSkills.map(publicExternal)),recipes:recipes.map(r=>({...r,employeeId:getData().employees.find(e=>e.recipeId===r.id)?.id||null}))}),
+  recommend:text=>{const d=getData(),matches=matchingRecipes(String(text||''));return {method:'关键词与已装配能力匹配',recipes:matches,employeeIds:[...new Set(matches.flatMap(r=>d.employees.filter(e=>e.skillIds.some(id=>r.skillIds.includes(id))&&employeeReadiness(e,models(d),d.externalSkills.map(publicExternal)).ready).slice(0,1).map(e=>e.id)))],missing:matches.filter(r=>!d.employees.some(e=>e.skillIds.some(id=>r.skillIds.includes(id))&&employeeReadiness(e,models(d),d.externalSkills.map(publicExternal)).ready)).map(r=>r.name)};},
+  install:recipeId=>transaction(d=>{const r=recipes.find(r=>r.id===recipeId)||fail('业务工作包不存在');const old=d.employees.find(e=>e.recipeId===r.id);if(old)return old;const e={id:randomUUID(),recipeId:r.id,name:r.employeeName,roleId:r.roleId,skillIds:r.skillIds,enabled:true,mode:'skills',modelId:null,instructions:r.output+'；先核验输入，保留证据，不执行业务写入',maxSteps:5,revision:1};d.employees.push(e);return e;}),
+  saveExternal:(id,input)=>transaction(d=>{const previous=id?d.externalSkills.find(s=>s.id===id):null;if(id&&!previous)fail('外部能力不存在',404);const next=validateExternal(input,previous);next.id=previous?.id||'external_'+randomUUID().replaceAll('-','');if(previous)d.externalSkills[d.externalSkills.indexOf(previous)]=next;else d.externalSkills.push(next);return publicExternal(next);}),
+  testExternal:(id,input)=>transaction(d=>{const s=d.externalSkills.find(s=>s.id===id)||fail('外部能力不存在',404);const r=enqueue(d,id,input||{goal:'验证只读结构化输出，不执行任何业务写入'},{purpose:'external_test'},{id,name:s.name,revision:s.revision,externalTest:true,external:s,enabled:s.enabled,adapter:'external'});return {id:r.id,status:r.status};}),
+  saveEmployee:(id,input)=>transaction(d=>{const previous=id?employee(d,id):null,next=validateEmployee(input,previous,d.externalSkills.map(publicExternal));if(next.modelId&&!d.models.some(m=>m.id===next.modelId))fail('所选模型不存在');next.id=previous?.id||randomUUID();if(previous)d.employees[d.employees.indexOf(previous)]=next;else d.employees.push(next);return next;}),
   saveModel:(id,input)=>transaction(d=>{const previous=id?d.models.find(m=>m.id===id):null;if(id&&!previous)fail('模型不存在',404);const next=validateModel(input,previous);next.id=previous?.id||randomUUID();if(previous)d.models[d.models.indexOf(previous)]=next;else d.models.push(next);return publicModel(next);}),
   testModel:id=>transaction(d=>{const model=d.models.find(m=>m.id===id)||fail('模型不存在',404);return enqueue(d,id,{goal:'连接测试'},{purpose:'model_test'},{id,name:model.name,revision:model.revision,model,modelTest:true,enabled:true,adapter:'model'});}).then(r=>({id:r.id,status:r.status})),
   testEmployee:id=>transaction(d=>{const e=employee(d,id);const sample=skillSample(e.skillIds[0]);const r=enqueueEmployee(d,id,sample,{purpose:'employee_test'});return {id:r.id,status:r.status};}),

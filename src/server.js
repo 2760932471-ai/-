@@ -31,7 +31,7 @@ function saveRooms(){const snapshot=JSON.stringify(rooms,null,2);roomSaving=room
 const platform=await createPlatform(dataDir);
 function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
 async function body(req) {
-  const limit=req.url.startsWith('/api/knowledge/')?512000:64000;
+  const limit=/^\/api\/(knowledge|goals|skills|external-skills)(\/|$)/.test(req.url)?512000:64000;
   let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > limit) throw new Error('请求内容过长'); }
   try { return JSON.parse(raw); } catch { throw new Error('请求 JSON 无效'); }
 }
@@ -58,12 +58,19 @@ const server = http.createServer(async (req, res) => {
       if(type==='materials'&&op==='review'&&req.method==='POST')return json(res,200,await platform.sources.review(id,await body(req)));
       if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id))return json(res,200,await platform.sources[type==='sources'?'saveSource':'saveMaterial'](id,await body(req)));
     }
+    if(url.pathname==='/api/workforce/install'&&req.method==='POST')return json(res,200,await platform.workforce.install((await body(req)).recipeId));
+    if(url.pathname==='/api/workforce/recommend'&&req.method==='POST')return json(res,200,platform.workforce.recommend((await body(req)).text));
+    const extMatch=url.pathname.match(/^\/api\/external-skills(?:\/([^/]+))?(?:\/(test))?$/);
+    if(extMatch){const [,id,op]=extMatch;
+      if(op==='test'&&req.method==='POST')return json(res,202,await platform.workforce.testExternal(id,(await body(req)).input));
+      if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id))return json(res,200,await platform.workforce.saveExternal(id,await body(req)));
+    }
     if(url.pathname==='/api/workforce'&&req.method==='GET')return json(res,200,platform.workforce.view());
     const workforceMatch=url.pathname.match(/^\/api\/(employees|models|skills)(?:\/([^/]+))?(?:\/(test))?$/);
     if(workforceMatch){const [,type,id,op]=workforceMatch;
       if(type==='employees'&&op==='test'&&req.method==='POST')return json(res,202,await platform.workforce.testEmployee(id));
       if(type==='models'&&op==='test'&&req.method==='POST')return json(res,202,await platform.workforce.testModel(id));
-      if(type==='skills'&&op==='test'&&req.method==='POST')return json(res,202,await platform.workforce.testSkill(id,(await body(req)).input));
+      if(type==='skills'&&op==='test'&&req.method==='POST')return json(res,202,await platform.workforce[id.startsWith('external_')?'testExternal':'testSkill'](id,(await body(req)).input));
       if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id)&&['employees','models'].includes(type))return json(res,200,await platform.workforce[type==='employees'?'saveEmployee':'saveModel'](id,await body(req)));
     }
     if(url.pathname==='/api/goal-preview'&&req.method==='POST')return json(res,200,previewGoal((await body(req)).text));
@@ -96,7 +103,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }

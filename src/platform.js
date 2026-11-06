@@ -1,3 +1,6 @@
+import {invokeExternal} from './workforce/external-transport.js';
+import {externalDefinitions,externalBlockers,publicExternal} from './workforce/external.js';
+import {skillDefinitions} from './workforce/skills.js';
 import {initialKnowledge,createKnowledgeManager} from './knowledge.js';
 import {initialSources,createSourceManager} from './sources.js';
 import {defaultEmployees} from './workforce/employees.js';
@@ -14,10 +17,10 @@ import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
 const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
-export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig}={}){
+export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
- data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];data.knowledge??=initialKnowledge();
+ data.externalSkills??=[];data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];data.knowledge??=initialKnowledge();
  for(const doc of data.knowledge.documents)if(doc.index.status==='indexing')doc.index={status:'failed',error:'服务重启中断索引，请重试'};
  for(const s of data.sources)if(s.syncing){s.syncing=false;s.lastSync={status:"failed",at:now(),error:"服务重启中断同步，请重试"};}
  let chain=Promise.resolve(),pumping=false;
@@ -45,6 +48,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   catch(e){g.runtime={status:'failed',completed,error:e.message};}
  }
  function applyRun(d,r){
+  if(r.purpose==='external_test'){const s=d.externalSkills.find(s=>s.id===r.agentId);if(s&&s.revision===r.configVersion)s.lastTest={revision:s.revision,status:r.error?'failed':'succeeded',businessStatus:r.result?.status,at:now(),error:r.error};}
   if(r.purpose==='model_test'){const model=d.models.find(m=>m.id===r.agentId);if(model&&model.revision===r.configVersion)model.lastTest={revision:model.revision,status:r.status,at:now(),error:r.error};}
   if(!r.goalId)return;
   const g=d.goals.find(g=>g.id===r.goalId);if(!g)return;
@@ -137,12 +141,13 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
    if(run){let result,error;try{if(run.goalId)sources.resolve(findGoal(data,run.goalId));if(run.config.employee){
      const e=data.employees.find(e=>e.id===run.agentId);if(!e?.enabled)throw new Error('员工已停用');
      if(run.input.knowledge?.baseIds?.length){
-      const recall=await knowledge.search({...run.input.knowledge,query:run.input.question||run.input.goal,sku:run.input.scope?.sku||''});
+      const recall=await knowledge.search({...run.input.knowledge,query:run.input.question||run.input.serviceQuestion||run.input.goal,sku:run.input.scope?.sku||''});
       run.input.knowledgeRecall=recall;await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.input.knowledgeRecall=recall;(r.trace??=[]).push({phase:'retrieval',status:'succeeded',algorithm:recall.algorithm,hits:recall.hits.length,at:now()});});
      }
 
-     result=await runEmployee(run.config.employee,run.config.model,run.input,{modelCall,onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{const g=data.goals.find(g=>g.id===run.goalId);if(g)sources.resolve(g);knowledge.assertRecall(run.input.knowledgeRecall);return data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
-    }else if(run.config.modelTest){const answer=await modelCall(run.config.model,[{role:'user',content:'请回复：模型连接正常。'}],[]);result={status:'succeeded',summary:'模型连接测试通过',missing:[],artifacts:[{title:'连接测试',body:answer.message.content||'收到有效响应',evidence:'所配置模型接口实际响应'}],metrics:{}};}
+     result=await runEmployee(run.config.employee,run.config.model,run.input,{modelCall,definitions:[...skillDefinitions,...externalDefinitions((run.config.externalSkills||[]).map(publicExternal))],skillCall:async(id,input)=>{if(!id.startsWith('external_'))return executeSkill(id,input);const s=(run.config.externalSkills||[]).find(s=>s.id===id),current=data.externalSkills.find(s=>s.id===id);if(!s||current?.revision!==s.revision||externalBlockers(current&&publicExternal(current)).length)throw new Error('外部能力配置已变化或尚未就绪，请检查后重试');const result=await externalCall(s,input);const latest=data.externalSkills.find(x=>x.id===id);if(latest?.revision!==s.revision||!latest.enabled)throw new Error('外部能力在调用期间变更或停用，结果未应用');return result;},onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{const g=data.goals.find(g=>g.id===run.goalId);if(g)sources.resolve(g);knowledge.assertRecall(run.input.knowledgeRecall);return data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
+    }else if(run.config.externalTest){const current=data.externalSkills.find(s=>s.id===run.agentId);if(!current?.enabled||current.revision!==run.configVersion)throw new Error('外部配置已变化，请重新测试');result=await externalCall(run.config.external,run.input);}
+    else if(run.config.modelTest){const answer=await modelCall(run.config.model,[{role:'user',content:'请回复：模型连接正常。'}],[]);result={status:'succeeded',summary:'模型连接测试通过',missing:[],artifacts:[{title:'连接测试',body:answer.message.content||'收到有效响应',evidence:'所配置模型接口实际响应'}],metrics:{}};}
     else if(run.config.skillId)result=await executeSkill(run.config.skillId,run.input);
     else{const currentConfig=data.agents.find(a=>a.id===run.agentId);if(!currentConfig?.enabled)throw new Error('Agent在运行前已停用');result=await invoke(run.config,run.input);}}catch(e){error=e.name==='TimeoutError'||e.name==='AbortError'?'Agent调用超时，可检查配置后重试':run.config.adapter==='http'?(String(e.message).startsWith('Agent')||String(e.message).startsWith('该Agent')||String(e.message).startsWith('服务端')?e.message:'外部Agent请求失败，请检查连接和服务端配置'):e.message;}
     await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.finishedAt=now();r.durationMs=Date.parse(r.finishedAt)-Date.parse(r.startedAt);r.status=error?'failed':result.status;r.error=error||null;r.result=result||null;if(!error&&r.goalId){try{sources.resolve(findGoal(d,r.goalId),d);knowledge.assertRecall(r.input.knowledgeRecall,d);}catch(e){r.error=e.message;r.status='failed';r.result=null;}}applyRun(d,r);});
