@@ -13,17 +13,30 @@ const registry=moduleBundle('previewRegistry',registrySource.slice(registrySourc
 export function defaultConfigs(){return structuredClone(seeds);}
 export async function invokeAgent(config,input){if(!config.enabled)throw new Error('Agent已停用');if(config.adapter!=='builtin')throw new Error('外部Agent需要运行完整后端；免安装预览不会发送网络请求');return validateOutput(await builtins[config.id](input,config));}
 `,"const {builtins,seeds}=previewBuiltins;const process={env:{}};const isIP=s=>s.includes(':')?6:/^\\d+(?:\\.\\d+){3}$/.test(s)?4:0;");
-const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;`);
+const catalog=moduleBundle('previewCatalog',await read('src/workforce/catalog.js'));
+const skills=moduleBundle('previewSkills',await read('src/workforce/skills.js'),'const {productAgent,insightAgent}=previewBuiltins;');
+const employees=moduleBundle('previewEmployees',await read('src/workforce/employees.js'),'const {roles,capabilities}=previewCatalog;const {skillDefinitions,skillSample}=previewSkills;');
+const modelSource=await read('src/workforce/model.js');
+const model=moduleBundle('previewModel',modelSource.slice(modelSource.indexOf('export function validateModel'),modelSource.indexOf('export async function callModel'))+`export async function callModel(){throw new Error('静态预览不能调用模型，请运行完整后端并配置连接');}`,'const process={env:{}};');
+const runtime=moduleBundle('previewEmployeeRuntime',await read('src/workforce/runtime.js'),'const {executeSkill,skillDefinitions}=previewSkills;const {callModel}=previewModel;');
+const team=moduleBundle('previewTeam',await read('src/workforce/team.js'),'const randomUUID=previewUUID;const {createGoal}=previewGoals;const {validateEmployee,employeeReadiness,workforceView}=previewEmployees;const {validateModel,publicModel}=previewModel;const {skillSample,skillDefinitions}=previewSkills;const {financeFields}=previewBuiltins;');
+const workforceUI=moduleBundle('previewWorkforceUI',await read('public/workforce.js'));
+const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {runEmployee}=previewEmployeeRuntime;const {callModel}=previewModel;const {executeSkill}=previewSkills;`);
 const bootstrap=`
 const localPlatform=await previewPlatform.createPlatform('/preview');
 if(!localPlatform.goals().length){
- const g=await localPlatform.create({requestId:'preview-seed-listing',text:'【演示样例】为黄铜角阀准备上新，发布前由我审批',kind:'listing',members:['product','insight'],permission:'approval'});
+ const g=await localPlatform.create({requestId:'preview-seed-listing',text:'【演示样例】四名员工协作准备角阀上新资料，交付后由我验收',kind:'listing',employeeIds:['employee-merchandise','employee-creative','employee-profit','employee-coordination'],permission:'draft'});
  await localPlatform.action(g.id,{kind:'facts',expectedVersion:g.version,facts:previewBuiltins.testSample('product').facts,confirmed:true});
  const saved=localPlatform.goals()[0];await localPlatform.action(g.id,{kind:'plan',expectedVersion:saved.version});
- await localPlatform.pump();await localPlatform.pump();
+ for(let i=0;i<4;i++)await localPlatform.pump();
 }
 const previewAPI=async(route,options={})=>{
  const method=options.method||'GET',input=options.body?JSON.parse(options.body):{};const [resource,id,action]=route.split('/');
+ if(resource==='workforce')return localPlatform.workforce.view();
+ if(['employees','models','skills'].includes(resource)){
+  if(action==='test')return resource==='employees'?localPlatform.workforce.testEmployee(id):resource==='models'?localPlatform.workforce.testModel(id):localPlatform.workforce.testSkill(id,input.input);
+  if(['POST','PUT'].includes(method)&&resource!=='skills')return localPlatform.workforce[resource==='employees'?'saveEmployee':'saveModel'](id,input);
+ }
  if(resource==='agents'){
   if(!id&&method==='GET')return localPlatform.agents();
   if(id&&method==='PUT'){if(input.adapter==='http')throw new Error('免安装预览只运行内置代码Agent。请启动完整版后配置外部HTTP接口。');return localPlatform.saveAgent(id,input);}
@@ -42,16 +55,16 @@ setInterval(()=>localPlatform.pump().catch(error=>{previewBar.textContent='本�
 `;
 let app=await read('public/app.js');
 if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
-app=app.replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
-const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['访问令牌可由服务端 PLATFORM_TOKEN 启用，当前仍是单工作空间。','预览没有联网鉴权或多人同步；完整版可配置访问令牌。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['服务端','当前浏览器'],['后端','本地'],['代码 / HTTP 能力','本地代码能力']];
-let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,platform,bootstrap,app].join('\n');
+app=app.replace(/^import .*;\n/gm,'').replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
+const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['访问令牌可由服务端 PLATFORM_TOKEN 启用，当前仍是单工作空间。','预览没有联网鉴权或多人同步；完整版可配置访问令牌。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['目标、任务与协作空间已保存到服务端','目标、任务与协作空间已保存到当前浏览器'],['服务端持久化','浏览器本地保存'],['使用服务端已保存的配置','使用当前浏览器已保存的配置'],['后端自动执行','浏览器规则执行'],['数据保存在后端','数据保存在当前浏览器'],['等待后端执行','等待本地执行'],['代码 / HTTP 能力','本地代码能力']];
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,skills,employees,model,runtime,team,workforceUI,platform,bootstrap,'const {createWorkforceUI}=previewWorkforceUI;',app].join('\n');
 for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
 let html=await read('public/index.html');
 html=html.replace('<link rel="stylesheet" href="/style.css">',`<style>${await read('public/style.css')}\n.preview-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 28px;background:var(--tint);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink)}.preview-bar p{color:var(--ink)}.preview-bar button{white-space:nowrap;min-height:44px}.preview-bar~main{min-height:calc(100dvh - 164px)}@media(max-width:760px){.preview-bar{padding:8px 12px;font-size:11px}.preview-bar p{line-height:1.7}}\n</style>`)
  .replace('<script type="module" src="/app.js"></script>','')
  .replace('</header><main','</header><div class="preview-bar"><p id="preview-status" role="status">正在打开本地预览…</p><button class="text-button" id="preview-reset">重置样例</button></div><main')
  .replace('服务端工作空间','免安装预览')
- .replace('Agent 在后端执行 · 店铺发布为模拟连接器 · 未接入大模型','免安装预览 · Agent 在当前浏览器执行 · 无真实店铺连接 · 未接入大模型')
+ .replace('团队执行受配置约束 · 模型需连接后使用 · 业务写入尚未接通','免安装预览 · 本地规则运行 · 模型连接需完整后端 · 无真实业务写入')
  .replace('<option value="http">外部 HTTP Agent</option>','<option value="http" disabled>外部 HTTP Agent（完整版可用）</option>')
  .replace('这里只保存变量名。密钥值由服务器环境提供；域名需加入服务端 AGENT_ALLOWED_HOSTS。','外部 Agent 配置与密钥仅在完整后端中使用，预览不发送网络请求。');
 html=html.replace('</body>',`<noscript><p>请用支持 JavaScript 的浏览器打开此文件。</p></noscript><script>\n(async()=>{\n${code.replace(/<\/script/gi,'<\\/script')}\n})().catch(error=>{document.querySelector('#preview-status').textContent='预览未能加载：'+error.message+'。可点击“重置样例”清理此预览的本地数据后重试。';});\n</script></body>`);

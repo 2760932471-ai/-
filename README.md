@@ -1,101 +1,67 @@
-# AI数字员工协作平台 · V0.2.1
+# AI数字员工协作工作台 · V0.3
 
-可运行的前后端基础平台：浏览器提交目标、Agent配置与业务资料；Node后端持久化、自动调度两个代码型Agent，返回真实校验和计算结果。
+按慕雅居方案V2.4建设岗位员工与能力装配：12类岗位模板、134项规划能力目录、10个可执行代码Skill、4名默认试点员工。支持真实后端持久化、群聊、团队目标、模型接入与有上限的执行循环。
 
-## 从仓库获取，不依赖聊天附件
+**当前默认是规则试运行。模型适配已实现，但尚未用用户账号完成真实模型验证；店铺业务写入未接通。**
 
-[打开 GitHub 仓库](https://github.com/2760932471-ai/-) · [本地使用与会话说明](docs/本地使用与会话说明.md) · [项目交接与需求结论](PROJECT_CONTEXT.md)
+## 从这里开始
+
+- [数字员工建设与使用说明](docs/数字员工能力建设_V0.3.md)：点击行为、异常、能力范围及模型接入。
+- [项目交接与需求结论](PROJECT_CONTEXT.md)：在本地新会话继续工作的上下文。
+- [本地使用说明](docs/本地使用与会话说明.md)：克隆、打开文件和聊天记录的区别。
+- [网址预览部署](docs/网址预览部署.md)：GitHub Pages一次性设置。
 
 ```sh
 git clone --branch main https://github.com/2760932471-ai/-.git ai-workbench
 cd ai-workbench
-```
-
-也可用 GitHub Desktop 按仓库 URL 克隆。ZIP 不能在附件预览器中直接运行；云端 localhost 也不是远程预览入口。克隆后用浏览器打开 `deliverables/ai-platform-preview.html` 即可体验。
-
-本次云端聊天不会自动进入本地 Codex / VS Code 的历史列表；`PROJECT_CONTEXT.md` 保存产品决定、实现状态和接续提示，方便新会话继续。
-
-当前界面截图（静态图片；交互请打开上述 HTML 或启动后端）：
-
-![AI数字员工协作工作台当前预览](deliverables/preview-desktop.png)
-
-## 直接用网址体验
-
-[GitHub Pages 一次性开启步骤](docs/网址预览部署.md)：在仓库 Settings → Pages 选择 `Deploy from a branch`，分支 `gh-pages`，目录 `/ (root)`。站点发布成功后，GitHub 会在该页显示访问链接。
-
-这是浏览器交互演示；真实后端、外部 Agent 和多人数据不会由 Pages 托管。后续可运行 `npm run deploy:preview` 更新专用发布分支。
-
-## 先看交互，无需安装
-
-直接用 Chrome、Edge 或 Safari 打开 `deliverables/ai-platform-preview.html`；启动包根目录同一文件名为 `先打开预览.html`。界面、目标状态机和两个代码 Agent 与当前版本一致，可新建目标、群聊、配置测试、补录资料和查看运行记录。所有样式和脚本均已内嵌，不需要网络、Node.js 或启动服务器。
-
-预览数据只存当前浏览器，不与完整后端同步；浏览器禁止本地存储时退回本次会话并明确提示。外部 HTTP Agent 在预览中禁用，店铺操作始终模拟。页面右上方“重置样例”只清理这份预览的数据。若聊天软件只展示 HTML 源码或静态内容，请下载后用浏览器打开。
-
-## 启动完整前后端
-
-要求Node.js 22+，无需第三方运行依赖：
-
-```sh
 npm start
 ```
 
-在运行服务的电脑访问`http://127.0.0.1:3000`。Windows可双击`start-platform.cmd`；macOS/Linux执行`bash start-platform.sh`。自定义配置见`.env.example`；启动脚本会读取`.env`，直接`npm start`读取进程环境。
+Node.js 22+。规则运行无需第三方依赖；可选本机Codex接入另装官方SDK。Windows可双击`start-platform.cmd`，macOS/Linux执行`bash start-platform.sh`，启动脚本读取`.env`。默认端口3000，本机地址仅供运行服务的同一台电脑访问。
 
-完整平台包：`deliverables/ai-platform-0.2.1.zip`。解压后可先打开 `先打开预览.html`；需要服务端持久化或外部 Agent 时，再运行启动脚本。`127.0.0.1` 只代表运行服务的电脑，不是远程预览链接。
+## 先体验
 
-## 本版可以实际做什么
+用浏览器打开`deliverables/ai-platform-preview.html`，或者启用仓库`gh-pages`分支的Pages站点。单文件预览内嵌样式和逻辑，可以创建员工、筛选能力、测试Skill、执行团队规则任务；不调用真实模型，数据只存当前浏览器。
 
-- Agent配置：修改名称/职责、启停、阈值、超时，保存版本，测试JSON输入，查看结构化输出。
-- 商品运营代码Agent：核验商品规格、来源、成本、库存与售价；根据已确认资料生成草案。
-- 经营分析代码Agent：按录入账单计算贡献利润和利润率；缺资料阻塞、零销售不除0、负利润如实显示。
-- 自然语言目标：规则推荐分析/上新类型，用户确认店铺和SKU；支持选Agent。
-- 自动协作：确认计划后后端顺序调用必要Agent，产物关联任务与调用记录；不必逐步点击生成。
-- 资料录入、缺项恢复、失败重试、暂停后恢复结果、过期结果丢弃、配置版本追踪。
-- 群聊指定Agent：根据当前目标数据执行计算/校验，并回复关联原消息。
-- HTTP Agent适配器：统一请求/返回契约，服务端密钥引用，域名白名单和响应校验。
-- 可选工作空间访问令牌；实际店铺发布仍使用模拟连接器。
+![当前数字员工界面](deliverables/workforce-employees.png)
 
-## 推荐体验
+推荐：数字员工 → 查看四名规则员工 → 新建“为角阀准备上新资料” → 填写资料 → 确认计划 → 查看员工逐步交付。能力中心会区分规划中、部分实现和已实现限定能力。
 
-进入“Agent配置”→经营分析→运行样例测试；将销售额改成4000，成本合计2400，结果为利润1600、利润率40%。
+## 使用 ChatGPT Plus / Pro 订阅
 
-然后新建“分析本周利润”→确认计划→等待账单→资料里录入账单→重新确认计划→查看自动生成的成果、复盘和运行记录。
-
-上新目标邀请商品运营+经营分析，可先后得到商品校验草案及经营测算两份成果。批准发布只作用于模拟店铺，不会写入真实电商平台。
-
-## 文档
-
-- `docs/Agent接入与平台运行_V0.2.md`：启动、API、HTTP Agent契约、运行机制、已实现与未实现边界。
-- `docs/AI数字员工协作工作台_PRD_V1.1.md`：完整产品交互需求，仍有条款未实现，不能等同本版功能清单。
-- `deliverables/AI数字员工协作工作台_PRD_V1.1.html`：PRD离线阅读版。
-- `docs/产品覆盖评审与设计建议_V2对照.md`：此前方案对照评审。
-
-## 开发与验证
+订阅额度不能直接当成API余额。可在**自己的电脑**用ChatGPT登录官方Codex，再通过本平台的本机桥接调用套餐内Codex配额：
 
 ```sh
-npm run dev
+npm install -g @openai/codex
+codex
+npm run setup:codex
+```
+
+`codex`启动后选择 **Sign in with ChatGPT**。项目`.env`中设置`ENABLE_CODEX_LOCAL=1`和私有的`PLATFORM_TOKEN`，再用启动脚本运行服务。开启桥接后服务只绑定127.0.0.1。
+
+进入“能力中心 → 模型连接”，添加“本机Codex”，测试通过后装配到员工。模型名可留空使用Codex默认模型。**GitHub Pages不能使用此接入；登录、额度和真实调用尚需在你本机验证。**
+
+另一条路线是配置OpenAI兼容API的HTTPS地址、模型标识和服务器密钥变量名，使用独立API额度。两种方式都不需要在聊天中发送密钥或账号凭证。
+
+## 运行机制与限制
+
+- 新建目标保留自然语言输入、成员选择和范围确认；业务类型推荐仍为关键词规则。
+- 团队成员按用户确认的列表顺序交接成果；各模型员工内部按目标选择已装配Skill，不是自主跨岗位规划。
+- 所有当前Skill只读输入。模型不能任意联网、执行代码、覆盖输入事实或发布商品。
+- 缺资料等待补录，失败可重试，旧版本结果丢弃，运行记录保存输入、配置版本、轨迹与成果。
+- 角色权限、多用户、事件感知、真实业务连接与完整方案仍待建设。
+- `.data/platform.json`原子保存，适用于当前单进程开发版；运行数据和`.env`不提交Git。
+
+## 开发与发布
+
+```sh
 npm run check
 npm test
+npm run demo
 npm run pack
+npm run deploy:preview
 ```
 
-`npm run pack`需要Python3标准库，打包源代码、说明和启动脚本，不包含.data、密钥、Git元数据或node_modules。
+`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.3.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
 
-`npm run demo`用当前界面、目标状态机和代码 Agent 生成免安装预览；`npm run pack`会先更新预览再打包。历史 V1 单独保留在 `deliverables/历史交互原型_V1.html`。预览通过浏览器本地适配器运行，完整平台仍通过真实 HTTP API 运行。
-
-## 结构与数据
-
-```text
-public/                 浏览器UI与HTTP交互
-src/server.js           HTTP路由、静态服务、访问令牌与调度
-src/platform.js         配置、目标、调用记录、事务保存与协调器
-src/agents/builtins.js   商品运营/经营分析两个代码Agent
-src/agents/registry.js   配置校验、HTTP适配器与返回契约
-src/goals.js            目标状态机；保留旧演示兼容
-src/engine.js, chat.js   旧版任务/群聊兼容代码
-test/                   领域、适配器和真实HTTP/重启测试
-```
-
-新版数据保存在`.data/platform.json`，`DATA_DIR`可覆盖。首次启动读取旧goals.json为历史演示目标，旧文件保留。单进程串行JSON事务适用于当前开发版；生产多用户/多进程需要数据库、权限、队列、审计和业务执行网关。
-
-内置Agent采用确定性规则代码；未连接LLM、真实店铺和外部Agent。HTTP适配器以可控服务响应测试，真实服务接入需配置授权域名、地址和服务端凭证。上传的慕雅居V2方案是设计依据；此前分享聊天和在线PRD资料被环境代理阻断，未将未读正文当作已核对资料。
+`src/workforce/`包含能力目录、Skill、员工配置、模型/API/Codex适配、执行循环与团队任务。`public/workforce.js`为员工和能力中心界面。旧版规则与模拟发布保留兼容，V0.2说明及PRD中未实现条款不能当作本版已交付能力。

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { agents, createTask, tick, decide, planGoal } from './engine.js';
 
+if(process.env.ENABLE_CODEX_LOCAL==='1'&&!process.env.PLATFORM_TOKEN)throw new Error('本机Codex桥接需要先设置 PLATFORM_TOKEN');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dataDir = process.env.DATA_DIR || path.join(root, '.data');
 await mkdir(dataDir, { recursive: true });
@@ -39,6 +40,14 @@ const server = http.createServer(async (req, res) => {
       if(process.env.PLATFORM_TOKEN&&req.headers.authorization!==`Bearer ${process.env.PLATFORM_TOKEN}`)return json(res,401,{error:'请填写工作空间访问令牌'});
       if(req.method!=='GET'&&req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)return json(res,403,{error:'不允许跨站修改工作空间'});
     }
+    if(url.pathname==='/api/workforce'&&req.method==='GET')return json(res,200,platform.workforce.view());
+    const workforceMatch=url.pathname.match(/^\/api\/(employees|models|skills)(?:\/([^/]+))?(?:\/(test))?$/);
+    if(workforceMatch){const [,type,id,op]=workforceMatch;
+      if(type==='employees'&&op==='test'&&req.method==='POST')return json(res,202,await platform.workforce.testEmployee(id));
+      if(type==='models'&&op==='test'&&req.method==='POST')return json(res,202,await platform.workforce.testModel(id));
+      if(type==='skills'&&op==='test'&&req.method==='POST')return json(res,202,await platform.workforce.testSkill(id,(await body(req)).input));
+      if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id)&&['employees','models'].includes(type))return json(res,200,await platform.workforce[type==='employees'?'saveEmployee':'saveModel'](id,await body(req)));
+    }
     if(url.pathname==='/api/goal-preview'&&req.method==='POST')return json(res,200,previewGoal((await body(req)).text));
     if(url.pathname==='/api/goals'&&req.method==='GET')return json(res,200,platform.goals());
     if(url.pathname==='/api/goals'&&req.method==='POST')return json(res,201,await platform.create(await body(req)));
@@ -69,7 +78,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
@@ -81,6 +90,6 @@ const timer = setInterval(async () => {
   catch (error) { console.error('任务保存失败:', error.message); }
   finally { ticking = false; }
 }, 600);
-server.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('慕雅居数字员工 · port ' + (process.env.PORT || 3000) + ' · PLATFORM / simulated store'));
+server.listen(Number(process.env.PORT || 3000), process.env.ENABLE_CODEX_LOCAL==='1'?'127.0.0.1':'0.0.0.0', () => console.log('慕雅居数字员工 · port ' + (process.env.PORT || 3000) + ' · PLATFORM / simulated store'));
 function shutdown() { clearInterval(timer); server.close(() => process.exit(0)); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);

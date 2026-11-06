@@ -1,3 +1,8 @@
+import {defaultEmployees} from './workforce/employees.js';
+import {createTeamManager} from './workforce/team.js';
+import {runEmployee} from './workforce/runtime.js';
+import {callModel} from './workforce/model.js';
+import {executeSkill} from './workforce/skills.js';
 import {randomUUID} from 'node:crypto';
 import {readFile,mkdir,writeFile,rename} from 'node:fs/promises';
 import path from 'node:path';
@@ -7,21 +12,24 @@ import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
 const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
-export async function createPlatform(dataDir,{invoke=invokeAgent}={}){
+export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
+ data.employees??=defaultEmployees();data.models??=[];
  let chain=Promise.resolve(),pumping=false;
  async function transaction(fn){const op=chain.then(async()=>{const next=structuredClone(data);const result=await fn(next);await writeFile(file+'.tmp',JSON.stringify(next),{mode:0o600});await rename(file+'.tmp',file);data=next;return structuredClone(result);});chain=op.catch(()=>{});return op;}
  await transaction(d=>{for(const r of d.runs)if(r.status==='running'){r.status='interrupted';r.error='服务重启中断了本次调用，请确认后重试';r.finishedAt=now();const g=d.goals.find(g=>g.id===r.goalId);if(g?.runtime?.runId===r.id)g.runtime={...g.runtime,status:'failed',error:r.error};}});
  const findGoal=(d,id)=>{const g=d.goals.find(g=>g.id===id);if(!g)throw Object.assign(new Error('目标不存在'),{status:404});return g;};
  const findAgent=(d,id)=>{const a=d.agents.find(a=>a.id===id);if(!a)throw Object.assign(new Error('Agent不存在'),{status:404});return a;};
- function enqueue(d,agentId,input,meta={}){
+ const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event});
+ function enqueue(d,agentId,input,meta={},override){
   if(d.runs.filter(r=>['queued','running'].includes(r.status)).length>=100)throw new Error('运行队列已满，请稍后再试');
-  const config=structuredClone(findAgent(d,agentId));if(!config.enabled)throw new Error(config.name+'已停用');
+  const config=structuredClone(override||findAgent(d,agentId));if(!config.enabled)throw new Error(config.name+'已停用');
   const run={id:randomUUID(),agentId,agentName:config.name,configVersion:config.revision,config,status:'queued',input,createdAt:now(),...meta};d.runs.unshift(run);return run;
  }
- function inputs(g){return {goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({title:a.title,body:a.body,evidence:a.evidence}))};}
+ function inputs(g){return {...g.skillData,goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text})),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({title:a.title,body:a.body,evidence:a.evidence}))};}
  function schedule(d,g){
+  if(g.mode==='team')return team.schedule(d,g);
   if(g.mode!=='platform'||g.paused||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status))return;
   const list=g.kind==='listing'?['product',...(g.members.includes('insight')?['insight']:[])]:['insight'];
   const completed=g.runtime?.completed||[];const id=list.find(id=>!completed.includes(id));
@@ -31,13 +39,16 @@ export async function createPlatform(dataDir,{invoke=invokeAgent}={}){
   catch(e){g.runtime={status:'failed',completed,error:e.message};}
  }
  function applyRun(d,r){
+  if(r.purpose==='model_test'){const model=d.models.find(m=>m.id===r.agentId);if(model&&model.revision===r.configVersion)model.lastTest={revision:model.revision,status:r.status,at:now(),error:r.error};}
   if(!r.goalId)return;
   const g=d.goals.find(g=>g.id===r.goalId);if(!g)return;
   if(r.purpose==='chat'){
    const source=g.messages.find(m=>m.id===r.messageId);if(!source)return;
-   const text=r.status==='failed'?`调用失败：${r.error}。请检查配置后重新提问。`:r.result.summary+(r.result.missing.length?'\n待补充：'+r.result.missing.join('、'):'')+(r.result.artifacts[0]?'\n\n'+r.result.artifacts[0].body:'');
+   const artifact=r.result?.executionType==='model'?r.result.artifacts.at(-1):r.result?.artifacts[0];
+   const text=g.version!==r.goalVersion?'目标资料已更新，本次回复基于旧版本，请按当前资料重新提问。':r.status==='failed'?`调用失败：${r.error}。请检查配置后重新提问。`:r.result.summary+(r.result.missing.length?'\n待补充：'+r.result.missing.join('、'):'')+(artifact?'\n\n'+artifact.body:'');
    g.messages.push({id:randomUUID(),role:'agent',author:r.agentName,text,replyTo:source.id,runId:r.id,at:now()});return;
   }
+  if(g.mode==='team')return team.apply(d,g,r);
   if(g.version!==r.goalVersion||g.stage!=='draft'||g.runtime?.runId!==r.id){r.status='discarded';r.error='目标版本或阶段已改变，此结果未写入目标';return;}
   if(g.paused){r.status='waiting_resume';g.runtime.status='waiting_resume';return;}
   if(r.error){g.runtime={...g.runtime,status:'failed',error:r.error};const t=g.tasks.find(t=>t.status==='active');if(t)t.status='waiting';event(g,`${r.agentName}执行失败：${r.error}`,'draft');return;}
@@ -52,17 +63,19 @@ export async function createPlatform(dataDir,{invoke=invokeAgent}={}){
   if(!/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId||''))throw new Error('缺少有效创建请求编号');
   const signature=JSON.stringify({...input,requestId:undefined});
   if(Object.hasOwn(d.requests,input.requestId)){const old=d.requests[input.requestId];if(old.signature!==signature)throw conflict('同一创建请求不能更换内容');return findGoal(d,old.goalId);}
+  const isTeam=Array.isArray(input.employeeIds);
   const required=input.kind==='listing'?'product':'insight';
-  if(!input.members?.includes(required))throw new Error(`请邀请${required==='product'?'商品运营':'经营分析'} Agent 参与此目标`);
-  for(const id of input.members){if(!findAgent(d,id).enabled)throw new Error('所选Agent已停用');}
-  const g=createGoal(input);g.mode='platform';g.runtime={status:'idle',completed:[]};
+  if(!isTeam&&!input.members?.includes(required))throw new Error(`请邀请${required==='product'?'商品运营':'经营分析'} Agent 参与此目标`);
+  for(const id of isTeam?[]:input.members){if(!findAgent(d,id).enabled)throw new Error('所选Agent已停用');}
+  const g=isTeam?team.create(d,input):createGoal(input);if(!isTeam){g.mode='platform';g.runtime={status:'idle',completed:[]};}
   if(input.scope){for(const k of ['store','sku','product']){if(typeof input.scope[k]!=='string'||!input.scope[k].trim()||input.scope[k].length>120)throw new Error('请填写有效的店铺、SKU / 数据范围和商品名称');g.scope[k]=input.scope[k].trim();}g.scope.platform='用户指定范围（未连接平台）';}
   if(input.proposal){const price=Number(input.proposal.price);if(!Number.isFinite(price)||price<=0||price>100000||Math.abs(price*100-Math.round(price*100))>1e-6)throw new Error('售价必须是有效正数，最多2位小数');g.proposal={title:String(input.proposal.title||g.scope.product).slice(0,120),price};}
-  g.messages[1].text='目标、任务与协作空间已保存到服务端。请确认资料和计划；代码型 Agent 将处理录入数据。店铺发布仍使用模拟连接器。';
+  if(!isTeam)g.messages[1].text='目标、任务与协作空间已保存到服务端。请确认资料和计划；代码型 Agent 将处理录入数据。店铺发布仍使用模拟连接器。';
   d.goals.unshift(g);d.requests[input.requestId]={goalId:g.id,signature};return g;
  });}
  async function action(id,input){return transaction(d=>{
   const g=findGoal(d,id);const kind=input.kind;
+  if(g.mode==='team')return team.action(d,g,input);
   if(kind==='message'&&g.mode==='platform'){const mentioned=d.agents.filter(a=>g.members.includes(a.id)&&typeof input.text==='string'&&input.text.includes('@'+a.name.replace(' Agent','')));if(mentioned.length>1)throw new Error('本轮请选择一位接收者，或删除多个@交给数字员工协调');if(mentioned.length===1){if(input.target&&input.target!=='coordinator'&&input.target!==mentioned[0].id)throw new Error('@成员与接收者不一致，请确认发送给谁');input={...input,target:mentioned[0].id};}}
   if(g.mode!=='platform'){goalAction(g,input);return g;}
   if(['facts','ledger','plan','revise','reject','approve','retry','complete'].includes(kind)&&input.expectedVersion!==g.version)throw conflict('目标版本已改变，请重新检查当前内容');
@@ -102,10 +115,10 @@ export async function createPlatform(dataDir,{invoke=invokeAgent}={}){
  async function pump(){
   if(pumping)return;
   const hasQueue=data.runs.some(r=>r.status==='queued'&&(!r.goalId||r.purpose==='chat'||!data.goals.find(g=>g.id===r.goalId)?.paused));
-  const hasGoal=data.goals.some(g=>(!g.repliesPaused&&g.queue.length)||(g.mode==='platform'&&!g.paused&&g.stage==='draft'&&!['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status)));
+  const hasGoal=data.goals.some(g=>(!g.repliesPaused&&g.queue.length)||(['platform','team'].includes(g.mode)&&!g.paused&&g.stage==='draft'&&!['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status)));
   if(!hasQueue&&!hasGoal)return;pumping=true;
   try{
-   await transaction(d=>{for(const g of d.goals){if(g.mode!=='platform'){tickGoal(g);continue;}schedule(d,g);
+   await transaction(d=>{for(const g of d.goals){if(g.mode==='team'){schedule(d,g);team.pumpMessages(d,g);continue;}if(g.mode!=='platform'){tickGoal(g);continue;}schedule(d,g);
     if(!g.repliesPaused&&g.queue.length){const job=g.queue.shift();const source=g.messages.find(m=>m.id===job.source);let id=job.target;
      if(id==='coordinator')id=/利润|成本|费用|亏损/.test(source.text)?'insight':g.kind==='listing'?'product':'insight';
      if(job.intent!=='discuss'||!g.members.includes(id)||g.stage==='completed'){
@@ -115,7 +128,12 @@ export async function createPlatform(dataDir,{invoke=invokeAgent}={}){
    }});
    // Claim only one call per pump. Goal pipelines remain sequential and nonblocking for HTTP routes.
    const run=await transaction(d=>{for(const old of d.runs){if(old.status==='queued'&&old.purpose==='draft'){const g=findGoal(d,old.goalId);if(g.version!==old.goalVersion||g.stage!=='draft'){old.status='discarded';old.finishedAt=now();old.error='目标已变更，未调用旧版本任务';}}}const r=d.runs.slice().reverse().find(r=>r.status==='queued'&&(!r.goalId||r.purpose==='chat'||!findGoal(d,r.goalId).paused));if(!r)return null;r.status='running';r.startedAt=now();const g=d.goals.find(g=>g.runtime?.runId===r.id);if(g)g.runtime.status='running';return r;});
-   if(run){let result,error;try{const currentConfig=data.agents.find(a=>a.id===run.agentId);if(!currentConfig?.enabled)throw new Error('Agent在运行前已停用');result=await invoke(run.config,run.input);}catch(e){error=e.name==='TimeoutError'||e.name==='AbortError'?'Agent调用超时，可检查配置后重试':run.config.adapter==='http'?(String(e.message).startsWith('Agent')||String(e.message).startsWith('该Agent')||String(e.message).startsWith('服务端')?e.message:'外部Agent请求失败，请检查连接和服务端配置'):e.message;}
+   if(run){let result,error;try{if(run.config.employee){
+     const e=data.employees.find(e=>e.id===run.agentId);if(!e?.enabled)throw new Error('员工已停用');
+     result=await runEmployee(run.config.employee,run.config.model,run.input,{modelCall,onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{const g=data.goals.find(g=>g.id===run.goalId);return data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
+    }else if(run.config.modelTest){const answer=await modelCall(run.config.model,[{role:'user',content:'请回复：模型连接正常。'}],[]);result={status:'succeeded',summary:'模型连接测试通过',missing:[],artifacts:[{title:'连接测试',body:answer.message.content||'收到有效响应',evidence:'所配置模型接口实际响应'}],metrics:{}};}
+    else if(run.config.skillId)result=await executeSkill(run.config.skillId,run.input);
+    else{const currentConfig=data.agents.find(a=>a.id===run.agentId);if(!currentConfig?.enabled)throw new Error('Agent在运行前已停用');result=await invoke(run.config,run.input);}}catch(e){error=e.name==='TimeoutError'||e.name==='AbortError'?'Agent调用超时，可检查配置后重试':run.config.adapter==='http'?(String(e.message).startsWith('Agent')||String(e.message).startsWith('该Agent')||String(e.message).startsWith('服务端')?e.message:'外部Agent请求失败，请检查连接和服务端配置'):e.message;}
     await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.finishedAt=now();r.durationMs=Date.parse(r.finishedAt)-Date.parse(r.startedAt);r.status=error?'failed':result.status;r.error=error||null;r.result=result||null;applyRun(d,r);});
    }
   }finally{pumping=false;}
@@ -123,7 +141,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent}={}){
  return {
   goals:()=>structuredClone(data.goals),agents:()=>data.agents.map(publicConfig),runs:()=>data.runs.map(({config,input,result,...r})=>r),
   run:id=>{const r=data.runs.find(r=>r.id===id);if(!r)throw Object.assign(new Error('运行记录不存在'),{status:404});const {config,...safe}=r;return structuredClone(safe);},
-  create,action,pump,
+  create,action,pump,workforce:team,
   saveAgent:(id,input)=>transaction(d=>{const prev=findAgent(d,id);const next=validateConfig(input,prev);d.agents[d.agents.indexOf(prev)]=next;return publicConfig(next);}),
   testAgent:(id,input)=>transaction(d=>{if(input!==undefined&&(!input||typeof input!=='object'||Array.isArray(input)))throw new Error('测试输入必须为JSON对象');const run=enqueue(d,id,input??testSample(id),{purpose:'test'});return {id:run.id,status:run.status};}),
   sample:id=>{findAgent(data,id);return testSample(id);},
