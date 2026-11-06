@@ -6,7 +6,7 @@ import {skillSample,skillDefinitions} from './skills.js';
 import {financeFields} from '../agents/builtins.js';
 const stamp=()=>new Date().toISOString();
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
-export function createTeamManager({getData,transaction,enqueue,inputs,event,sources}){
+export function createTeamManager({getData,transaction,enqueue,inputs,event,sources,knowledge}){
  const models=d=>d.models.map(publicModel);
  const employee=(d,id)=>d.employees.find(e=>e.id===id)||fail('员工不存在',404);
  function requireReady(d,id){const e=employee(d,id),r=employeeReadiness(e,models(d));if(!r.ready)fail(e.name+'：'+r.blockers.join('；'));return e;}
@@ -29,7 +29,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
  function create(d,input){
   const ids=[...new Set(input.employeeIds||[])];if(!ids.length||ids.length>8)fail('请选择1–8名员工');ids.forEach(id=>requireReady(d,id));
   const g=createGoal({...input,members:['product','insight'],permission:'draft'});
-  g.mode='team';g.members=ids;g.coordinator='团队执行协调';g.stage='plan';g.permission='draft';g.criterion='按确认资料完成所选员工的交付，人工验收；不执行真实发布、调价或投放';g.runtime={status:'idle',completed:[]};
+  g.knowledge={baseIds:d.knowledge.bases.filter(b=>b.id==='kb-default'&&b.enabled).map(b=>b.id),mode:'bm25',topK:5};g.mode='team';g.members=ids;g.coordinator='团队执行协调';g.stage='plan';g.permission='draft';g.criterion='按确认资料完成所选员工的交付，人工验收；不执行真实发布、调价或投放';g.runtime={status:'idle',completed:[]};
   const titles=['确认分工与资料',...ids.map(id=>employee(d,id).name+'交付'),'负责人验收'];
   g.tasks=titles.map((title,i)=>({id:randomUUID(),goalId:g.id,title,owner:ids[Math.max(0,Math.min(i-1,ids.length-1))],dependsOn:i?i-1:null,status:'pending'}));
   g.messages[1].text='已建立员工协作目标。请先填写资料，再确认分工；员工按选择顺序交接成果，模型模式可自主选择已装配Skill。';update(g);return g;
@@ -37,7 +37,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
  function revise(g){g.version++;g.stage='plan';g.runtime={status:'idle',completed:[]};g.artifacts.forEach(a=>{if(a.status==='draft')a.status='superseded';});event(g,'资料已保存为新版本，请重新确认计划。','plan');}
  function action(d,g,input){
   const k=input.kind;
-  if(['references','facts','ledger','inputs','plan','retry','complete','revise'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
+  if(['knowledge','references','facts','ledger','inputs','plan','retry','complete','revise'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
   if(k==='message'){
    const text=String(input.text||'').trim();if(!text||text.length>2000)fail('请输入1–2000字的消息');if(g.queue.length>=24)fail('待回复队列已满');
    const mentioned=g.members.filter(id=>text.includes('@'+employee(d,id).name));if(mentioned.length>1)fail('本轮请选择一位接收者');
@@ -56,6 +56,8 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
     if(context.candidates&&(!Array.isArray(context.candidates)||context.candidates.length>50||context.candidates.some(c=>!c||typeof c!=='object'||Array.isArray(c))))fail('候选商品最多50项且每项需为对象');
     for(const key of ['unitCosts','inventory'])if(context[key]&&(typeof context[key]!=='object'||Array.isArray(context[key])))fail('成本或库存资料格式错误');
     g.skillData=structuredClone(context);revise(g);
+   }else if(k==='knowledge'){
+    if(!['plan','draft'].includes(g.stage))fail('当前阶段不能修改知识检索范围');g.knowledge=knowledge.validateScope(input.knowledge,d);revise(g);
    }else if(k==='references'){
     if(input.confirmed!==true)fail('请核对所选资料与商品一致');
     if(!['plan','draft'].includes(g.stage))fail('当前阶段请新建跟进目标，不能覆盖已交付资料');

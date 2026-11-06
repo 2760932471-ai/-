@@ -23,7 +23,10 @@ const team=moduleBundle('previewTeam',await read('src/workforce/team.js'),'const
 const workforceUI=moduleBundle('previewWorkforceUI',await read('public/workforce.js'));
 const sources=moduleBundle('previewSources',await read('src/sources.js'),`const randomUUID=previewUUID;const process={env:{}};const pullSource=async()=>{throw Object.assign(new Error('静态预览不访问外部来源；请运行完整后端配置授权接口'),{sourceSafe:true});};`);
 const sourcesUI=moduleBundle('previewSourcesUI',await read('public/sources.js'));
-const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {runEmployee}=previewEmployeeRuntime;const {callModel}=previewModel;const {executeSkill}=previewSkills;const {initialSources,createSourceManager}=previewSources;`);
+const knowledgeRetrieval=moduleBundle('previewKnowledgeRetrieval',await read('src/knowledge-retrieval.js'));
+const knowledge=moduleBundle('previewKnowledge',await read('src/knowledge.js'),`const randomUUID=previewUUID;const {chunkText,bm25,cosine,validateVectors}=previewKnowledgeRetrieval;const embeddingConfiguration=()=>({configured:false,model:'',signature:''});const embedTexts=async()=>{throw new Error('静态预览不能调用 Embedding，请使用完整后端');};`);
+const knowledgeUI=moduleBundle('previewKnowledgeUI',await read('public/knowledge.js'));
+const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {runEmployee}=previewEmployeeRuntime;const {callModel}=previewModel;const {executeSkill}=previewSkills;const {initialSources,createSourceManager}=previewSources;const {initialKnowledge,createKnowledgeManager}=previewKnowledge;`);
 const bootstrap=`
 const localPlatform=await previewPlatform.createPlatform('/preview');
 if(!localPlatform.goals().length){
@@ -34,6 +37,15 @@ if(!localPlatform.goals().length){
 }
 const previewAPI=async(route,options={})=>{
  const method=options.method||'GET',input=options.body?JSON.parse(options.body):{};const [resource,id,action]=route.split('/');
+ if(resource==='knowledge'){
+  if(!id)return localPlatform.knowledge.view();
+  if(id==='search')return localPlatform.knowledge.search(input);
+  if(id==='preview')return previewKnowledgeRetrieval.chunkText(input.body,{size:Number(input.size),overlap:Number(input.overlap)});
+  const op=route.split('/')[3];
+  if(id==='documents'&&op)return localPlatform.knowledge[op](action,input);
+  if(id==='documents'&&action&&method==='GET')return localPlatform.knowledge.document(action);
+  return localPlatform.knowledge[id==='bases'?'saveBase':'saveDocument'](action,input);
+ }
  if(resource==='sources'||resource==='materials'){
   if(resource==='sources'&&method==='GET')return localPlatform.sources.view();
   if(action==='sync'&&method==='POST')return localPlatform.sources.sync(id);
@@ -65,7 +77,7 @@ let app=await read('public/app.js');
 if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
 app=app.replace(/^import .*;\n/gm,'').replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
 const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['访问令牌可由服务端 PLATFORM_TOKEN 启用，当前仍是单工作空间。','预览没有联网鉴权或多人同步；完整版可配置访问令牌。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['目标、任务与协作空间已保存到服务端','目标、任务与协作空间已保存到当前浏览器'],['服务端持久化','浏览器本地保存'],['使用服务端已保存的配置','使用当前浏览器已保存的配置'],['后端自动执行','浏览器规则执行'],['数据保存在后端','数据保存在当前浏览器'],['等待后端执行','等待本地执行'],['代码 / HTTP 能力','本地代码能力']];
-let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,skills,employees,model,runtime,team,workforceUI,sources,sourcesUI,platform,bootstrap,'const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;',app].join('\n');
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,skills,employees,model,runtime,team,workforceUI,sources,sourcesUI,knowledgeRetrieval,knowledge,knowledgeUI,platform,bootstrap,'const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;',app].join('\n');
 for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
 let html=await read('public/index.html');
 html=html.replace('<link rel="stylesheet" href="/style.css">',`<style>${await read('public/style.css')}\n.preview-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 28px;background:var(--tint);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink)}.preview-bar p{color:var(--ink)}.preview-bar button{white-space:nowrap;min-height:44px}.preview-bar~main{min-height:calc(100dvh - 164px)}@media(max-width:760px){.preview-bar{padding:8px 12px;font-size:11px}.preview-bar p{line-height:1.7}}\n</style>`)

@@ -1,3 +1,4 @@
+import {chunkText} from './knowledge-retrieval.js';
 import { previewGoal } from './agents/builtins.js';
 import { createPlatform } from './platform.js';
 import { createGoal, goalAction, tickGoal } from './goals.js';
@@ -30,7 +31,8 @@ function saveRooms(){const snapshot=JSON.stringify(rooms,null,2);roomSaving=room
 const platform=await createPlatform(dataDir);
 function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
 async function body(req) {
-  let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > 64000) throw new Error('请求内容过长'); }
+  const limit=req.url.startsWith('/api/knowledge/')?512000:64000;
+  let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > limit) throw new Error('请求内容过长'); }
   try { return JSON.parse(raw); } catch { throw new Error('请求 JSON 无效'); }
 }
 const server = http.createServer(async (req, res) => {
@@ -39,6 +41,15 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname.startsWith('/api/')&&url.pathname!=='/api/health'){
       if(process.env.PLATFORM_TOKEN&&req.headers.authorization!==`Bearer ${process.env.PLATFORM_TOKEN}`)return json(res,401,{error:'请填写工作空间访问令牌'});
       if(req.method!=='GET'&&req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)return json(res,403,{error:'不允许跨站修改工作空间'});
+    }
+    if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(res,200,platform.knowledge.view());
+    if(url.pathname==='/api/knowledge/search'&&req.method==='POST')return json(res,200,await platform.knowledge.search(await body(req)));
+    if(url.pathname==='/api/knowledge/preview'&&req.method==='POST'){const input=await body(req);return json(res,200,chunkText(input.body,{size:Number(input.size),overlap:Number(input.overlap)}));}
+    const kbMatch=url.pathname.match(/^\/api\/knowledge\/(bases|documents)(?:\/([^/]+))?(?:\/(index|toggle))?$/);
+    if(kbMatch){const [,type,id,op]=kbMatch;
+      if(type==='documents'&&id&&!op&&req.method==='GET')return json(res,200,platform.knowledge.document(id));
+      if(type==='documents'&&op&&req.method==='POST')return json(res,200,await platform.knowledge[op](id,await body(req)));
+      if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id))return json(res,200,await platform.knowledge[type==='bases'?'saveBase':'saveDocument'](id,await body(req)));
     }
     if(url.pathname==='/api/sources'&&req.method==='GET')return json(res,200,platform.sources.view());
     const sourceMatch=url.pathname.match(/^\/api\/(sources|materials)(?:\/([^/]+))?(?:\/(sync|review))?$/);
@@ -85,7 +96,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
