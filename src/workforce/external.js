@@ -1,4 +1,4 @@
-export const externalInputFields=['goal','question','scope','facts','proposal','financials','commerce','campaign','replenishment','serviceQuestion','observations','knowledgeRecall','references'];
+export const externalInputFields=['goal','assignment','question','scope','facts','proposal','financials','commerce','campaign','replenishment','serviceQuestion','observations','knowledgeRecall','references'];
 export function validateExternal(input,previous){
  if(previous&&input.revision!==previous.revision)throw new Error('外部能力配置已更新，请重新打开');
  const name=String(input.name||'').trim(),description=String(input.description||'').trim();

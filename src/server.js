@@ -76,6 +76,8 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/api/goal-preview'&&req.method==='POST')return json(res,200,previewGoal((await body(req)).text));
     if(url.pathname==='/api/goals'&&req.method==='GET')return json(res,200,platform.goals());
     if(url.pathname==='/api/goals'&&req.method==='POST')return json(res,201,await platform.create(await body(req)));
+    const planningMatch=url.pathname.match(/^\/api\/goals\/([^/]+)\/planning$/);
+    if(planningMatch&&req.method==='POST')return json(res,200,await platform.planning.propose(planningMatch[1],await body(req)));
     const goalMatch=url.pathname.match(/^\/api\/goals\/([^/]+)\/actions$/);
     if(goalMatch&&req.method==='POST')return json(res,200,await platform.action(goalMatch[1],await body(req)));
     if(url.pathname==='/api/agents'&&req.method==='GET')return json(res,200,platform.agents());
@@ -103,7 +105,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }

@@ -18,7 +18,7 @@ export async function callModel(model,messages,tools=[],options={}){
  const key=process.env[model.secretEnv];if(!key)throw new Error('模型密钥尚未配置：'+model.secretEnv);
  const signal=AbortSignal.timeout(model.timeoutMs),abort=new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
  await Promise.race([validateDestination(model.endpoint,options.resolve),abort]);signal.throwIfAborted();
- const response=await (options.fetch||fetch)(model.endpoint,{method:'POST',redirect:'error',signal,headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({model:model.model,messages,max_tokens:1600,...(tools.length?{tools,tool_choice:'auto'}:{})})});
+ const response=await (options.fetch||fetch)(model.endpoint,{method:'POST',redirect:'error',signal,headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({model:model.model,messages,max_tokens:Number.isInteger(options.maxOutputTokens)?Math.max(256,Math.min(4000,options.maxOutputTokens)):1600,...(tools.length?{tools,tool_choice:'auto'}:{})})});
  if(!response.ok)throw new Error('模型服务 HTTP '+response.status+'；错误正文未记录');
  let size=0;const parts=[],reader=response.body.getReader();
  while(true){const {done,value}=await Promise.race([reader.read(),abort]);if(done)break;size+=value.length;if(size>256000){await reader.cancel();throw new Error('模型响应超过256KB');}parts.push(value);}
