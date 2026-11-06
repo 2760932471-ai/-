@@ -40,6 +40,13 @@ const server = http.createServer(async (req, res) => {
       if(process.env.PLATFORM_TOKEN&&req.headers.authorization!==`Bearer ${process.env.PLATFORM_TOKEN}`)return json(res,401,{error:'请填写工作空间访问令牌'});
       if(req.method!=='GET'&&req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)return json(res,403,{error:'不允许跨站修改工作空间'});
     }
+    if(url.pathname==='/api/sources'&&req.method==='GET')return json(res,200,platform.sources.view());
+    const sourceMatch=url.pathname.match(/^\/api\/(sources|materials)(?:\/([^/]+))?(?:\/(sync|review))?$/);
+    if(sourceMatch){const [,type,id,op]=sourceMatch;
+      if(type==='sources'&&op==='sync'&&req.method==='POST')return json(res,200,await platform.sources.sync(id));
+      if(type==='materials'&&op==='review'&&req.method==='POST')return json(res,200,await platform.sources.review(id,await body(req)));
+      if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id))return json(res,200,await platform.sources[type==='sources'?'saveSource':'saveMaterial'](id,await body(req)));
+    }
     if(url.pathname==='/api/workforce'&&req.method==='GET')return json(res,200,platform.workforce.view());
     const workforceMatch=url.pathname.match(/^\/api\/(employees|models|skills)(?:\/([^/]+))?(?:\/(test))?$/);
     if(workforceMatch){const [,type,id,op]=workforceMatch;
@@ -78,7 +85,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }

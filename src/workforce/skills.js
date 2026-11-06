@@ -14,6 +14,7 @@ export const skillDefinitions=[
 const missing=fields=>({status:'needs_input',summary:'需要补充业务输入才能继续。',missing:fields,artifacts:[],metrics:{}});
 const result=(title,body,evidence,metrics={})=>({status:'succeeded',summary:title,missing:[],artifacts:[{title,body,evidence}],metrics});
 const finite=v=>v!==''&&v!==null&&v!==undefined&&typeof v!=='boolean'&&Number.isFinite(Number(v))&&Number(v)>=0&&Number(v)<=1e12;
+const citations=input=>(input.references||[]).map(r=>`- ${r.title}（${r.sourceName}，v${r.revision}，SKU ${r.sku||'通用知识'}）\n  ${r.type==='image'?'授权参考图：'+r.imageUrl:r.body}\n  来源：${r.url||'内部登记'}；使用范围：${r.rightsNote||'仅供参考'}`).join('\n')||'尚未选用参考资料';
 const money=n=>Math.round((n+Number.EPSILON)*100)/100;
 export function skillSample(id){
  const common={goal:'为角阀准备上新资料和经营测算',kind:'listing',scope:{store:'演示店',sku:'DEMO-001',product:'角阀'},facts:{confirmed:true,material:'黄铜（演示）',connector:'G1/2（演示）',cost:12,stock:200,source:'虚构测试资料'},proposal:{title:'黄铜角阀 G1/2',price:29.9}};
@@ -29,14 +30,14 @@ export async function executeSkill(id,input){
  if(id==='finance.calculate')return insightAgent(input);
  if(id==='content.outline'){
   const checked=productAgent(input);if(checked.status!=='succeeded')return checked;
-  return result('商品详情页文字大纲（规则草拟）',`商品：${input.scope.product}\n1. 首屏：${input.proposal.title}\n2. 已确认参数：材质 ${input.facts.material}；接口 ${input.facts.connector}\n3. 商品信息：SKU ${input.scope.sku}；售价 ${input.proposal.price}\n4. 待补证明：商品实拍、尺寸图、供应商检测/材质凭证\n5. 待核验安装说明：适用环境、安装条件与不兼容情形\n6. 售后说明：以店铺确认的政策为准\n\n这是规则模板生成的结构，不含图片，不证明安装兼容性，发布前须核验。`,input.facts.source);
+  return result('商品详情页文字大纲（规则草拟）',`商品：${input.scope.product}\n1. 首屏：${input.proposal.title}\n2. 已确认参数：材质 ${input.facts.material}；接口 ${input.facts.connector}\n3. 商品信息：SKU ${input.scope.sku}；售价 ${input.proposal.price}\n4. 待补证明：商品实拍、尺寸图、供应商检测/材质凭证\n5. 待核验安装说明：适用环境、安装条件与不兼容情形\n6. 售后说明：以店铺确认的政策为准\n\n已选参考资料（按原文列出，不自动验证或覆盖商品事实）：\n${citations(input)}\n\n这是规则模板生成的结构，不含生成图片，不证明安装兼容性，发布前须核验。`,input.facts.source);
  }
  if(id==='content.review'){
   const text=[input.proposal?.title,...(input.observations||[]).map(a=>a.body)].filter(Boolean).join('\n');if(!text)return missing(['待检查内容']);
   const hits=['全网最低','永久不漏','百分百','100%','零风险','国家级','顶级'].filter(w=>text.includes(w));
   return result('宣传声明初筛',`发现的待核验表述：${hits.join('、')||'未命中当前有限词表'}。\n检查范围：标题与本轮已有文字成果。\n还需人工核验参数依据、图片真实性、安装兼容性、知识产权及各平台规则。未命中词表不等于合规通过。`,'本轮输入与成果；有限声明词规则 v1',{flags:hits,approved:false});
  }
- if(id==='task.brief')return input.goal?result('任务交付摘要',`目标：${input.goal}\n范围：${input.scope?.store||'未填写'} / ${input.scope?.sku||'未填写'}\n已接收成果：\n${(input.observations||[]).map(a=>'- '+a.title).join('\n')||'暂无前序成果'}\n\n交付后由负责人核对来源、缺项与执行边界。本次任务不执行真实发布、调价或投放。`,'用户目标与当前任务成果'):missing(['经营目标']);
+ if(id==='task.brief')return input.goal?result('任务交付摘要',`目标：${input.goal}\n范围：${input.scope?.store||'未填写'} / ${input.scope?.sku||'未填写'}\n已接收成果：\n${(input.observations||[]).map(a=>'- '+a.title).join('\n')||'暂无前序成果'}\n\n已选参考资料：\n${citations(input)}\n\n交付后由负责人核对来源、缺项与执行边界。本次任务不执行真实发布、调价或投放。`,'用户目标与当前任务成果'):missing(['经营目标']);
  if(id==='selection.score'||id==='product.compare'){
   const rows=input.candidates;if(!Array.isArray(rows)||rows.length<2||rows.length>50)return missing(['2–50 个有来源的候选商品']);
   if(rows.some(r=>!r.sku||!r.source))return missing(['每个候选商品的 SKU 和来源']);

@@ -1,3 +1,4 @@
+import {initialSources,createSourceManager} from './sources.js';
 import {defaultEmployees} from './workforce/employees.js';
 import {createTeamManager} from './workforce/team.js';
 import {runEmployee} from './workforce/runtime.js';
@@ -12,22 +13,24 @@ import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
 const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
-export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel}={}){
+export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
- data.employees??=defaultEmployees();data.models??=[];
+ data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];
+ for(const s of data.sources)if(s.syncing){s.syncing=false;s.lastSync={status:"failed",at:now(),error:"服务重启中断同步，请重试"};}
  let chain=Promise.resolve(),pumping=false;
  async function transaction(fn){const op=chain.then(async()=>{const next=structuredClone(data);const result=await fn(next);await writeFile(file+'.tmp',JSON.stringify(next),{mode:0o600});await rename(file+'.tmp',file);data=next;return structuredClone(result);});chain=op.catch(()=>{});return op;}
  await transaction(d=>{for(const r of d.runs)if(r.status==='running'){r.status='interrupted';r.error='服务重启中断了本次调用，请确认后重试';r.finishedAt=now();const g=d.goals.find(g=>g.id===r.goalId);if(g?.runtime?.runId===r.id)g.runtime={...g.runtime,status:'failed',error:r.error};}});
  const findGoal=(d,id)=>{const g=d.goals.find(g=>g.id===id);if(!g)throw Object.assign(new Error('目标不存在'),{status:404});return g;};
  const findAgent=(d,id)=>{const a=d.agents.find(a=>a.id===id);if(!a)throw Object.assign(new Error('Agent不存在'),{status:404});return a;};
- const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event});
+ const sources=createSourceManager({getData:()=>data,transaction,transport:sourceTransport});
+ const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources});
  function enqueue(d,agentId,input,meta={},override){
   if(d.runs.filter(r=>['queued','running'].includes(r.status)).length>=100)throw new Error('运行队列已满，请稍后再试');
   const config=structuredClone(override||findAgent(d,agentId));if(!config.enabled)throw new Error(config.name+'已停用');
   const run={id:randomUUID(),agentId,agentName:config.name,configVersion:config.revision,config,status:'queued',input,createdAt:now(),...meta};d.runs.unshift(run);return run;
  }
- function inputs(g){return {...g.skillData,goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text})),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({title:a.title,body:a.body,evidence:a.evidence}))};}
+ function inputs(g){return {...g.skillData,references:sources.resolve(g),goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text})),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({title:a.title,body:a.body,evidence:a.evidence}))};}
  function schedule(d,g){
   if(g.mode==='team')return team.schedule(d,g);
   if(g.mode!=='platform'||g.paused||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status))return;
@@ -75,7 +78,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  });}
  async function action(id,input){return transaction(d=>{
   const g=findGoal(d,id);const kind=input.kind;
-  if(g.mode==='team')return team.action(d,g,input);
+  if(g.mode==='team'){if(['plan','complete'].includes(kind))sources.resolve(g,d);return team.action(d,g,input);}
   if(kind==='message'&&g.mode==='platform'){const mentioned=d.agents.filter(a=>g.members.includes(a.id)&&typeof input.text==='string'&&input.text.includes('@'+a.name.replace(' Agent','')));if(mentioned.length>1)throw new Error('本轮请选择一位接收者，或删除多个@交给数字员工协调');if(mentioned.length===1){if(input.target&&input.target!=='coordinator'&&input.target!==mentioned[0].id)throw new Error('@成员与接收者不一致，请确认发送给谁');input={...input,target:mentioned[0].id};}}
   if(g.mode!=='platform'){goalAction(g,input);return g;}
   if(['facts','ledger','plan','revise','reject','approve','retry','complete'].includes(kind)&&input.expectedVersion!==g.version)throw conflict('目标版本已改变，请重新检查当前内容');
@@ -128,20 +131,20 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
    }});
    // Claim only one call per pump. Goal pipelines remain sequential and nonblocking for HTTP routes.
    const run=await transaction(d=>{for(const old of d.runs){if(old.status==='queued'&&old.purpose==='draft'){const g=findGoal(d,old.goalId);if(g.version!==old.goalVersion||g.stage!=='draft'){old.status='discarded';old.finishedAt=now();old.error='目标已变更，未调用旧版本任务';}}}const r=d.runs.slice().reverse().find(r=>r.status==='queued'&&(!r.goalId||r.purpose==='chat'||!findGoal(d,r.goalId).paused));if(!r)return null;r.status='running';r.startedAt=now();const g=d.goals.find(g=>g.runtime?.runId===r.id);if(g)g.runtime.status='running';return r;});
-   if(run){let result,error;try{if(run.config.employee){
+   if(run){let result,error;try{if(run.goalId)sources.resolve(findGoal(data,run.goalId));if(run.config.employee){
      const e=data.employees.find(e=>e.id===run.agentId);if(!e?.enabled)throw new Error('员工已停用');
-     result=await runEmployee(run.config.employee,run.config.model,run.input,{modelCall,onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{const g=data.goals.find(g=>g.id===run.goalId);return data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
+     result=await runEmployee(run.config.employee,run.config.model,run.input,{modelCall,onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{const g=data.goals.find(g=>g.id===run.goalId);if(g)sources.resolve(g);return data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
     }else if(run.config.modelTest){const answer=await modelCall(run.config.model,[{role:'user',content:'请回复：模型连接正常。'}],[]);result={status:'succeeded',summary:'模型连接测试通过',missing:[],artifacts:[{title:'连接测试',body:answer.message.content||'收到有效响应',evidence:'所配置模型接口实际响应'}],metrics:{}};}
     else if(run.config.skillId)result=await executeSkill(run.config.skillId,run.input);
     else{const currentConfig=data.agents.find(a=>a.id===run.agentId);if(!currentConfig?.enabled)throw new Error('Agent在运行前已停用');result=await invoke(run.config,run.input);}}catch(e){error=e.name==='TimeoutError'||e.name==='AbortError'?'Agent调用超时，可检查配置后重试':run.config.adapter==='http'?(String(e.message).startsWith('Agent')||String(e.message).startsWith('该Agent')||String(e.message).startsWith('服务端')?e.message:'外部Agent请求失败，请检查连接和服务端配置'):e.message;}
-    await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.finishedAt=now();r.durationMs=Date.parse(r.finishedAt)-Date.parse(r.startedAt);r.status=error?'failed':result.status;r.error=error||null;r.result=result||null;applyRun(d,r);});
+    await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.finishedAt=now();r.durationMs=Date.parse(r.finishedAt)-Date.parse(r.startedAt);r.status=error?'failed':result.status;r.error=error||null;r.result=result||null;if(!error&&r.goalId){try{sources.resolve(findGoal(d,r.goalId),d);}catch(e){r.error=e.message;r.status='failed';r.result=null;}}applyRun(d,r);});
    }
   }finally{pumping=false;}
  }
  return {
   goals:()=>structuredClone(data.goals),agents:()=>data.agents.map(publicConfig),runs:()=>data.runs.map(({config,input,result,...r})=>r),
   run:id=>{const r=data.runs.find(r=>r.id===id);if(!r)throw Object.assign(new Error('运行记录不存在'),{status:404});const {config,...safe}=r;return structuredClone(safe);},
-  create,action,pump,workforce:team,
+  create,action,pump,workforce:team,sources,
   saveAgent:(id,input)=>transaction(d=>{const prev=findAgent(d,id);const next=validateConfig(input,prev);d.agents[d.agents.indexOf(prev)]=next;return publicConfig(next);}),
   testAgent:(id,input)=>transaction(d=>{if(input!==undefined&&(!input||typeof input!=='object'||Array.isArray(input)))throw new Error('测试输入必须为JSON对象');const run=enqueue(d,id,input??testSample(id),{purpose:'test'});return {id:run.id,status:run.status};}),
   sample:id=>{findAgent(data,id);return testSample(id);},

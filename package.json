@@ -1,13 +1,13 @@
 {
   "name": "muyaju-digital-employee",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/engine.js && node --check src/chat.js && node --check public/app.js && node --check src/goals.js && node --check scripts/build-demo.mjs && node --check src/platform.js && node --check src/agents/builtins.js && node --check src/agents/registry.js && node --check scripts/publish-preview.mjs && node --check public/workforce.js && node --check src/workforce/catalog.js && node --check src/workforce/employees.js && node --check src/workforce/skills.js && node --check src/workforce/model.js && node --check src/workforce/runtime.js && node --check src/workforce/team.js && node --check src/workforce/codex-local.js",
+    "check": "node --check src/server.js && node --check src/engine.js && node --check src/chat.js && node --check public/app.js && node --check src/goals.js && node --check scripts/build-demo.mjs && node --check src/platform.js && node --check src/agents/builtins.js && node --check src/agents/registry.js && node --check scripts/publish-preview.mjs && node --check public/workforce.js && node --check src/workforce/catalog.js && node --check src/workforce/employees.js && node --check src/workforce/skills.js && node --check src/workforce/model.js && node --check src/workforce/runtime.js && node --check src/workforce/team.js && node --check src/workforce/codex-local.js && node --check src/sources.js && node --check src/sources-transport.js && node --check public/sources.js",
     "demo": "node scripts/build-demo.mjs",
     "pack": "npm run demo && python3 scripts/pack-platform.py",
     "deploy:preview": "node scripts/publish-preview.mjs",

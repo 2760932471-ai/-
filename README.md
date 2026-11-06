@@ -1,8 +1,14 @@
-# AI数字员工协作工作台 · V0.3
+# AI数字员工协作工作台 · V0.4
 
 按慕雅居方案V2.4建设岗位员工与能力装配：12类岗位模板、134项规划能力目录、10个可执行代码Skill、4名默认试点员工。支持真实后端持久化、群聊、团队目标、模型接入与有上限的执行循环。
 
 **当前默认是规则试运行。模型适配已实现，但尚未用用户账号完成真实模型验证；店铺业务写入未接通。**
+
+## 资料接入与选用
+
+入口：**能力中心 → 资料与来源**。支持企业知识正文、供应商商品链接和参考图登记，以及授权 HTTP 适配接口同步。资料审核后，在目标的“资料 → 商品与参考素材”按 SKU 选用，员工交付会保留引用。
+
+这不是已接通客户 CMS 或 1688：原生连接器、客户授权、图片生成和文件解析尚待实现。见 [资料来源接入与交互说明](docs/资料来源接入_V0.4.md)。
 
 ## 从这里开始
 
@@ -62,6 +68,6 @@ npm run pack
 npm run deploy:preview
 ```
 
-`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.3.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
+`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.4.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
 
 `src/workforce/`包含能力目录、Skill、员工配置、模型/API/Codex适配、执行循环与团队任务。`public/workforce.js`为员工和能力中心界面。旧版规则与模拟发布保留兼容，V0.2说明及PRD中未实现条款不能当作本版已交付能力。
