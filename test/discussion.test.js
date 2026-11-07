@@ -14,10 +14,10 @@ const latest=(p,g)=>p.goals().find(x=>x.id===g.id);
 const send=(p,g,more={})=>p.action(g.id,{kind:'message',text:'客户说安装后漏水怎么办',target:'employee-service',intent:'discuss',...more});
 const invite=(p,g,id)=>p.action(g.id,{kind:'inviteDiscussion',employeeId:id});
 test('12 basic roles are ready and each can run its declared sample without a model',async()=>{
- const {p,dir}=await make();assert.equal(p.workforce.view().employees.length,12);assert(p.workforce.view().employees.every(e=>e.readiness.ready));
+ const {p,dir}=await make();assert.equal(p.workforce.view().employees.length,17);assert(p.workforce.view().employees.every(e=>e.readiness.ready));
  for(const e of defaultEmployees()){const run=await p.workforce.testEmployee(e.id);await p.pump();assert.equal(p.run(run.id).status,'succeeded',e.name);}
  const old=JSON.parse(await readFile(path.join(dir,'platform.json'),'utf8'));old.employees=old.employees.slice(0,4);old.employees[0].enabled=false;old.employees[0].name='保留用户配置';await writeFile(path.join(dir,'platform.json'),JSON.stringify(old));
- const migrated=await createPlatform(dir);assert.equal(migrated.workforce.view().employees.length,12);assert.equal(migrated.workforce.view().employees[0].name,'保留用户配置');assert.equal(migrated.workforce.view().employees[0].enabled,false);
+ const migrated=await createPlatform(dir);assert.equal(migrated.workforce.view().employees.length,17);assert.equal(migrated.workforce.view().employees[0].name,'保留用户配置');assert.equal(migrated.workforce.view().employees[0].enabled,false);
 });
 test('traffic metrics compute actual inputs and handle zero denominators and inconsistent counts',async()=>{
  const input=skillSample('traffic.funnel'),r=await executeSkill('traffic.funnel',input);assert.deepEqual(r.metrics,{ctr:5,cvr:4,cpc:1.2,cpa:30,roas:3.33});input.traffic.clicks=0;input.traffic.orders=0;const zero=await executeSkill('traffic.funnel',input);assert.equal(zero.metrics.cpa,null);input.traffic.orders=3;assert.equal((await executeSkill('traffic.funnel',input)).status,'needs_input');
@@ -58,4 +58,21 @@ test('in-flight model reply is discarded if context is reset; model sees selecte
   const m=await p.workforce.saveModel(null,{provider:'codex-local',name:'受控模型',model:'',timeoutMs:1000});await p.workforce.testModel(m.id);await p.pump();const e=p.workforce.view().employees.find(e=>e.id==='employee-service');await p.workforce.saveEmployee(e.id,{...e,mode:'model',modelId:m.id});let g=await goal(p);g=await invite(p,g,e.id);g=await p.action(g.id,{kind:'chatContext',revision:1,note:'先核对订单'});await send(p,g);const pump=p.pump();await started;assert.equal(seen.conversationContext.note,'先核对订单');assert(seen.conversation.some(m=>m.text.includes('漏水')));
   g=latest(p,g);await p.action(g.id,{kind:'chatContext',revision:2,reset:true});finish({message:{role:'assistant',tool_calls:[{id:'call-1',type:'function',function:{name:'service_triage',arguments:'{}'}}]}});await pump;g=latest(p,g);assert.equal(g.messages.at(-1).status,'discarded');assert.equal(p.run(g.messages.at(-1).runId).result,null);
  }finally{for(const [i,k]of ['ENABLE_CODEX_LOCAL','PLATFORM_TOKEN'].entries())if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];}
+});
+
+test('Chinese-adjacent and full-width mentions work, email addresses remain ordinary text',()=>{
+ const staff=[{id:'a',name:'内容员工'},{id:'b',name:'客服员工'}];
+ assert.deepEqual(mentionedEmployees('请@内容员工帮我写文案，＠客服员工看看',staff),['a','b']);
+ assert.deepEqual(mentionedEmployees('邮箱 user@example.com',staff),[]);
+});
+test('selecting outside employees adds them atomically to discussion without changing execution',async()=>{
+ const {p}=await make();const g=await goal(p),id='employee-copy-titles';
+ await assert.rejects(p.action(g.id,{kind:'message',text:'你好',inviteIds:[id],mentionIds:[id]}),/不一致/);assert(!latest(p,g).participants.includes(id));
+ const result=await p.action(g.id,{kind:'message',text:'请＠商品标题数字员工你能做什么？',inviteIds:[id],mentionIds:[id]});assert(result.participants.includes(id));assert.deepEqual(result.members,g.members);assert.equal(result.version,g.version);await p.pump();assert.equal(latest(p,g).messages.at(-1).employeeId,id);
+});
+test('legacy platform conversations support employee mentions without migrating tasks or artifacts',async()=>{
+ const {p,dir}=await make();const g=await p.create({requestId:randomUUID(),text:'旧版商品资料协作目标',kind:'listing',members:['product','insight'],permission:'draft'});const before=structuredClone(g);
+ const sent=await p.action(g.id,{kind:'message',workforceChat:true,text:'请@客服售后数字员工客户收到快递破损怎么办？',mentionIds:['employee-service'],inviteIds:['employee-service']});assert.equal(sent.mode,'platform');assert.deepEqual(sent.tasks,before.tasks);assert.deepEqual(sent.members,before.members);assert.equal(sent.version,before.version);await p.pump();assert.equal(latest(p,g).messages.at(-1).employeeId,'employee-service');assert.match(latest(p,g).messages.at(-1).text,/物流/);
+ await p.action(g.id,{kind:'message',workforceChat:true,text:'下一步是什么？'});await p.pump();assert.match(latest(p,g).messages.at(-1).text,/当前/);
+ const again=await createPlatform(dir);assert.equal(again.goals()[0].discussionMode,'employees');assert.deepEqual(again.goals()[0].tasks,before.tasks);
 });

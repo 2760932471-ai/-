@@ -1,3 +1,4 @@
+import {validateCopyBrief} from './content.js';
 import {discussionMembers,contextSettings,mentionedEmployees,selectConversation,updateContext} from './conversation.js';
 import {assertPlanCurrent,planningSignature,validatePlan} from './planning.js';
 import {validateExternal,publicExternal,externalDefinitions,externalBlockers} from './external.js';
@@ -44,12 +45,14 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(['knowledge','references','facts','ledger','inputs','plan','retry','complete','revise','adoptPlan','discardPlan','replan'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
   if(k==='message'){
    const text=String(input.text||'').trim();if(!text||text.length>2000)fail('请输入1–2000字的消息');if(g.queue.length>=24)fail('待回复队列已满');
-   const people=discussionMembers(g),mentioned=mentionedEmployees(text,people.map(id=>employee(d,id)),input.mentionIds||[]);
+   const invites=input.inviteIds||[];if(!Array.isArray(invites)||invites.length>4)fail('一次最多邀请 4 位员工');invites.forEach(id=>requireReady(d,id));
+   const people=[...new Set([...discussionMembers(g),...invites])];if(people.length>24)fail('讨论成员最多 24 人');const mentioned=mentionedEmployees(text,people.map(id=>employee(d,id)),input.mentionIds||[]);
    if(mentioned.length&&input.target&&input.target!=='coordinator'&&(mentioned.length!==1||input.target!==mentioned[0]))fail('@成员与接收者不一致，请改为数字员工协调或只选一位');
    const recipients=mentioned.length?mentioned:[input.target||'coordinator'];for(const target of recipients)if(target!=='coordinator'&&!people.includes(target))fail('请先邀请该员工加入本目标讨论');
    if(g.queue.length+recipients.length>24)fail('待回复队列已满');
    const intent=input.intent||'discuss';if(!['discuss','context','change'].includes(intent))fail('消息用途无效');
    if(input.replyTo){const ref=g.messages.find(m=>m.id===input.replyTo),c=contextSettings(g);if(!ref)fail('引用消息不存在');if(c.excludedIds.includes(ref.id)||g.messages.indexOf(ref)<=g.messages.findIndex(m=>m.id===c.startAfter))fail('该消息已排除或属于旧话题，请将必要背景重新说明');}
+   if(invites.some(id=>!mentioned.includes(id)))fail('新邀请员工必须出现在本条 @ 消息中');g.participants=people;
    const m={id:randomUUID(),role:'human',author:'你',text,at:stamp(),goalVersion:g.version,replyTo:input.replyTo||null,targets:recipients,intent};g.messages.push(m);
    for(const target of recipients)g.queue.push({source:m.id,target,intent});
   }else if(k==='inviteDiscussion'){
@@ -75,10 +78,11 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
     if(!g.planProposal||g.planProposal.id!==input.proposalId)fail('草案已变化，请刷新');g.planProposal=null;
    }else if(k==='inputs'){
     if(!['plan','draft'].includes(g.stage))fail('当前阶段不能修改Skill业务资料');const context=input.data;
-    if(!context||typeof context!=='object'||Array.isArray(context)||Object.keys(context).some(k=>!['candidates','unitCosts','inventory','commerce','campaign','replenishment','traffic','serviceQuestion'].includes(k)))fail('只接受已定义的业务资料字段');
+    if(!context||typeof context!=='object'||Array.isArray(context)||Object.keys(context).some(k=>!['candidates','unitCosts','inventory','commerce','campaign','replenishment','traffic','serviceQuestion','copyBrief'].includes(k)))fail('只接受已定义的业务资料字段');
     if(context.candidates&&(!Array.isArray(context.candidates)||context.candidates.length>50||context.candidates.some(c=>!c||typeof c!=='object'||Array.isArray(c))))fail('候选商品最多50项且每项需为对象');
     for(const key of ['unitCosts','inventory'])if(context[key]&&(typeof context[key]!=='object'||Array.isArray(context[key])))fail('成本或库存资料格式错误');
     for(const key of ['commerce','campaign','replenishment','traffic'])if(context[key]&&(typeof context[key]!=='object'||Array.isArray(context[key])))fail('业务输入必须为对象');if(context.serviceQuestion!==undefined&&(typeof context.serviceQuestion!=='string'||context.serviceQuestion.length>2000))fail('客户问题最多2000字');
+    if(context.copyBrief!==undefined)context.copyBrief=validateCopyBrief(context.copyBrief);
     g.skillData=structuredClone(context);revise(g);
    }else if(k==='knowledge'){
     if(!['plan','draft'].includes(g.stage))fail('当前阶段不能修改知识检索范围');g.knowledge=knowledge.validateScope(input.knowledge,d);revise(g);
@@ -105,7 +109,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
     if(g.stage!=='review')fail('请等待员工完成交付');g.stage='completed';g.artifacts.filter(a=>a.version===g.version).forEach(a=>a.status='accepted');event(g,'负责人已验收，本目标结束。');
    }else fail('团队任务不支持此操作；当前仅交付草案，不执行店铺写入');
   }
-  update(g);g.updatedAt=stamp();return g;
+  if(g.mode==='team')update(g);g.updatedAt=stamp();return g;
  }
  function apply(d,g,r){
   if(g.version!==r.goalVersion||g.stage!=='draft'||g.runtime.runId!==r.id){r.status='discarded';r.error='目标版本已变化，此结果未应用';return;}
@@ -125,7 +129,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
    const completed=g.runtime?.completed||[],next=g.members.find(id=>!completed.includes(id));
    const labels={plan:'等待负责人确认计划',draft:'正在执行分工',review:'已交付，等待人工验收',completed:'负责人已验收'};
    const snapshot=g.planProposal||g.executionPlan,missing=g.runtime?.missing?.length?g.runtime.missing:snapshot?.goalVersion===g.version?snapshot.checks.filter(c=>c.status==='missing').flatMap(c=>c.missing):[];
-   event(g,`当前：${g.paused?'目标暂停；':''}${labels[g.stage]||g.stage}。已完成 ${completed.length} / ${g.members.length} 名员工的本轮交付。${next&&g.stage!=='completed'?'下一位：'+employee(d,next).name+'。':''}${missing.length?'待补资料（最近检查）：'+[...new Set(missing)].join('；')+'。':'尚无待补项记录，未记录不代表资料已完整核验。'}${g.runtime?.error?'当前阻塞：'+g.runtime.error+'。':''}请在任务页查看分工、在资料页保存业务事实；这次进度查询没有重跑能力。`);
+   event(g,`当前：${g.paused?'目标暂停；':''}${labels[g.stage]||g.stage}。已完成 ${completed.length} / ${g.members.length} 名员工的本轮交付。${next&&g.stage!=='completed'?'下一位：'+(d.employees.find(e=>e.id===next)?.name||({product:'商品运营',insight:'经营分析',content:'内容营销',service:'客户服务'}[next])||next)+'。':''}${missing.length?'待补资料（最近检查）：'+[...new Set(missing)].join('；')+'。':'尚无待补项记录，未记录不代表资料已完整核验。'}${g.runtime?.error?'当前阻塞：'+g.runtime.error+'。':''}请在任务页查看分工、在资料页保存业务事实；这次进度查询没有重跑能力。`);
    return;
   }
   const people=discussionMembers(g),previous=g.messages.slice(0,g.messages.indexOf(source)).reverse().find(m=>m.role==='human'&&m.resolvedTargets?.length&&!contextSettings(g).excludedIds.includes(m.id)&&g.messages.indexOf(m)>g.messages.findIndex(x=>x.id===contextSettings(g).startAfter));
@@ -145,7 +149,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
    g.messages.push({id:randomUUID(),role:'agent',employeeId:id,author:e.name,text:'我目前可以处理：\n'+e.skillIds.map(id=>{const s=defs.find(s=>s.id===id);return '- '+s.name+'：'+s.description+'\n  所需资料：'+skillInputHint(id);}).join('\n')+'\n可在资料页补齐输入，或继续 @ 我讨论。基础代码员工按已装配规则处理，不具备通用模型的自由对话能力。',replyTo:source.id,goalVersion:g.version,status:'succeeded',at:stamp()});return;
   }
   const selected=selectConversation(g,source);
-  const question=people.map(id=>employee(d,id).name).sort((a,b)=>b.length-a.length).reduce((text,name)=>text.replaceAll('@'+name,''),source.text).trim();
+  const question=people.map(id=>employee(d,id).name).sort((a,b)=>b.length-a.length).reduce((text,name)=>text.replaceAll('@'+name,'').replaceAll('＠'+name,''),source.text).trim();
   try{enqueueEmployee(d,id,{...inputs(g),...selected,question},{goalId:g.id,goalVersion:g.version,purpose:'chat',messageId:source.id,contextRevision:contextSettings(g).revision});}catch(e){event(g,e.message);}
 
  }

@@ -1,8 +1,9 @@
+import {contentDefinitions,contentSample,executeContent} from './content.js';
 import {starterDefinitions,starterSample,executeStarter} from './starter-skills.js';
 import {commerceDefinitions,commerceSample,executeCommerce} from './commerce.js';
 import {productAgent,insightAgent} from '../agents/builtins.js';
 export const skillDefinitions=[
- ...commerceDefinitions,...starterDefinitions,
+ ...contentDefinitions,...commerceDefinitions,...starterDefinitions,
  {id:'product.validate',name:'商品资料校验',description:'校验已确认商品字段、成本、库存和售价；不判断真实安装兼容性。',roleIds:['merchandise','selection','risk'],requires:['scope.sku','facts','proposal'],version:1},
  {id:'product.draft',name:'商品草案编排',description:'以确认事实生成商品文字草案；不发布商品。',roleIds:['merchandise','creative'],requires:['scope.sku','facts','proposal'],version:1},
  {id:'finance.calculate',name:'贡献利润核算',description:'计算录入账单的贡献利润；上新时仅计算采购价差并注明限制。',roleIds:['profit','analysis','selection'],requires:['financials 或商品成本/售价'],version:1},
@@ -21,6 +22,7 @@ const citations=input=>(input.references||[]).map(r=>`- ${r.title}（${r.sourceN
 const knowledgeCitations=input=>input.knowledgeRecall?(input.knowledgeRecall.hits.map(r=>`[${r.title} v${r.revision} · 切片 ${r.ordinal}] ${r.text}\n来源：${r.source}`).join('\n\n')||'未召回相关知识，不能据此补全未知事实'):'未启用知识库检索';
 const money=n=>Math.round((n+Number.EPSILON)*100)/100;
 export function skillSample(id){
+ if(contentDefinitions.some(s=>s.id===id))return contentSample();
  if(starterDefinitions.some(s=>s.id===id))return starterSample(id);
  if(commerceDefinitions.some(s=>s.id===id))return commerceSample(id);
  const common={goal:'为角阀准备上新资料和经营测算',kind:'listing',scope:{store:'演示店',sku:'DEMO-001',product:'角阀'},facts:{confirmed:true,material:'黄铜（演示）',connector:'G1/2（演示）',cost:12,stock:200,source:'虚构测试资料'},proposal:{title:'黄铜角阀 G1/2',price:29.9}};
@@ -31,6 +33,7 @@ export function skillSample(id){
  return common;
 }
 export async function executeSkill(id,input){
+ if(contentDefinitions.some(s=>s.id===id))return executeContent(id,input);
  if(starterDefinitions.some(s=>s.id===id))return executeStarter(id,input);
  if(commerceDefinitions.some(s=>s.id===id))return executeCommerce(id,input);
  if(!skillDefinitions.some(s=>s.id===id))throw new Error('Skill尚未实现或不存在');
@@ -68,7 +71,7 @@ export async function executeSkill(id,input){
  }
 }
 
-export function skillInputHint(id){return ({
+export function skillInputHint(id){if(id.startsWith('copy.'))return '内容制作资料：商品名称、渠道、受众、已核验特点及来源；在资料页填写并确认';return ({
  'product.validate':'已确认的商品规格、来源、成本、库存和拟定售价',
  'product.draft':'已确认的商品规格、来源、标题与售价',
  'finance.calculate':'净销售额、各项成本费用、账单来源与期间；上新时可先填写成本和售价',

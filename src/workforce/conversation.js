@@ -1,11 +1,11 @@
-export function discussionMembers(g){return [...new Set([...g.members,...(g.participants||[])])];}
+export function discussionMembers(g){const members=g.mode==='team'?g.members:g.members.map(id=>({product:'employee-merchandise',insight:'employee-profit',content:'employee-creative',service:'employee-service'}[id]||id));return [...new Set([...members,...(g.participants||[])])];}
 export function contextSettings(g){return {revision:1,startAfter:null,pinnedIds:[],excludedIds:[],note:'',maxMessages:12,maxChars:12000,...g.chatContext};}
 export function mentionedEmployees(text,employees,explicit=[]){
  if(!Array.isArray(explicit)||explicit.length>4||explicit.some(id=>!employees.some(e=>e.id===id)))throw new Error('请选择最多 4 位本群员工');
  const found=[];
- for(const token of text.matchAll(/(?:^|\s)@/g)){
+ for(const token of text.matchAll(/(?<![a-zA-Z0-9_.+%-])[@＠]/g)){
   const tail=text.slice(token.index+token[0].length);
-  const matches=employees.filter(e=>tail.startsWith(e.name)&&(!tail[e.name.length]||/[\s，。！？、,:：;；]/.test(tail[e.name.length]))).sort((a,b)=>b.name.length-a.name.length);
+  const matches=employees.filter(e=>tail.startsWith(e.name)).sort((a,b)=>b.name.length-a.name.length);
   if(!matches.length)throw new Error('未找到 @ 的本群员工，请先邀请并从候选列表选择');
   for(const e of matches.filter(e=>e.name.length===matches[0].name.length))if(!found.some(x=>x.id===e.id))found.push(e);
  }

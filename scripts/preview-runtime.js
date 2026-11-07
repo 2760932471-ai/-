@@ -12,5 +12,5 @@ const previewFS={
  async rename(from,to){const value=previewMemory.get(from);if(previewPersistent&&to.endsWith('/platform.json')){try{localStorage.setItem(previewKey,value);}catch{throw new Error('浏览器本地存储已满，未保存本次更改。请导出或清理预览数据后再试。');}}previewMemory.set(to,value);previewMemory.delete(from);}
 };
 const previewBar=document.querySelector('#preview-status');
-previewBar.textContent=previewPersistent?'免安装交互预览 · 数据仅保存在当前浏览器 · 未连接真实店铺和外部 Agent':'免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
+previewBar.textContent=previewPersistent?'V0.9 · 免安装交互预览 · 数据仅保存在当前浏览器 · 未连接真实店铺和外部 Agent':'V0.9 · 免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
 document.querySelector('#preview-reset').onclick=()=>{if(!confirm('清空这个预览中的目标、消息和配置，并恢复演示样例？完整后端数据不受影响。'))return;if(previewPersistent)localStorage.removeItem(previewKey);location.reload();};

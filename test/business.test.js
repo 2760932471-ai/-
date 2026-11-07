@@ -37,7 +37,7 @@ test('service evidence preserves policy citations and stops on missing or irrele
  input.knowledgeRecall.hits=[];assert.equal((await executeCommerce('service.evidence',input)).status,'needs_input');input.knowledgeRecall.hits=[{text:'品牌主色为蓝色'}];assert.equal((await executeCommerce('service.evidence',input)).status,'needs_input');
 });
 test('business recipe installation is idempotent and actual goal execution delivers loss analysis',async()=>{
- const p=await make();const e=await p.workforce.install('sku-profit');assert.equal((await p.workforce.install('sku-profit')).id,e.id);assert.equal(p.workforce.view().employees.length,13);assert.deepEqual(p.workforce.recommend('查清本月哪些商品亏损').employeeIds,[e.id]);
+ const p=await make();const e=await p.workforce.install('sku-profit');assert.equal((await p.workforce.install('sku-profit')).id,e.id);assert.equal(p.workforce.view().employees.length,18);assert.deepEqual(p.workforce.recommend('查清本月哪些商品亏损').employeeIds,[e.id]);
  const g=await p.create({requestId:'business-goal-001',text:'查清本月哪些商品亏损',kind:'analysis',employeeIds:[e.id]});const saved=await p.action(g.id,{kind:'inputs',expectedVersion:g.version,data:commerceSample('commerce.sku_profit')});await p.action(g.id,{kind:'plan',expectedVersion:saved.version});await p.pump();assert.equal(p.goals()[0].stage,'review');assert.match(p.goals()[0].artifacts[0].body,/DEMO-B/);
  await p.action(g.id,{kind:'message',text:'这些商品亏损主要在哪里？',target:'coordinator',intent:'discuss'});await p.pump();assert.equal(p.runs()[0].agentId,e.id);assert.equal(p.runs()[0].purpose,'chat');
 });

@@ -340,20 +340,22 @@ export const capabilities=[
     "io": "商品事实 → 标题候选",
     "state": "partial",
     "skillIds": [
-      "product.draft"
+        "copy.titles"
     ],
-    "scope": "按确认事实组织标题草案；未实现平台搜索优化"
-  },
+    "scope": "基于确认特点编排三组标题并计算字符数；未接入词库与搜索优化"
+},
   {
     "id": "C06",
     "roleId": "merchandise",
     "name": "商品卖点编排Agent",
     "description": "组织功能、优势和适用场景卖点",
     "io": "商品知识 → 卖点结构",
-    "state": "planned",
-    "skillIds": [],
-    "scope": "尚未实现"
-  },
+    "state": "partial",
+    "skillIds": [
+        "copy.selling_points"
+    ],
+    "scope": "按确认事实编排卖点并保留证据；不推导未经核验的功效"
+},
   {
     "id": "C07",
     "roleId": "merchandise",
@@ -422,20 +424,24 @@ export const capabilities=[
     "name": "商品卖点提炼Agent",
     "description": "将参数转换为消费者可理解的核心利益",
     "io": "商品知识 → 卖点文案",
-    "state": "planned",
-    "skillIds": [],
-    "scope": "尚未实现"
-  },
+    "state": "partial",
+    "skillIds": [
+        "copy.selling_points"
+    ],
+    "scope": "按确认事实编排卖点并保留证据；不推导未经核验的功效"
+},
   {
     "id": "D02",
     "roleId": "creative",
     "name": "商品主图AIGC Agent",
     "description": "生成符合事实和平台要求的主图方案",
     "io": "商品实拍/参数 → 主图素材",
-    "state": "planned",
-    "skillIds": [],
-    "scope": "尚未实现"
-  },
+    "state": "partial",
+    "skillIds": [
+        "copy.image_brief"
+    ],
+    "scope": "生成三版文字设计简报与素材清单；尚未生成图片"
+},
   {
     "id": "D03",
     "roleId": "creative",
@@ -454,30 +460,35 @@ export const capabilities=[
     "io": "商品资料 → 详情页大纲",
     "state": "partial",
     "skillIds": [
-      "content.outline"
+        "content.outline",
+        "copy.detail"
     ],
-    "scope": "根据确认参数生成文本结构模板；不生成图片或视频"
-  },
+    "scope": "输出五个文字模块和待补素材；图文排版尚未实现"
+},
   {
     "id": "D05",
     "roleId": "creative",
     "name": "详情页生成Agent",
     "description": "组合图文、参数和安装提示",
     "io": "已核验素材 → 详情页",
-    "state": "planned",
-    "skillIds": [],
-    "scope": "尚未实现"
-  },
+    "state": "partial",
+    "skillIds": [
+        "copy.detail"
+    ],
+    "scope": "生成可审阅的文字稿；未生成图片、HTML 排版或发布"
+},
   {
     "id": "D06",
     "roleId": "creative",
     "name": "短视频脚本Agent",
     "description": "生成商品演示、安装和卖点脚本",
     "io": "商品参数 → 视频脚本",
-    "state": "planned",
-    "skillIds": [],
-    "scope": "尚未实现"
-  },
+    "state": "partial",
+    "skillIds": [
+        "copy.video"
+    ],
+    "scope": "编排 30 / 60 秒分镜、口播和字幕；未生成或剪辑视频"
+},
   {
     "id": "D07",
     "roleId": "creative",
