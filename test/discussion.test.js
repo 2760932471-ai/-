@@ -76,3 +76,21 @@ test('legacy platform conversations support employee mentions without migrating 
  await p.action(g.id,{kind:'message',workforceChat:true,text:'下一步是什么？'});await p.pump();assert.match(latest(p,g).messages.at(-1).text,/当前/);
  const again=await createPlatform(dir);assert.equal(again.goals()[0].discussionMode,'employees');assert.deepEqual(again.goals()[0].tasks,before.tasks);
 });
+
+test('@everyone snapshots all ready group employees beyond four, excludes outsiders and deduplicates named mentions',async()=>{
+ const {p,dir}=await make();let g=await goal(p);for(const id of ['employee-service','employee-growth','employee-copy-titles','employee-copy-detail','employee-copy-video'])g=await invite(p,g,id);
+ const member=p.workforce.view().employees.find(e=>e.id==='employee-growth');await p.workforce.saveEmployee(member.id,{...member,enabled:false});
+ const sent=await p.action(g.id,{kind:'message',text:'请@所有员工 @客服售后数字员工 你能做什么？',target:'employee-coordination'});const human=sent.messages.at(-1);assert.equal(human.mentionAll,true);assert.equal(human.targets.length,5);assert.deepEqual(human.skippedTargets,['employee-growth']);assert(!human.targets.includes('employee-copy-selling_points'));assert.deepEqual(sent.members,g.members);assert.equal(sent.version,g.version);
+ // Joining after send must not change the recipients of an existing broadcast.
+ await invite(p,g,'employee-copy-selling_points');for(let i=0;i<5;i++)await p.pump();g=latest(p,g);const replies=g.messages.filter(m=>m.replyTo===human.id&&m.role==='agent');assert.equal(replies.length,5);assert.equal(new Set(replies.map(m=>m.employeeId)).size,5);assert(!replies.some(m=>m.employeeId==='employee-copy-selling_points'));
+ const again=await createPlatform(dir);assert.deepEqual(again.goals()[0].messages.find(m=>m.id===human.id).targets,human.targets);
+});
+test('@everyone aliases, pauses and queue overflow behave atomically, and deleted all text does not broadcast',async()=>{
+ const {p}=await make();let g=await goal(p);g=await invite(p,g,'employee-service');await p.action(g.id,{kind:'pauseReplies'});
+ for(const text of ['＠所有员工 你能做什么？','@所有人 你能做什么？','@全体成员 你能做什么？','@all 你能做什么？']){const r=await p.action(g.id,{kind:'message',text});assert.equal(r.messages.at(-1).targets.length,2);await p.pump();assert(!latest(p,g).messages.some(m=>m.role==='agent'));}
+ const direct=await p.action(g.id,{kind:'message',text:'@客服售后数字员工 你能做什么？'});assert.equal(direct.messages.at(-1).mentionAll,false);assert.deepEqual(direct.messages.at(-1).targets,['employee-service']);
+ while(latest(p,g).queue.length<23)await p.action(g.id,{kind:'message',text:'普通讨论'});const before=latest(p,g);await assert.rejects(p.action(g.id,{kind:'message',text:'@所有员工 你能做什么？'}),/队列已满/);assert.deepEqual(latest(p,g),before);
+});
+test('broadcast refuses empty ready group and reserves broadcast names for the composer',async()=>{
+ const {p}=await make(),g=await goal(p),e=p.workforce.view().employees.find(e=>e.id==='employee-coordination');await assert.rejects(p.workforce.saveEmployee(e.id,{...e,name:'所有员工'}),/保留/);await p.workforce.saveEmployee(e.id,{...e,enabled:false});await assert.rejects(p.action(g.id,{kind:'message',text:'@所有员工 你好'}),/暂无可回复/);assert.equal(latest(p,g).queue.length,0);
+});

@@ -8,6 +8,7 @@ export function validateEmployee(input,previous,externals=[]){
  if(previous&&input.revision!==previous.revision)throw new Error('员工配置已更新，请重新打开');
  const role=roles.find(r=>r.id===input.roleId);if(!role)throw new Error('请选择有效岗位');
  const name=String(input.name||'').trim(),instructions=String(input.instructions||'').trim();
+ if(['所有员工','所有人','全体成员','all'].includes(name.toLowerCase()))throw new Error('该名称保留给群聊全体提及，请换一个员工名称');
  if(!name||name.length>80||instructions.length>4000)throw new Error('名称必填且不超过80字，职责指令不超过4000字');
  if(!['skills','model'].includes(input.mode))throw new Error('请选择模型驱动或规则试运行');
  if(!Array.isArray(input.skillIds)||input.skillIds.length>10||input.skillIds.some(id=>![...skillDefinitions,...externalDefinitions(externals)].some(s=>s.id===id)))throw new Error('只能装配已实现的 Skill，最多10项');

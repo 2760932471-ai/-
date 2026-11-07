@@ -1,5 +1,5 @@
 import {validateCopyBrief} from './content.js';
-import {discussionMembers,contextSettings,mentionedEmployees,selectConversation,updateContext} from './conversation.js';
+import {discussionMembers,contextSettings,mentionedEmployees,mentionsEveryone,selectConversation,updateContext} from './conversation.js';
 import {assertPlanCurrent,planningSignature,validatePlan} from './planning.js';
 import {validateExternal,publicExternal,externalDefinitions,externalBlockers} from './external.js';
 import {recipes,matchingRecipes} from './commerce.js';
@@ -47,13 +47,14 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
    const text=String(input.text||'').trim();if(!text||text.length>2000)fail('请输入1–2000字的消息');if(g.queue.length>=24)fail('待回复队列已满');
    const invites=input.inviteIds||[];if(!Array.isArray(invites)||invites.length>4)fail('一次最多邀请 4 位员工');invites.forEach(id=>requireReady(d,id));
    const people=[...new Set([...discussionMembers(g),...invites])];if(people.length>24)fail('讨论成员最多 24 人');const mentioned=mentionedEmployees(text,people.map(id=>employee(d,id)),input.mentionIds||[]);
-   if(mentioned.length&&input.target&&input.target!=='coordinator'&&(mentioned.length!==1||input.target!==mentioned[0]))fail('@成员与接收者不一致，请改为数字员工协调或只选一位');
-   const recipients=mentioned.length?mentioned:[input.target||'coordinator'];for(const target of recipients)if(target!=='coordinator'&&!people.includes(target))fail('请先邀请该员工加入本目标讨论');
+   const everyone=mentionsEveryone(text);
+   if(!everyone&&mentioned.length&&input.target&&input.target!=='coordinator'&&(mentioned.length!==1||input.target!==mentioned[0]))fail('@成员与接收者不一致，请改为数字员工协调或只选一位');
+   const recipients=everyone?[...new Set([...people.filter(id=>employeeReadiness(employee(d,id),models(d),d.externalSkills.map(publicExternal)).ready),...mentioned])]:mentioned.length?mentioned:[input.target||'coordinator'];if(!recipients.length)fail('本群暂无可回复员工，请先邀请或启用员工');for(const target of recipients)if(target!=='coordinator'&&!people.includes(target))fail('请先邀请该员工加入本目标讨论');
    if(g.queue.length+recipients.length>24)fail('待回复队列已满');
    const intent=input.intent||'discuss';if(!['discuss','context','change'].includes(intent))fail('消息用途无效');
    if(input.replyTo){const ref=g.messages.find(m=>m.id===input.replyTo),c=contextSettings(g);if(!ref)fail('引用消息不存在');if(c.excludedIds.includes(ref.id)||g.messages.indexOf(ref)<=g.messages.findIndex(m=>m.id===c.startAfter))fail('该消息已排除或属于旧话题，请将必要背景重新说明');}
    if(invites.some(id=>!mentioned.includes(id)))fail('新邀请员工必须出现在本条 @ 消息中');g.participants=people;
-   const m={id:randomUUID(),role:'human',author:'你',text,at:stamp(),goalVersion:g.version,replyTo:input.replyTo||null,targets:recipients,intent};g.messages.push(m);
+   const m={id:randomUUID(),role:'human',author:'你',text,at:stamp(),goalVersion:g.version,replyTo:input.replyTo||null,targets:recipients,intent,mentionAll:everyone,skippedTargets:everyone?people.filter(id=>!recipients.includes(id)):[]};g.messages.push(m);
    for(const target of recipients)g.queue.push({source:m.id,target,intent});
   }else if(k==='inviteDiscussion'){
    const e=requireReady(d,input.employeeId),people=discussionMembers(g);if(people.length>=24&&!people.includes(e.id))fail('讨论成员最多 24 人');g.participants=[...new Set([...people,e.id])];event(g,e.name+'已加入讨论，可 @ 提问；执行计划的成员和授权范围未改变。');
@@ -149,7 +150,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
    g.messages.push({id:randomUUID(),role:'agent',employeeId:id,author:e.name,text:'我目前可以处理：\n'+e.skillIds.map(id=>{const s=defs.find(s=>s.id===id);return '- '+s.name+'：'+s.description+'\n  所需资料：'+skillInputHint(id);}).join('\n')+'\n可在资料页补齐输入，或继续 @ 我讨论。基础代码员工按已装配规则处理，不具备通用模型的自由对话能力。',replyTo:source.id,goalVersion:g.version,status:'succeeded',at:stamp()});return;
   }
   const selected=selectConversation(g,source);
-  const question=people.map(id=>employee(d,id).name).sort((a,b)=>b.length-a.length).reduce((text,name)=>text.replaceAll('@'+name,'').replaceAll('＠'+name,''),source.text).trim();
+  const question=people.map(id=>employee(d,id).name).sort((a,b)=>b.length-a.length).reduce((text,name)=>text.replaceAll('@'+name,'').replaceAll('＠'+name,''),source.text).replace(/(?<![a-zA-Z0-9_.+%-])[@＠](?:所有员工|所有人|全体成员|all(?=$|[\s，。！？、,:：;；]))/gi,'').trim();
   try{enqueueEmployee(d,id,{...inputs(g),...selected,question},{goalId:g.id,goalVersion:g.version,purpose:'chat',messageId:source.id,contextRevision:contextSettings(g).revision});}catch(e){event(g,e.message);}
 
  }
