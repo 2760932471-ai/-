@@ -10,11 +10,11 @@ import {defaultEmployees,employeeReadiness} from '../src/workforce/employees.js'
 import {runEmployee} from '../src/workforce/runtime.js';
 import {callModel} from '../src/workforce/model.js';
 const make=async options=>createPlatform(await mkdtemp(path.join(os.tmpdir(),'workforce-')),options);
-const startInput={requestId:'workforce-test-001',text:'为角阀准备资料、内容与经营测算',kind:'listing',permission:'draft',employeeIds:defaultEmployees().map(e=>e.id)};
+const startInput={requestId:'workforce-test-001',text:'为角阀准备资料、内容与经营测算',kind:'listing',permission:'draft',employeeIds:defaultEmployees().slice(0,4).map(e=>e.id)};
 const tool=(name,args='{}')=>({message:{role:'assistant',content:null,tool_calls:[{id:'call-1',type:'function',function:{name,arguments:args}}]}});
 const answer={message:{role:'assistant',content:'根据实际校验结果形成草案，尚未发布。'}};
-test('V2.4 catalog separates 12 roles, 134 planned entries and 14 executable skills',()=>{
- assert.equal(roles.length,12);assert.equal(capabilities.length,134);assert.equal(new Set(capabilities.map(c=>c.id)).size,134);assert.equal(skillDefinitions.length,14);
+test('V2.4 catalog separates 12 roles, 134 planned entries and 16 executable skills',()=>{
+ assert.equal(roles.length,12);assert.equal(capabilities.length,134);assert.equal(new Set(capabilities.map(c=>c.id)).size,134);assert.equal(skillDefinitions.length,16);
  assert.equal(capabilities.filter(c=>c.state==='implemented').length,1);assert(capabilities.filter(c=>c.state==='planned').length>100);
  for(const c of capabilities)for(const id of c.skillIds)assert(skillDefinitions.some(s=>s.id===id));
 });
@@ -30,7 +30,7 @@ test('employee creation and model readiness are distinct; config persists and st
  const created=await p.workforce.saveEmployee(null,{...old,name:'新商品员工',mode:'model',modelId:null});assert.equal(p.workforce.view().employees.find(e=>e.id===created.id).readiness.ready,false);
  await assert.rejects(()=>p.create({...startInput,employeeIds:[created.id]}),/模型/);
  await p.workforce.saveEmployee(created.id,{...created,mode:'skills'});await assert.rejects(()=>p.workforce.saveEmployee(created.id,{...created,mode:'skills'}),/已更新/);
- const again=await createPlatform(dir);assert.equal(again.workforce.view().employees.length,5);assert.equal(again.workforce.view().employees.find(e=>e.id===created.id).mode,'skills');
+ const again=await createPlatform(dir);assert.equal(again.workforce.view().employees.length,13);assert.equal(again.workforce.view().employees.find(e=>e.id===created.id).mode,'skills');
  const noSkills={...old,skillIds:[]};assert.equal(employeeReadiness(noSkills,[]).ready,false);
 });
 test('four employees hand off real artifacts, recover missing facts and persist chat and traces',async()=>{
@@ -91,7 +91,7 @@ test('additional business data can unblock selection and inventory goals without
 });
 test('pre-workforce storage migrates without losing goals or employee defaults',async()=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'workforce-migrate-'));const p=await createPlatform(dir);const g=await p.create(startInput);const stored=JSON.parse(await readFile(path.join(dir,'platform.json'),'utf8'));delete stored.employees;delete stored.models;await writeFile(path.join(dir,'platform.json'),JSON.stringify(stored));
- const migrated=await createPlatform(dir);assert.equal(migrated.goals()[0].id,g.id);assert.equal(migrated.workforce.view().employees.length,4);
+ const migrated=await createPlatform(dir);assert.equal(migrated.goals()[0].id,g.id);assert.equal(migrated.workforce.view().employees.length,12);
 });
 test('personal Codex bridge is opt-in, uses SDK ChatGPT auth and returns decisions without exposing app secrets',async()=>{
  const {callLocalCodex}=await import('../src/workforce/codex-local.js');const vars=['ENABLE_CODEX_LOCAL','PLATFORM_TOKEN','MODEL_SECRET_PRIVATE'];const saved=Object.fromEntries(vars.map(k=>[k,process.env[k]]));

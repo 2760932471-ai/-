@@ -1,7 +1,8 @@
+import {starterDefinitions,starterSample,executeStarter} from './starter-skills.js';
 import {commerceDefinitions,commerceSample,executeCommerce} from './commerce.js';
 import {productAgent,insightAgent} from '../agents/builtins.js';
 export const skillDefinitions=[
- ...commerceDefinitions,
+ ...commerceDefinitions,...starterDefinitions,
  {id:'product.validate',name:'商品资料校验',description:'校验已确认商品字段、成本、库存和售价；不判断真实安装兼容性。',roleIds:['merchandise','selection','risk'],requires:['scope.sku','facts','proposal'],version:1},
  {id:'product.draft',name:'商品草案编排',description:'以确认事实生成商品文字草案；不发布商品。',roleIds:['merchandise','creative'],requires:['scope.sku','facts','proposal'],version:1},
  {id:'finance.calculate',name:'贡献利润核算',description:'计算录入账单的贡献利润；上新时仅计算采购价差并注明限制。',roleIds:['profit','analysis','selection'],requires:['financials 或商品成本/售价'],version:1},
@@ -20,6 +21,7 @@ const citations=input=>(input.references||[]).map(r=>`- ${r.title}（${r.sourceN
 const knowledgeCitations=input=>input.knowledgeRecall?(input.knowledgeRecall.hits.map(r=>`[${r.title} v${r.revision} · 切片 ${r.ordinal}] ${r.text}\n来源：${r.source}`).join('\n\n')||'未召回相关知识，不能据此补全未知事实'):'未启用知识库检索';
 const money=n=>Math.round((n+Number.EPSILON)*100)/100;
 export function skillSample(id){
+ if(starterDefinitions.some(s=>s.id===id))return starterSample(id);
  if(commerceDefinitions.some(s=>s.id===id))return commerceSample(id);
  const common={goal:'为角阀准备上新资料和经营测算',kind:'listing',scope:{store:'演示店',sku:'DEMO-001',product:'角阀'},facts:{confirmed:true,material:'黄铜（演示）',connector:'G1/2（演示）',cost:12,stock:200,source:'虚构测试资料'},proposal:{title:'黄铜角阀 G1/2',price:29.9}};
  if(id==='finance.calculate')return {...common,kind:'analysis',financials:{netSales:4000,goods:1200,fees:150,fulfillment:300,ads:600,returns:150,other:0,source:'虚构账单',window:'示例一周'}};
@@ -29,6 +31,7 @@ export function skillSample(id){
  return common;
 }
 export async function executeSkill(id,input){
+ if(starterDefinitions.some(s=>s.id===id))return executeStarter(id,input);
  if(commerceDefinitions.some(s=>s.id===id))return executeCommerce(id,input);
  if(!skillDefinitions.some(s=>s.id===id))throw new Error('Skill尚未实现或不存在');
  if(['product.validate','product.draft'].includes(id)){const checked=productAgent(input);if(id==='product.validate'&&checked.status==='succeeded')checked.artifacts=[{title:'商品资料核验记录',body:checked.summary+'\n已检查：资料人工确认、来源、材质/接口字段、SKU、成本、售价与库存。\n只验证输入完整性和基础约束，不证明材质真实或安装兼容。',evidence:input.facts.source}];return checked;}
@@ -64,3 +67,22 @@ export async function executeSkill(id,input){
   return result('库存覆盖测算',`库存覆盖：${days===null?'日销量为0，无法外推耗尽时间':days+'天'}；供货加安全天数：${threshold}天。\n判断：${shortage===null?'无法判断':shortage?'存在缺货风险，需核对补货条件':'按当前输入暂未低于阈值'}。\n这不是销量预测，未自动采购或查询实时库存。`,c.source,{days,shortage});
  }
 }
+
+export function skillInputHint(id){return ({
+ 'product.validate':'已确认的商品规格、来源、成本、库存和拟定售价',
+ 'product.draft':'已确认的商品规格、来源、标题与售价',
+ 'finance.calculate':'净销售额、各项成本费用、账单来源与期间；上新时可先填写成本和售价',
+ 'content.outline':'商品规格、拟定标题和价格，可补充已选素材',
+ 'content.review':'待审核的标题或本轮文字交付物',
+ 'task.brief':'目标、范围和前序交付物',
+ 'selection.score':'至少两个候选商品及有依据的需求、竞争、利润、供货和风险评分',
+ 'product.compare':'至少两个候选商品的参数、价格与来源',
+ 'price.break_even':'单件采购、履约、广告、售后、其他成本及平台费率',
+ 'inventory.coverage':'库存、日均销量、供货周期、安全天数与来源',
+ 'commerce.sku_profit':'逐 SKU 收入费用 CSV、账单来源与统计期间',
+ 'campaign.discount':'原价、单位成本、费率、预计销量、固定预算与折扣列表',
+ 'inventory.replenish':'库存、在途、日销、交期、最小采购量和箱规 CSV',
+ 'service.evidence':'客户问题，以及含有效政策的目标知识库',
+ 'service.triage':'客户原始问题，可以直接在群里告诉我',
+ 'traffic.funnel':'曝光、点击、订单、归因成交额、广告费用、数据来源和统计期间'
+})[id]||'按此能力已配置的数据范围提供资料';}

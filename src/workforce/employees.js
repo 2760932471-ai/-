@@ -1,8 +1,8 @@
 import {externalDefinitions,externalBlockers} from './external.js';
 import {roles,capabilities} from './catalog.js';
 import {skillDefinitions,skillSample} from './skills.js';
-export const roleSkills={merchandise:['product.validate','product.draft'],creative:['content.outline','content.review'],profit:['finance.calculate'],coordination:['task.brief'],selection:['selection.score','product.compare'],research:['product.compare'],supply:['inventory.coverage'],analysis:['finance.calculate'],risk:['content.review']};
-export function defaultEmployees(){return ['merchandise','creative','profit','coordination'].map(id=>({id:'employee-'+id,roleId:id,name:roles.find(r=>r.id===id).name,enabled:true,mode:'skills',modelId:null,skillIds:roleSkills[id],instructions:roles.find(r=>r.id===id).responsibility,maxSteps:5,revision:1}));}
+export const roleSkills={merchandise:['product.validate','product.draft'],creative:['content.outline','content.review'],profit:['finance.calculate'],coordination:['task.brief'],selection:['selection.score','product.compare'],research:['product.compare'],supply:['inventory.coverage'],analysis:['finance.calculate'],risk:['content.review'],growth:['traffic.funnel'],campaign:['campaign.discount'],service:['service.triage']};
+export function defaultEmployees(){return ['merchandise','creative','profit','coordination','research','selection','growth','campaign','supply','service','analysis','risk'].map(id=>({id:'employee-'+id,roleId:id,name:roles.find(r=>r.id===id).name,enabled:true,mode:'skills',modelId:null,skillIds:roleSkills[id],instructions:roleSkills[id].map(s=>skillDefinitions.find(x=>x.id===s).description).join('；'),maxSteps:5,revision:1}));}
 export function validateEmployee(input,previous,externals=[]){
  if(previous&&input.revision!==previous.revision)throw new Error('员工配置已更新，请重新打开');
  const role=roles.find(r=>r.id===input.roleId);if(!role)throw new Error('请选择有效岗位');

@@ -1,3 +1,4 @@
+import {contextSettings,selectConversation} from './workforce/conversation.js';
 import {createPlanningManager,assertPlanCurrent} from './workforce/planning.js';
 import {invokeExternal} from './workforce/external-transport.js';
 import {externalDefinitions,externalBlockers,publicExternal} from './workforce/external.js';
@@ -22,6 +23,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
  data.externalSkills??=[];data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];data.knowledge??=initialKnowledge();
+ for(const e of defaultEmployees())if(!data.employees.some(x=>x.roleId===e.roleId||x.id===e.id))data.employees.push(e);
  for(const doc of data.knowledge.documents)if(doc.index.status==='indexing')doc.index={status:'failed',error:'服务重启中断索引，请重试'};
  for(const s of data.sources)if(s.syncing){s.syncing=false;s.lastSync={status:"failed",at:now(),error:"服务重启中断同步，请重试"};}
  let chain=Promise.resolve(),pumping=false;
@@ -38,7 +40,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   const config=structuredClone(override||findAgent(d,agentId));if(!config.enabled)throw new Error(config.name+'已停用');
   const run={id:randomUUID(),agentId,agentName:config.name,configVersion:config.revision,config,status:'queued',input,createdAt:now(),...meta};d.runs.unshift(run);return run;
  }
- function inputs(g){return {...g.skillData,knowledge:g.knowledge,references:sources.resolve(g),goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text})),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({title:a.title,body:a.body,evidence:a.evidence}))};}
+ function inputs(g){return {...g.skillData,knowledge:g.knowledge,references:sources.resolve(g),goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,...(g.mode==='team'?selectConversation(g,{text:g.text}):{conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text}))}),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({title:a.title,body:a.body,evidence:a.evidence}))};}
  function schedule(d,g){
   if(g.mode==='team')return team.schedule(d,g);
   if(g.mode!=='platform'||g.paused||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status))return;
@@ -56,9 +58,10 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   const g=d.goals.find(g=>g.id===r.goalId);if(!g)return;
   if(r.purpose==='chat'){
    const source=g.messages.find(m=>m.id===r.messageId);if(!source)return;
+   if(r.contextRevision&&r.contextRevision!==contextSettings(g).revision){r.status='discarded';r.result=null;r.error='上下文已变化，本次旧回复未采用';g.messages.push({id:randomUUID(),role:'agent',employeeId:r.agentId,author:r.agentName,text:r.error+'，请在当前话题重新提问。',replyTo:source.id,runId:r.id,goalVersion:r.goalVersion,status:'discarded',at:now()});return;}
    const artifact=r.result?.executionType==='model'?r.result.artifacts.at(-1):r.result?.artifacts[0];
    const text=g.version!==r.goalVersion?'目标资料已更新，本次回复基于旧版本，请按当前资料重新提问。':r.status==='failed'?`调用失败：${r.error}。请检查配置后重新提问。`:r.result.summary+(r.result.missing.length?'\n待补充：'+r.result.missing.join('、'):'')+(artifact?'\n\n'+artifact.body:'');
-   g.messages.push({id:randomUUID(),role:'agent',author:r.agentName,text,replyTo:source.id,runId:r.id,at:now()});return;
+   g.messages.push({id:randomUUID(),role:'agent',employeeId:r.agentId,author:r.agentName,text,replyTo:source.id,runId:r.id,goalVersion:r.goalVersion,status:r.status,at:now()});return;
   }
   if(g.mode==='team')return team.apply(d,g,r);
   if(g.version!==r.goalVersion||g.stage!=='draft'||g.runtime?.runId!==r.id){r.status='discarded';r.error='目标版本或阶段已改变，此结果未写入目标';return;}
@@ -140,7 +143,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
    }});
    // Claim only one call per pump. Goal pipelines remain sequential and nonblocking for HTTP routes.
    const run=await transaction(d=>{for(const old of d.runs){if(old.status==='queued'&&old.purpose==='draft'){const g=findGoal(d,old.goalId);if(g.version!==old.goalVersion||g.stage!=='draft'){old.status='discarded';old.finishedAt=now();old.error='目标已变更，未调用旧版本任务';}}}const r=d.runs.slice().reverse().find(r=>r.status==='queued'&&(!r.goalId||r.purpose==='chat'||!findGoal(d,r.goalId).paused));if(!r)return null;r.status='running';r.startedAt=now();const g=d.goals.find(g=>g.runtime?.runId===r.id);if(g)g.runtime.status='running';return r;});
-   if(run){let result,error;try{if(run.goalId)sources.resolve(findGoal(data,run.goalId));if(run.config.employee){
+   if(run){let result,error;try{if(run.contextRevision&&contextSettings(findGoal(data,run.goalId)).revision!==run.contextRevision)throw new Error('上下文已变化，未发起旧请求');if(run.goalId)sources.resolve(findGoal(data,run.goalId));if(run.config.employee){
      if(run.goalId&&run.purpose==='draft')assertPlanCurrent(data,findGoal(data,run.goalId));
      const e=data.employees.find(e=>e.id===run.agentId);if(!e?.enabled)throw new Error('员工已停用');
      if(run.input.knowledge?.baseIds?.length){
@@ -148,7 +151,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
       run.input.knowledgeRecall=recall;await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.input.knowledgeRecall=recall;(r.trace??=[]).push({phase:'retrieval',status:'succeeded',algorithm:recall.algorithm,hits:recall.hits.length,at:now()});});
      }
 
-     result=await runEmployee(run.config.employee,run.config.model,run.input,{modelCall,definitions:[...skillDefinitions,...externalDefinitions((run.config.externalSkills||[]).map(publicExternal))],skillCall:async(id,input)=>{if(!id.startsWith('external_'))return executeSkill(id,input);const s=(run.config.externalSkills||[]).find(s=>s.id===id),current=data.externalSkills.find(s=>s.id===id);if(!s||current?.revision!==s.revision||externalBlockers(current&&publicExternal(current)).length)throw new Error('外部能力配置已变化或尚未就绪，请检查后重试');const result=await externalCall(s,input);const latest=data.externalSkills.find(x=>x.id===id);if(latest?.revision!==s.revision||!latest.enabled)throw new Error('外部能力在调用期间变更或停用，结果未应用');return result;},onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{const g=data.goals.find(g=>g.id===run.goalId);if(g){sources.resolve(g);if(run.purpose==='draft')assertPlanCurrent(data,g);}knowledge.assertRecall(run.input.knowledgeRecall);return data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
+     result=await runEmployee(run.config.employee,run.config.model,run.input,{modelCall,definitions:[...skillDefinitions,...externalDefinitions((run.config.externalSkills||[]).map(publicExternal))],skillCall:async(id,input)=>{if(!id.startsWith('external_'))return executeSkill(id,input);const s=(run.config.externalSkills||[]).find(s=>s.id===id),current=data.externalSkills.find(s=>s.id===id);if(!s||current?.revision!==s.revision||externalBlockers(current&&publicExternal(current)).length)throw new Error('外部能力配置已变化或尚未就绪，请检查后重试');const result=await externalCall(s,input);const latest=data.externalSkills.find(x=>x.id===id);if(latest?.revision!==s.revision||!latest.enabled)throw new Error('外部能力在调用期间变更或停用，结果未应用');return result;},onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{const g=data.goals.find(g=>g.id===run.goalId);if(g){sources.resolve(g);if(run.purpose==='draft')assertPlanCurrent(data,g);}knowledge.assertRecall(run.input.knowledgeRecall);return (!run.contextRevision||contextSettings(g).revision===run.contextRevision)&&data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
     }else if(run.config.externalTest){const current=data.externalSkills.find(s=>s.id===run.agentId);if(!current?.enabled||current.revision!==run.configVersion)throw new Error('外部配置已变化，请重新测试');result=await externalCall(run.config.external,run.input);}
     else if(run.config.modelTest){const answer=await modelCall(run.config.model,[{role:'user',content:'请回复：模型连接正常。'}],[]);result={status:'succeeded',summary:'模型连接测试通过',missing:[],artifacts:[{title:'连接测试',body:answer.message.content||'收到有效响应',evidence:'所配置模型接口实际响应'}],metrics:{}};}
     else if(run.config.skillId)result=await executeSkill(run.config.skillId,run.input);
