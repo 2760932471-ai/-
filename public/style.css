@@ -42,3 +42,9 @@ button,a{-webkit-tap-highlight-color:transparent}
 .composer-shortcuts{display:flex;align-items:center;gap:10px;min-width:0}.composer-shortcuts>span{font-size:11px;color:var(--muted)}.composer-shortcuts button{width:44px;font-size:20px;padding:0;color:var(--ink)}
 .chat-options summary{font-size:11px;color:var(--muted);cursor:pointer;min-height:32px;padding:6px 0}.chat-options[open] .composer-tools{padding:8px 0}.chat-composer textarea{min-height:90px}
 .broadcast-receipt{font-size:11px;margin-top:5px;color:var(--muted)}
+
+/* V0.10 separates daily work, knowledge, and infrastructure configuration. */
+.mobile-nav{display:none}.more-navigation{display:grid;gap:12px}.more-navigation button{justify-content:flex-start;min-height:48px}
+.applications-page .content-intro{padding-top:0;margin-top:0}.applications-page .business-intro{margin-top:32px}
+@media(min-width:761px){.sidebar nav{overflow-y:auto;min-height:0}.sidebar-bottom{flex-shrink:0}.sidebar-create{flex-shrink:0}}
+@media(max-width:760px){.sidebar .desktop-nav{display:none}.sidebar .mobile-nav{display:flex}#navigation-dialog{width:calc(100vw - 28px);max-width:420px}.workforce-tabs{gap:4px}.workforce-tabs button{min-height:44px}.applications-page .content-intro h2{font-size:20px}}
