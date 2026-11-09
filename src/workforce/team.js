@@ -1,3 +1,4 @@
+import {isResearchGoal,researchQuestion,collectResearch,researchSummary} from './research.js';
 import {matchMembers,matchingKey} from './matching.js';
 import {validateCopyBrief} from './content.js';
 import {discussionMembers,contextSettings,mentionedEmployees,mentionsEveryone,selectConversation,updateContext} from './conversation.js';
@@ -59,11 +60,12 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(g.stage!=='plan'||g.paused)fail('请先回到未暂停的计划阶段');
   const signature=planningSignature(d,g);if(g.collaboration?.goalVersion===g.version&&g.collaboration.signature===signature)return g;
   const steps=g.members.map(id=>{const e=employee(d,id);return {employeeId:id,employeeName:e.name,skillIds:g.executionPlan?.steps.find(s=>s.employeeId===id)?.skillIds||e.skillIds};});
+  if(isResearchGoal(g)){g.research=collectResearch(d,g);if(!Array.isArray(g.skillData?.candidates)){event(g,researchSummary(g.research));if(g.research.status!=='found'&&d.sources.some(s=>s.enabled&&s.mode==='http')&&g.researchAttemptVersion!==g.version){g.researchRequest={id:randomUUID(),version:g.version,question:g.text};g.researchAttemptVersion=g.version;event(g,'正在检查已配置的授权来源；找到的数据会保留来源，未核验记录不会直接用于结论。');}}}
   const checks=await checkTeamInputs(d,g,steps,inputs);
   for(const step of steps){const ready=employeeReadiness(employee(d,step.employeeId),models(d),d.externalSkills.map(publicExternal));if(!ready.ready)checks.push({employeeId:step.employeeId,employeeName:step.employeeName,skillId:null,name:'员工配置',status:'missing',missing:ready.blockers,detail:'配置未就绪'});}
   g.collaboration={goalVersion:g.version,signature,steps,checks,createdAt:stamp()};if(g.executionPlan?.source==='auto-match')g.executionPlan.checks=checks;
-  event(g,'已完成本地能力与输入检查，协作顺序：'+steps.map(s=>s.employeeName).join(' → ')+'。前一步的正式成果会传给后续员工，最后由负责人验收。'+(isSelectionGoal(g.text)?'\n当前支持对已提供的候选做比较和评分；没有自动搜索全网或 1688。请提供至少两款候选的参数、价格和可核对来源；评分需要你提供依据。':''));
-  for(const step of steps){const rows=checks.filter(c=>c.employeeId===step.employeeId);receipt(g,employee(d,step.employeeId),'能力检查 · 本地规则\n'+rows.map(c=>c.name+'：'+(c.status==='missing'?'待补 '+c.missing.join('、'):c.status==='runtime'?c.detail:'输入校验通过')).join('\n')+(steps.indexOf(step)?'\n执行时接收前序员工的交付物。':''),{workflow:'check'});}
+  event(g,'已完成本地能力与输入检查，协作顺序：'+steps.map(s=>s.employeeName).join(' → ')+'。前一步的正式成果会传给后续员工，最后由负责人验收。'+(isSelectionGoal(g.text)?'\n先从已接入的知识库与来源检索候选；没有自动搜索全网或 1688。缺少市场依据时只做参数与报价初筛，不编造销量和质量评分。':''));
+  for(const step of (isResearchGoal(g)?[]:steps)){const rows=checks.filter(c=>c.employeeId===step.employeeId);receipt(g,employee(d,step.employeeId),'能力检查 · 本地规则\n'+rows.map(c=>c.name+'：'+(c.status==='missing'?'待补 '+c.missing.join('、'):c.status==='runtime'?c.detail:'输入校验通过')).join('\n')+(steps.indexOf(step)?'\n执行时接收前序员工的交付物。':''),{workflow:'check'});}
   return g;
  }
  function regroup(d,g){
@@ -80,10 +82,10 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   g.tasks.forEach((t,i)=>{t.status=i===0?(g.stage==='plan'?'confirmation':'completed'):i===g.tasks.length-1?(g.stage==='completed'?'completed':g.stage==='review'?'acceptance':'pending'):completed.includes(t.owner)?'completed':g.stage==='draft'&&g.members.find(id=>!completed.includes(id))===t.owner?(g.paused?'paused':['failed','needs_input'].includes(g.runtime.status)?'waiting':'active'):'pending';});
  }
  function schedule(d,g){
-  if(g.paused||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime.status))return;
+  if(g.paused||g.researchRequest||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime.status))return;
   const completed=g.runtime.completed||[],id=g.members.find(id=>!completed.includes(id));
   if(!id){g.stage='review';g.runtime={status:'completed',completed};event(g,'所选员工已完成本轮交付，请人工验收；未执行真实业务写入。','review');update(g);return;}
-  try{assertPlanCurrent(d,g);const run=enqueueEmployee(d,id,inputs(g),{goalId:g.id,goalVersion:g.version,purpose:'draft',assignment:g.executionPlan?.steps.find(s=>s.employeeId===id)});run.upstreamArtifactIds=(run.input.observations||[]).map(a=>a.id).filter(Boolean);g.runtime={status:'queued',completed,runId:run.id};if(g.collaboration)receipt(g,employee(d,id),(run.upstreamArtifactIds.length?'已接收 '+run.upstreamArtifactIds.length+' 份前序成果：'+run.input.observations.map(a=>a.title).join('、'):'已接收目标与已保存业务资料')+'。任务已排队，完成后在群内交付。',{workflow:'handoff',runId:run.id,upstreamArtifactIds:run.upstreamArtifactIds});event(g,`已交给${run.agentName}：${run.config.employee.mode==='model'?'模型选择已装配Skill':'按装配顺序执行代码 / 外部能力'}。`);}
+  try{assertPlanCurrent(d,g);if(isResearchGoal(g)&&!Array.isArray(g.skillData?.candidates)&&g.researchExecution?.version!==g.version){const discovery=collectResearch(d,g);if(discovery.status==='found')g.researchExecution={version:g.version,discovery};}const run=enqueueEmployee(d,id,inputs(g),{goalId:g.id,goalVersion:g.version,purpose:'draft',assignment:g.executionPlan?.steps.find(s=>s.employeeId===id)});run.upstreamArtifactIds=(run.input.observations||[]).map(a=>a.id).filter(Boolean);g.runtime={status:'queued',completed,runId:run.id};if(g.collaboration)receipt(g,employee(d,id),(run.upstreamArtifactIds.length?'已接收 '+run.upstreamArtifactIds.length+' 份前序成果：'+run.input.observations.map(a=>a.title).join('、'):'已接收目标与已保存业务资料')+'。任务已排队，完成后在群内交付。',{workflow:'handoff',runId:run.id,upstreamArtifactIds:run.upstreamArtifactIds});event(g,`已交给${run.agentName}：${run.config.employee.mode==='model'?'模型选择已装配Skill':'按装配顺序执行代码 / 外部能力'}。`);}
   catch(e){g.runtime={status:'failed',completed,error:e.message};}
   update(g);
  }
@@ -93,12 +95,12 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   g.knowledge={baseIds:d.knowledge.bases.filter(b=>b.id==='kb-default'&&b.enabled).map(b=>b.id),mode:'bm25',topK:5};g.mode='team';g.teamSelection=input.teamSelection==='auto'?'auto':'manual';g.intent=isSelectionGoal(input.text)?'selection':null;g.members=ids;g.participants=[...ids];g.coordinator='团队执行协调';g.stage='plan';g.permission='draft';g.criterion='按确认资料完成所选员工的交付，人工验收；不执行真实发布、调价或投放';g.runtime={status:'idle',completed:[]};
   const titles=['确认分工与资料',...ids.map(id=>employee(d,id).name+'交付'),'负责人验收'];
   g.tasks=titles.map((title,i)=>({id:randomUUID(),goalId:g.id,title,owner:ids[Math.max(0,Math.min(i-1,ids.length-1))],dependsOn:i?i-1:null,status:'pending'}));
-  g.messages[1].text='已建立员工协作目标。请先填写资料，再确认分工；员工按选择顺序交接成果，模型模式可自主选择已装配Skill。';update(g);return g;
+  g.messages[1].text='已建立员工协作目标。总控会检查目标、匹配成员和查找可用资料；确认计划后，员工按分工交接成果。缺少必要条件时会说明具体原因。';update(g);return g;
  }
  function revise(g){g.version++;g.planProposal=null;g.executionPlan=null;g.stage='plan';g.runtime={status:'idle',completed:[]};g.artifacts.forEach(a=>{if(a.status==='draft')a.status='superseded';});event(g,'资料已保存为新版本，请重新确认计划。','plan');}
  function action(d,g,input){
   const k=input.kind;
-  if(['knowledge','references','facts','ledger','inputs','plan','retry','complete','revise','adoptPlan','discardPlan','replan','kickoff','regroupSelection','setTeam'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
+  if(['knowledge','references','facts','ledger','inputs','plan','retry','complete','revise','adoptPlan','discardPlan','replan','kickoff','regroupSelection','setTeam','research'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
   if(k==='message'){
    const text=String(input.text||'').trim();if(!text||text.length>2000)fail('请输入1–2000字的消息');if(g.queue.length>=24)fail('待回复队列已满');
    const invites=input.inviteIds||[];if(!Array.isArray(invites)||invites.length>4)fail('一次最多邀请 4 位员工');invites.forEach(id=>requireReady(d,id));
@@ -122,7 +124,9 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
    if(!g.paused&&g.runtime.status==='waiting_resume'){const r=d.runs.find(r=>r.id===g.runtime.runId);apply(d,g,r);}else schedule(d,g);
   }else{
    if(g.paused)fail('请先恢复目标');
-   if(k==='setTeam'){
+   if(k==='research'){
+    if(!isResearchGoal(g))fail('当前自动查找入口用于选品目标');g.researchRequest={id:randomUUID(),version:g.version,question:g.text,forceSync:true};event(g,'正在查找知识库和已配置的授权来源。');
+   }else if(k==='setTeam'){
     if(g.stage!=='plan')fail('只可在计划阶段调整执行成员');
     if(!['auto','manual'].includes(input.teamSelection))fail('请选择总控自动匹配或手动指定');
     if(input.text!==undefined){const text=String(input.text).trim();if(!text||text.length>2000)fail('目标说明需为 1–2000 字');g.text=text;}
@@ -192,6 +196,10 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(g.repliesPaused||!g.queue.length)return;const job=g.queue.shift(),source=g.messages.find(m=>m.id===job.source);
   if(contextSettings(g).startAfter&&g.messages.findIndex(m=>m.id===source.id)<=g.messages.findIndex(m=>m.id===contextSettings(g).startAfter))return;
   if(job.intent!=='discuss'){event(g,'已记录背景或变更请求。业务事实请在资料页更新，确认后生成新版本。');return;}
+  if(isResearchGoal(g)&&(researchQuestion(source.text)||/寻找|搜索|检索|帮我.{0,12}(找|搜)|^(?:请)?(?:找|搜|查找)|淋浴头|花洒|角阀|水龙头/.test(source.text))){
+   if(!source.researchHandled){source.researchHandled=true;g.researchRequest={id:randomUUID(),source:source.id,version:g.version,contextRevision:contextSettings(g).revision,question:source.text};}
+   return;
+  }
   if(job.target==='coordinator'&&/进度|做到哪|下一步|还缺|缺什么|缺哪些/.test(source.text)){
    const completed=g.runtime?.completed||[],next=g.members.find(id=>!completed.includes(id));
    const labels={plan:'等待负责人确认计划',draft:'正在执行分工',review:'已交付，等待人工验收',completed:'负责人已验收'};

@@ -21,7 +21,8 @@ export function selectConversation(g,source){
  const start=settings.startAfter?g.messages.findIndex(m=>m.id===settings.startAfter):-1;
  const historical=g.messages.slice(start+1,end);
  const excluded=new Set(settings.excludedIds);for(const m of historical)if(m.replyTo&&excluded.has(m.replyTo))excluded.add(m.id);
- const eligible=historical.filter(m=>!excluded.has(m.id)&&['human','agent'].includes(m.role)&&(!m.replyTo||g.messages.findIndex(x=>x.id===m.replyTo)>start)&&(m.role!=='agent'||(m.goalVersion==null?g.version===1:m.goalVersion===g.version)&&!['failed','discarded'].includes(m.status)));
+ const eligible=historical.filter(m=>!excluded.has(m.id)&&(['human','agent'].includes(m.role)||(m.role==='coordinator'&&m.id===source?.replyTo))&&!['check','handoff'].includes(m.workflow)&&(!m.replyTo||g.messages.findIndex(x=>x.id===m.replyTo)>start)&&(m.role!=='agent'||(m.goalVersion==null?g.version===1:m.goalVersion===g.version)&&!['failed','discarded'].includes(m.status)));
+ const seen=new Set();for(let i=eligible.length-1;i>=0;i--){const m=eligible[i],key=m.author+'|'+m.text;if(m.role==='agent'&&seen.has(key))eligible.splice(i,1);else seen.add(key);}
  const all=new Map(eligible.map(m=>[m.id,m])),chosen=new Map();
  const add=(m,reason)=>{if(m&&!chosen.has(m.id))chosen.set(m.id,{m,reason});};
  // The explicit reply chain and pinned messages take priority over recency.
@@ -29,6 +30,7 @@ export function selectConversation(g,source){
  for(const id of settings.pinnedIds)add(all.get(id),'固定消息');
  const question=String(source?.text||g.text).replace(/@[^\s，。！？]+/g,'');
  const terms=[...new Set((question.match(/[a-zA-Z0-9_-]{2,}|[\u4e00-\u9fff]{2,}/g)||[]).flatMap(w=>/^[\u4e00-\u9fff]+$/.test(w)?Array.from({length:w.length-1},(_,i)=>w.slice(i,i+2)):[w.toLowerCase()]))].slice(0,60);
+ for(const m of eligible.filter(m=>m.role==='human').slice(-3))add(m,'最近用户要求');
  for(const m of eligible.slice(-4))add(m,'最近对话');
  for(const {m,score} of eligible.map(m=>({m,score:terms.filter(t=>m.text.toLowerCase().includes(t)).length})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score))add(m,'词项相关');
  for(const m of [...eligible].reverse())add(m,'近期补充');
@@ -38,7 +40,7 @@ export function selectConversation(g,source){
  if(source?.id&&sourceIndex>=0)append(source,'本次提问');
  for(const {m,reason}of chosen.values())append(m,reason);
  selected.sort((a,b)=>g.messages.findIndex(m=>m.id===a.id)-g.messages.findIndex(m=>m.id===b.id));
- return {conversation:selected.map(({reason,truncated,...m})=>m),conversationContext:{note:settings.note,policy:'历史为参考，不自动覆盖已确认业务事实；本地词项筛选，不是模型摘要',revision:settings.revision},contextSelection:{revision:settings.revision,selected:selected.map(({text,...m})=>m),totalMessages:g.messages.length,characters:settings.maxChars-budget,maxMessages:settings.maxMessages,maxChars:settings.maxChars}};
+ return {conversation:selected.map(({reason,truncated,...m})=>m),conversationContext:{automatic:true,goal:g.text,stage:g.stage,blockers:g.runtime?.missing||[],lastError:g.runtime?.error||null,note:settings.note,policy:'历史为参考，不自动覆盖已确认业务事实；本地词项筛选，不是模型摘要',revision:settings.revision},contextSelection:{revision:settings.revision,selected:selected.map(({text,...m})=>m),totalMessages:g.messages.length,characters:settings.maxChars-budget,maxMessages:settings.maxMessages,maxChars:settings.maxChars}};
 }
 export function updateContext(g,input){
  const current=contextSettings(g);if(input.revision!==current.revision)throw new Error('上下文设置已变化，请重新打开');
