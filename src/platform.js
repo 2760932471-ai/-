@@ -36,6 +36,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const knowledge=createKnowledgeManager({getData:()=>data,transaction,embed,configuration:embeddingConfig});
  const planning=createPlanningManager({getData:()=>data,transaction,inputs,modelCall,event});
  const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources,knowledge});
+ await transaction(d=>team.syncPending(d));
  function enqueue(d,agentId,input,meta={},override){
   if(d.runs.filter(r=>['queued','running'].includes(r.status)).length>=100)throw new Error('运行队列已满，请稍后再试');
   const config=structuredClone(override||findAgent(d,agentId));if(!config.enabled)throw new Error(config.name+'已停用');
@@ -79,16 +80,18 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(!/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId||''))throw new Error('缺少有效创建请求编号');
   const signature=JSON.stringify({...input,requestId:undefined});
   if(Object.hasOwn(d.requests,input.requestId)){const old=d.requests[input.requestId];if(old.signature!==signature)throw conflict('同一创建请求不能更换内容');return findGoal(d,old.goalId);}
-  const isTeam=Array.isArray(input.employeeIds);
+  const isTeam=Array.isArray(input.employeeIds)||input.teamSelection==='auto';if(input.teamSelection!==undefined&&!['auto','manual'].includes(input.teamSelection))throw new Error('成员安排方式无效');
+  const creationInput=input.teamSelection==='auto'?{...input,employeeIds:[]}:input;
   const required=input.kind==='listing'?'product':'insight';
   if(!isTeam&&!input.members?.includes(required))throw new Error(`请邀请${required==='product'?'商品运营':'经营分析'} Agent 参与此目标`);
   for(const id of isTeam?[]:input.members){if(!findAgent(d,id).enabled)throw new Error('所选Agent已停用');}
-  const g=isTeam?team.create(d,input):createGoal(input);if(!isTeam){g.mode='platform';g.runtime={status:'idle',completed:[]};}
+  const g=isTeam?team.create(d,creationInput):createGoal(input);if(!isTeam){g.mode='platform';g.runtime={status:'idle',completed:[]};}
   if(input.scope){for(const k of ['store','sku','product']){if(typeof input.scope[k]!=='string'||!input.scope[k].trim()||input.scope[k].length>120)throw new Error('请填写有效的店铺、SKU / 数据范围和商品名称');g.scope[k]=input.scope[k].trim();}g.scope.platform='用户指定范围（未连接平台）';}
   if(input.proposal){const price=Number(input.proposal.price);if(!Number.isFinite(price)||price<=0||price>100000||Math.abs(price*100-Math.round(price*100))>1e-6)throw new Error('售价必须是有效正数，最多2位小数');g.proposal={title:String(input.proposal.title||g.scope.product).slice(0,120),price};}
   if(!isTeam)g.messages[1].text='目标、任务与协作空间已保存到服务端。请确认资料和计划；代码型 Agent 将处理录入数据。店铺发布仍使用模拟连接器。';
   if(input.contentDraft){const pack=contentPacks.find(p=>p.id===input.contentDraft);if(!isTeam||!pack||g.members.length!==1||g.members[0]!==pack.employeeId)throw new Error('请选择对应的内容员工');const e=d.employees.find(e=>e.id===pack.employeeId);if(e.mode!=='skills'||e.skillIds.length!==1||e.skillIds[0]!==pack.skillId)throw new Error('内容快捷入口只运行对应代码能力；员工配置已改变，请使用新建目标');g.skillData={copyBrief:validateCopyBrief(input.copyBrief)};g.contentDraft=pack.id;g.proposal=null;team.action(d,g,{kind:'plan',expectedVersion:g.version});}
-  if(isTeam&&input.startCollaboration&&!input.contentDraft)await team.kickoff(d,g);
+  if(isTeam&&g.teamSelection==='auto'&&!input.contentDraft)team.autoAssign(d,g,{initial:true});
+  if(isTeam&&(input.startCollaboration||g.teamSelection==='auto')&&!input.contentDraft)await team.kickoff(d,g);
   d.goals.unshift(g);d.requests[input.requestId]={goalId:g.id,signature};return g;
  });}
  async function action(id,input){return transaction(async d=>{
@@ -96,7 +99,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(g.mode!=='team'&&((kind==='message'&&input.workforceChat===true)||['inviteDiscussion','chatContext'].includes(kind)||(kind==='pauseReplies'&&g.discussionMode==='employees'))){
    if(g.discussionMode!=='employees'&&g.queue.length)throw new Error('旧会话仍有待回复消息，请等回复完成后重试');g.discussionMode='employees';g.participants=discussionMembers(g);return team.action(d,g,input);
   }
-  if(g.mode==='team'){if(['plan','complete'].includes(kind))sources.resolve(g,d);if(kind==='complete')for(const r of d.runs.filter(r=>r.goalId===g.id&&r.goalVersion===g.version&&r.purpose==='draft'&&r.status==='succeeded'))knowledge.assertRecall(r.input.knowledgeRecall,d);team.action(d,g,input);if(g.stage==='plan'&&!g.paused&&(['kickoff','regroupSelection'].includes(kind)||(g.collaboration&&['inputs','facts','ledger','references','knowledge','revise','adoptPlan','replan'].includes(kind))))await team.kickoff(d,g);return g;}
+  if(g.mode==='team'){if(['plan','complete'].includes(kind))sources.resolve(g,d);if(kind==='complete')for(const r of d.runs.filter(r=>r.goalId===g.id&&r.goalVersion===g.version&&r.purpose==='draft'&&r.status==='succeeded'))knowledge.assertRecall(r.input.knowledgeRecall,d);team.action(d,g,input);if(g.stage==='plan'&&g.teamSelection==='auto'&&['inputs','facts','ledger','references','knowledge','revise','replan','kickoff'].includes(kind))team.autoAssign(d,g);if(g.stage==='plan'&&!g.paused&&(['kickoff','regroupSelection','setTeam'].includes(kind)||(g.collaboration&&['inputs','facts','ledger','references','knowledge','revise','adoptPlan','replan'].includes(kind))))await team.kickoff(d,g);return g;}
   if(kind==='message'&&g.mode==='platform'){const mentioned=d.agents.filter(a=>g.members.includes(a.id)&&typeof input.text==='string'&&input.text.includes('@'+a.name.replace(' Agent','')));if(mentioned.length>1)throw new Error('本轮请选择一位接收者，或删除多个@交给数字员工协调');if(mentioned.length===1){if(input.target&&input.target!=='coordinator'&&input.target!==mentioned[0].id)throw new Error('@成员与接收者不一致，请确认发送给谁');input={...input,target:mentioned[0].id};}}
   if(g.mode!=='platform'){goalAction(g,input);return g;}
   if(['facts','ledger','plan','revise','reject','approve','retry','complete'].includes(kind)&&input.expectedVersion!==g.version)throw conflict('目标版本已改变，请重新检查当前内容');
@@ -136,9 +139,10 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  async function pump(){
   if(pumping)return;
   const hasQueue=data.runs.some(r=>r.status==='queued'&&(!r.goalId||r.purpose==='chat'||!data.goals.find(g=>g.id===r.goalId)?.paused));
-  const hasGoal=data.goals.some(g=>(!g.repliesPaused&&g.queue.length)||(['platform','team'].includes(g.mode)&&!g.paused&&g.stage==='draft'&&!['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status)));
+  const hasGoal=data.goals.some(g=>team.needsMatching(data,g)||(!g.repliesPaused&&g.queue.length)||(['platform','team'].includes(g.mode)&&!g.paused&&g.stage==='draft'&&!['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status)));
   if(!hasQueue&&!hasGoal)return;pumping=true;
   try{
+   if(data.goals.some(g=>team.needsMatching(data,g)))await transaction(d=>team.syncPending(d));
    await transaction(d=>{for(const g of d.goals){if(g.mode==='team'){schedule(d,g);team.pumpMessages(d,g);continue;}if(g.discussionMode==='employees'){schedule(d,g);team.pumpMessages(d,g);continue;}if(g.mode!=='platform'){tickGoal(g);continue;}schedule(d,g);
     if(!g.repliesPaused&&g.queue.length){const job=g.queue.shift();const source=g.messages.find(m=>m.id===job.source);let id=job.target;
      if(id==='coordinator')id=/利润|成本|费用|亏损/.test(source.text)?'insight':g.kind==='listing'?'product':'insight';

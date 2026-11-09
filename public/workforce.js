@@ -58,7 +58,7 @@ export function createWorkforceUI({contentUI,businessUI,knowledgeUI,sourcesUI,st
  document.addEventListener('change',e=>{if(e.target.id==='cap-role'){roleFilter=e.target.value;render(true);}if(e.target.id==='cap-status'){statusFilter=e.target.value;render(true);}});
  document.addEventListener('input',e=>{if(e.target.id==='cap-search'){query=e.target.value;render(true);const n=$('#cap-search');n.focus();}});
  function businessFacts(g,base){
-  const ids=new Set([...new Set([...g.members,...(g.participants||[])])].flatMap(id=>data().employees.find(e=>e.id===id)?.skillIds||[])),extra=g.skillData||{};
+  const ids=new Set(g.executionPlan?.source==='auto-match'?g.executionPlan.steps.flatMap(s=>s.skillIds):[...new Set([...g.members,...(g.participants||[])])].flatMap(id=>data().employees.find(e=>e.id===id)?.skillIds||[])),extra=g.skillData||{};
   const candidates=ids.has('product.compare')||ids.has('selection.score'),costs=ids.has('price.break_even'),stock=ids.has('inventory.coverage');
   const basic=[...ids].some(id=>['product.validate','product.draft','content.outline','finance.calculate'].includes(id));
   if(!candidates&&!costs&&!stock)return basic||[...ids].some(id=>data().externals?.some(s=>s.id===id&&s.inputFields.some(k=>['facts','financials','proposal'].includes(k))))?base:'';

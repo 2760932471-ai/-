@@ -7,7 +7,7 @@ const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[];
 page.on('pageerror',e=>errors.push(e.message));
 try{
  if(offline){const html=await readFile('deliverables/ai-platform-preview.html','utf8');await page.route(base+'/preview',r=>r.fulfill({contentType:'text/html',body:html}));await page.context().setOffline(true);await page.goto(base+'/preview');}else await page.goto(base);
- await page.locator('.sidebar-create').click();await page.locator('#goal').fill('寻找市面上性价比高的淋浴头');await page.locator('#submit-task').click();await page.locator('#create-step-two').waitFor();assert.equal(await page.locator('#create-sku').inputValue(),'待比较候选');assert.equal(await page.locator('#goal-kind').inputValue(),'analysis');assert.equal(await page.locator('[name=agents]:checked').count(),3);
+ await page.locator('.sidebar-create').click();await page.locator('#goal').fill('寻找市面上性价比高的淋浴头');await page.locator('#submit-task').click();await page.locator('#create-step-two').waitFor();assert.equal(await page.locator('#create-sku').inputValue(),'待比较候选');assert.equal(await page.locator('#goal-kind').inputValue(),'analysis');assert.equal(await page.locator('#team-selection').inputValue(),'auto');
  await page.locator('#submit-task').click();await page.locator('#task-dialog').waitFor({state:'hidden'});await page.locator('.collaboration-card').waitFor();assert.match(await page.locator('.chat-log').innerText(),/没有自动搜索全网/);assert.match(await page.locator('.collaboration-card').innerText(),/2–50/);
  await page.screenshot({path:'deliverables/collaboration-missing-v011.png'});
  await page.locator('.collaboration-card [data-tab=facts]').click();const f=page.locator('#skill-data-form');await f.waitFor();
