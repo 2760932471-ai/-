@@ -41,7 +41,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   const config=structuredClone(override||findAgent(d,agentId));if(!config.enabled)throw new Error(config.name+'已停用');
   const run={id:randomUUID(),agentId,agentName:config.name,configVersion:config.revision,config,status:'queued',input,createdAt:now(),...meta};d.runs.unshift(run);return run;
  }
- function inputs(g){return {...g.skillData,knowledge:g.knowledge,references:sources.resolve(g),goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,...(g.mode==='team'||g.discussionMode==='employees'?selectConversation(g,{text:g.text}):{conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text}))}),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({title:a.title,body:a.body,evidence:a.evidence}))};}
+ function inputs(g){return {...g.skillData,knowledge:g.knowledge,references:sources.resolve(g),goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,...(g.mode==='team'||g.discussionMode==='employees'?selectConversation(g,{text:g.text}):{conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text}))}),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({id:a.id,agent:a.agent,agentName:a.agentName,runId:a.runId,version:a.version,title:a.title,body:a.body,evidence:a.evidence}))};}
  function schedule(d,g){
   if(g.mode==='team')return team.schedule(d,g);
   if(g.mode!=='platform'||g.paused||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status))return;
@@ -75,7 +75,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   g.runtime={status:'idle',completed:[...(g.runtime.completed||[]),r.agentId]};
   event(g,`${r.agentName}：${r.result.summary}`,'draft');schedule(d,g);
  }
- async function create(input){return transaction(d=>{
+ async function create(input){return transaction(async d=>{
   if(!/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId||''))throw new Error('缺少有效创建请求编号');
   const signature=JSON.stringify({...input,requestId:undefined});
   if(Object.hasOwn(d.requests,input.requestId)){const old=d.requests[input.requestId];if(old.signature!==signature)throw conflict('同一创建请求不能更换内容');return findGoal(d,old.goalId);}
@@ -88,14 +88,15 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(input.proposal){const price=Number(input.proposal.price);if(!Number.isFinite(price)||price<=0||price>100000||Math.abs(price*100-Math.round(price*100))>1e-6)throw new Error('售价必须是有效正数，最多2位小数');g.proposal={title:String(input.proposal.title||g.scope.product).slice(0,120),price};}
   if(!isTeam)g.messages[1].text='目标、任务与协作空间已保存到服务端。请确认资料和计划；代码型 Agent 将处理录入数据。店铺发布仍使用模拟连接器。';
   if(input.contentDraft){const pack=contentPacks.find(p=>p.id===input.contentDraft);if(!isTeam||!pack||g.members.length!==1||g.members[0]!==pack.employeeId)throw new Error('请选择对应的内容员工');const e=d.employees.find(e=>e.id===pack.employeeId);if(e.mode!=='skills'||e.skillIds.length!==1||e.skillIds[0]!==pack.skillId)throw new Error('内容快捷入口只运行对应代码能力；员工配置已改变，请使用新建目标');g.skillData={copyBrief:validateCopyBrief(input.copyBrief)};g.contentDraft=pack.id;g.proposal=null;team.action(d,g,{kind:'plan',expectedVersion:g.version});}
+  if(isTeam&&input.startCollaboration&&!input.contentDraft)await team.kickoff(d,g);
   d.goals.unshift(g);d.requests[input.requestId]={goalId:g.id,signature};return g;
  });}
- async function action(id,input){return transaction(d=>{
+ async function action(id,input){return transaction(async d=>{
   const g=findGoal(d,id);const kind=input.kind;
   if(g.mode!=='team'&&((kind==='message'&&input.workforceChat===true)||['inviteDiscussion','chatContext'].includes(kind)||(kind==='pauseReplies'&&g.discussionMode==='employees'))){
    if(g.discussionMode!=='employees'&&g.queue.length)throw new Error('旧会话仍有待回复消息，请等回复完成后重试');g.discussionMode='employees';g.participants=discussionMembers(g);return team.action(d,g,input);
   }
-  if(g.mode==='team'){if(['plan','complete'].includes(kind))sources.resolve(g,d);if(kind==='complete')for(const r of d.runs.filter(r=>r.goalId===g.id&&r.goalVersion===g.version&&r.purpose==='draft'&&r.status==='succeeded'))knowledge.assertRecall(r.input.knowledgeRecall,d);return team.action(d,g,input);}
+  if(g.mode==='team'){if(['plan','complete'].includes(kind))sources.resolve(g,d);if(kind==='complete')for(const r of d.runs.filter(r=>r.goalId===g.id&&r.goalVersion===g.version&&r.purpose==='draft'&&r.status==='succeeded'))knowledge.assertRecall(r.input.knowledgeRecall,d);team.action(d,g,input);if(g.stage==='plan'&&!g.paused&&(['kickoff','regroupSelection'].includes(kind)||(g.collaboration&&['inputs','facts','ledger','references','knowledge','revise','adoptPlan','replan'].includes(kind))))await team.kickoff(d,g);return g;}
   if(kind==='message'&&g.mode==='platform'){const mentioned=d.agents.filter(a=>g.members.includes(a.id)&&typeof input.text==='string'&&input.text.includes('@'+a.name.replace(' Agent','')));if(mentioned.length>1)throw new Error('本轮请选择一位接收者，或删除多个@交给数字员工协调');if(mentioned.length===1){if(input.target&&input.target!=='coordinator'&&input.target!==mentioned[0].id)throw new Error('@成员与接收者不一致，请确认发送给谁');input={...input,target:mentioned[0].id};}}
   if(g.mode!=='platform'){goalAction(g,input);return g;}
   if(['facts','ledger','plan','revise','reject','approve','retry','complete'].includes(kind)&&input.expectedVersion!==g.version)throw conflict('目标版本已改变，请重新检查当前内容');

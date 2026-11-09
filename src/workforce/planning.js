@@ -29,21 +29,6 @@ export function createPlanningManager({getData,transaction,inputs,modelCall,even
  const find=(d,id)=>d.goals.find(g=>g.id===id)||fail('目标不存在');
  const editable=(g,version)=>{if(g.mode!=='team'||g.stage!=='plan'||g.paused)fail('仅可为未暂停、待确认的团队目标生成分工');if(g.version!==version)fail('目标资料已更新，请重新生成分工');};
  function definitions(d){return [...skillDefinitions,...externalDefinitions(d.externalSkills.map(publicExternal))];}
- async function checks(d,g,steps){
-  const input=inputs(g),list=[];
-  for(const step of steps)for(const skillId of step.skillIds){
-   const definition=definitions(d).find(s=>s.id===skillId),base={employeeId:step.employeeId,employeeName:step.employeeName,skillId,name:definition?.name||skillId};
-   if(skillId.startsWith('external_')){list.push({...base,status:'runtime',missing:[],detail:'配置已就绪；本次不调用外部服务，实际运行时验证业务资料'});continue;}
-   if(skillId==='service.evidence'){
-    const missing=[];if(!input.serviceQuestion?.trim())missing.push('客户问题');
-    if(!g.knowledge?.baseIds?.some(id=>d.knowledge.bases.some(b=>b.id===id&&b.enabled)&&d.knowledge.documents.some(doc=>doc.baseId===id&&doc.enabled)))missing.push('含有效文档的目标知识库');
-    list.push({...base,status:missing.length?'missing':'runtime',missing,detail:'执行时按问题检索政策，未命中仍会等待补充'});continue;
-   }
-   try{const result=await executeSkill(skillId,input);list.push({...base,status:result.status==='needs_input'?'missing':'ready',missing:result.missing||[],detail:result.status==='needs_input'?'请在资料页补齐后重新检查':'本地输入校验通过；未生成正式交付'});}
-   catch{list.push({...base,status:'missing',missing:['业务数据格式无效，请检查对应资料'],detail:'检查未通过'});}
-  }
-  return list;
- }
  async function propose(id,request){
   if(pending.has(id))fail('该目标正在生成分工，请稍候');
   pending.add(id);
@@ -64,7 +49,7 @@ export function createPlanningManager({getData,transaction,inputs,modelCall,even
     const ordered=[...employees].sort((a,b)=>Number(a.roleId==='coordination')-Number(b.roleId==='coordination'));
     raw={summary:'按照已选员工的实际能力形成分工，专业处理在前、协调汇总在后。',steps:ordered.map(e=>({employeeId:e.id,objective:e.name+'：'+e.skillIds.map(id=>defs.find(s=>s.id===id).name).join('、'),deliverable:e.skillIds.map(id=>defs.find(s=>s.id===id).description).join('；').slice(0,600),skillIds:e.skillIds})),notes:['基础分工不理解任意复杂目标，请核对这些能力是否覆盖你的需求。','当前只准备分析或草案，不执行发布、采购、退款或客户消息发送。']};
    }else throw new Error('请选择基础分工或模型分工');
-   const plan=validatePlan(raw,employees),preflight=await checks(d,g,plan.steps);
+   const plan=validatePlan(raw,employees),preflight=await checkTeamInputs(d,g,plan.steps,inputs);
    return await transaction(current=>{
     const latest=find(current,id);editable(latest,g.version);
     if(signature!==planningSignature(current,latest))fail('生成期间员工配置已变化，请重试');
@@ -76,3 +61,19 @@ export function createPlanningManager({getData,transaction,inputs,modelCall,even
  }
  return {propose};
 }
+
+export async function checkTeamInputs(d,g,steps,inputs){
+  const input=inputs(g),list=[];
+  for(const step of steps)for(const skillId of step.skillIds){
+   const definition=[...skillDefinitions,...externalDefinitions(d.externalSkills.map(publicExternal))].find(s=>s.id===skillId),base={employeeId:step.employeeId,employeeName:step.employeeName,skillId,name:definition?.name||skillId};
+   if(skillId.startsWith('external_')){list.push({...base,status:'runtime',missing:[],detail:'配置已就绪；本次不调用外部服务，实际运行时验证业务资料'});continue;}
+   if(skillId==='service.evidence'){
+    const missing=[];if(!input.serviceQuestion?.trim())missing.push('客户问题');
+    if(!g.knowledge?.baseIds?.some(id=>d.knowledge.bases.some(b=>b.id===id&&b.enabled)&&d.knowledge.documents.some(doc=>doc.baseId===id&&doc.enabled)))missing.push('含有效文档的目标知识库');
+    list.push({...base,status:missing.length?'missing':'runtime',missing,detail:'执行时按问题检索政策，未命中仍会等待补充'});continue;
+   }
+   try{const result=await executeSkill(skillId,input);list.push({...base,status:result.status==='needs_input'?'missing':'ready',missing:result.missing||[],detail:result.status==='needs_input'?'请在资料页补齐后重新检查':'本地输入校验通过；未生成正式交付'});}
+   catch{list.push({...base,status:'missing',missing:['业务数据格式无效，请检查对应资料'],detail:'检查未通过'});}
+  }
+  return list;
+ }

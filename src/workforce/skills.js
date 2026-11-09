@@ -48,7 +48,7 @@ export async function executeSkill(id,input){
   const hits=['全网最低','永久不漏','百分百','100%','零风险','国家级','顶级'].filter(w=>text.includes(w));
   return result('宣传声明初筛',`发现的待核验表述：${hits.join('、')||'未命中当前有限词表'}。\n检查范围：标题与本轮已有文字成果。\n还需人工核验参数依据、图片真实性、安装兼容性、知识产权及各平台规则。未命中词表不等于合规通过。`,'本轮输入与成果；有限声明词规则 v1',{flags:hits,approved:false});
  }
- if(id==='task.brief')return input.goal?result('任务交付摘要',`目标：${input.goal}\n范围：${input.scope?.store||'未填写'} / ${input.scope?.sku||'未填写'}\n已接收成果：\n${(input.observations||[]).map(a=>'- '+a.title).join('\n')||'暂无前序成果'}\n\n已选参考资料：\n${citations(input)}\n\n知识库召回：\n${knowledgeCitations(input)}\n\n交付后由负责人核对来源、缺项与执行边界。本次任务不执行真实发布、调价或投放。`,'用户目标与当前任务成果'):missing(['经营目标']);
+ if(id==='task.brief')return input.goal?result('任务交付摘要',`目标：${input.goal}\n范围：${input.scope?.store||'未填写'} / ${input.scope?.sku||'未填写'}\n已接收成果：\n${(input.observations||[]).map(a=>'## '+a.title+'\n交付员工：'+(a.agentName||'前序员工')+'\n'+a.body.slice(0,5000)+(a.body.length>5000?'\n（节选，完整内容见原交付物）':'')+'\n依据：'+a.evidence).join('\n\n')||'暂无前序成果'}\n\n已选参考资料：\n${citations(input)}\n\n知识库召回：\n${knowledgeCitations(input)}\n\n交付后由负责人核对来源、缺项与执行边界。本次任务不执行真实发布、调价或投放。`,'用户目标与当前任务成果'):missing(['经营目标']);
  if(id==='selection.score'||id==='product.compare'){
   const rows=input.candidates;if(!Array.isArray(rows)||rows.length<2||rows.length>50)return missing(['2–50 个有来源的候选商品']);
   if(rows.some(r=>!r.sku||!r.source))return missing(['每个候选商品的 SKU 和来源']);
@@ -56,7 +56,7 @@ export async function executeSkill(id,input){
   const keys=['demand','competition','profit','supply','risk'],weights=[.25,.15,.25,.2,.15];
   if(rows.some(r=>keys.some(k=>!finite(r.scores?.[k])||r.scores[k]>100)))return missing(['各候选的 demand/competition/profit/supply/risk 评分（0–100，均为越高越好）']);
   const ranked=rows.map(r=>({sku:r.sku,score:money(keys.reduce((sum,k,i)=>sum+Number(r.scores[k])*weights[i],0))})).sort((a,b)=>b.score-a.score);
-  return result('候选商品加权评分',ranked.map(r=>`${r.sku}：${r.score}`).join('\n')+'\n权重：需求25%、竞争优势15%、利润25%、供货20%、风险可控性15%。全部评分由用户输入，不是模型验证的市场事实。',rows.map(r=>r.source).join('；'),{ranked});
+  return result('候选商品加权评分',ranked.map(r=>`${r.sku}：${r.score}`).join('\n')+((input.observations||[]).some(a=>a.title==='候选商品参数比较')?'\n已参考前序参数比较：\n'+input.observations.filter(a=>a.title==='候选商品参数比较').map(a=>a.body).join('\n'):'')+'\n权重：需求25%、竞争优势15%、利润25%、供货20%、风险可控性15%。全部评分由用户输入，不是模型验证的市场事实。',rows.map(r=>r.source).join('；'),{ranked});
  }
  if(id==='price.break_even'){
   const c=input.unitCosts,keys=['goods','fulfillment','ads','returns','other','feeRate'];if(!c||keys.some(k=>!finite(c[k]))||!c.source)return missing(['unitCosts：单件五项成本、feeRate 百分比和 source']);

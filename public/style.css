@@ -48,3 +48,8 @@ button,a{-webkit-tap-highlight-color:transparent}
 .applications-page .content-intro{padding-top:0;margin-top:0}.applications-page .business-intro{margin-top:32px}
 @media(min-width:761px){.sidebar nav{overflow-y:auto;min-height:0}.sidebar-bottom{flex-shrink:0}.sidebar-create{flex-shrink:0}}
 @media(max-width:760px){.sidebar .desktop-nav{display:none}.sidebar .mobile-nav{display:flex}#navigation-dialog{width:calc(100vw - 28px);max-width:420px}.workforce-tabs{gap:4px}.workforce-tabs button{min-height:44px}.applications-page .content-intro h2{font-size:20px}}
+
+/* Shared goal handoff stays in the discussion, with direct actions. */
+.collaboration-card{margin:20px 0 24px 40px;padding:20px;border:1px solid #dce2ee;border-radius:12px;background:#fbfcff;overflow-wrap:anywhere}
+.collaboration-card h3{margin:5px 0 8px}.collaboration-card p{font-size:13px;line-height:1.7}.handoff-steps{display:flex;flex-wrap:wrap;gap:12px;padding:0;list-style:none;margin:16px 0}.handoff-steps li{display:flex;gap:8px;align-items:center;flex:1;min-width:140px}.handoff-steps li>span{background:#edf1ff;color:#315ddd;border-radius:50%;width:26px;height:26px;display:grid;place-items:center}.handoff-steps strong,.handoff-steps small{display:block;font-size:12px}.handoff-steps small{color:#6b7280;margin-top:3px}.collaboration-card .action-buttons{flex-wrap:wrap}.message-body .event-link{white-space:normal;text-align:left}
+@media(max-width:700px){.collaboration-card{margin:16px 0;padding:14px}.handoff-steps{flex-direction:column}.collaboration-card .section-title{flex-wrap:wrap;gap:8px}}

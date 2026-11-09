@@ -44,8 +44,10 @@ export function insightAgent(input,config=seeds[1]) {
 }
 export const builtins={product:productAgent,insight:insightAgent};
 export function testSample(id){return id==='product'?{goal:'检查这款商品的上新资料',kind:'listing',scope:{store:'演示店',sku:'DEMO-JF-001',product:'角阀'},facts:{material:'黄铜（演示）',connector:'G1/2（演示）',cost:12,stock:200,source:'内置测试样例',confirmed:true},proposal:{price:29.9,title:'黄铜角阀（测试草案）'}}:{goal:'分析样例账单',kind:'analysis',financials:{netSales:3000,goods:1200,fees:150,fulfillment:300,ads:600,returns:150,other:0,window:'示例第1–7天',source:'内置测试样例'}};}
+export const isSelectionGoal=text=>/选品|性价比|候选商品|商品对比|产品对比|寻找.{0,20}(商品|产品|淋浴|花洒)|对比.{0,15}(商品|产品|供应商)/.test(String(text||''))&&!/(上新|上架|发布)/.test(String(text||''));
 export function previewGoal(text){
  if(typeof text!=='string'||!text.trim()||text.length>2000)throw new Error('请输入1–2000字的目标');
+ if(isSelectionGoal(text))return {kind:'analysis',intent:'selection',product:'候选商品',sku:'待比较候选',members:['insight'],method:'rules',reason:'比较已有候选的参数、价格和有依据的评分；需要商品来源，未执行全网检索。'};
  const listing=/(上新|上架|发布|商品.{0,6}草案)/.test(text);
  return {kind:listing?'listing':'analysis',members:listing?['product','insight']:['insight'],method:'rules',reason:listing?'识别到商品准备或发布意图，推荐上新流程；执行边界仍由你确认。':'推荐经营分析流程；需要补充账单才能计算结果。',limitations:'规则识别，不是大模型语义规划；可以手动更改类型。'};
 }
