@@ -10,7 +10,7 @@ async function setup(t){const dir=await mkdtemp('/tmp/collaboration-');t.after((
 test('selection intent selects a real team, kickoff persists missing inputs without fabricating work',async t=>{
  const {p,dir}=await setup(t);assert.equal(previewGoal(text).intent,'selection');
  const recommendation=p.workforce.recommend(text);assert.deepEqual(recommendation.employeeIds,['employee-research','employee-selection','employee-coordination']);
- let g=await p.create(input);assert.deepEqual(g.members,recommendation.employeeIds);assert.equal(g.stage,'plan');assert.equal(g.artifacts.length,0);assert.equal(p.runs().length,0);assert(g.collaboration.checks.some(c=>c.status==='missing'));assert(g.messages.some(m=>m.text.includes('没有自动搜索全网')));
+ let g=await p.create(input);assert.deepEqual(g.members,recommendation.employeeIds);assert.equal(g.stage,'plan');assert.equal(g.artifacts.length,0);assert.equal(p.runs().length,0);assert(g.collaboration.checks.some(c=>c.status==='missing'));assert(g.messages.some(m=>m.text.includes('网络搜索需先连接')));
  const count=g.messages.length;g=await p.action(g.id,{kind:'kickoff',expectedVersion:g.version});assert.equal(g.messages.length,count);
  assert.equal((await p.create(input)).id,g.id);const restarted=await createPlatform(dir);assert.equal(restarted.goals()[0].messages.length,count);
  await p.action(g.id,{kind:'plan',expectedVersion:g.version});await p.pump();g=p.goals()[0];assert.equal(g.runtime.status,'needs_input');assert.equal(g.artifacts.length,0);assert.equal(g.messages.filter(m=>m.workflow==='delivery').length,0);assert.equal(p.runs().length,1);

@@ -60,11 +60,11 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(g.stage!=='plan'||g.paused)fail('请先回到未暂停的计划阶段');
   const signature=planningSignature(d,g);if(g.collaboration?.goalVersion===g.version&&g.collaboration.signature===signature)return g;
   const steps=g.members.map(id=>{const e=employee(d,id);return {employeeId:id,employeeName:e.name,skillIds:g.executionPlan?.steps.find(s=>s.employeeId===id)?.skillIds||e.skillIds};});
-  if(isResearchGoal(g)){g.research=collectResearch(d,g);if(!Array.isArray(g.skillData?.candidates)){event(g,researchSummary(g.research));if(g.research.status!=='found'&&d.sources.some(s=>s.enabled&&s.mode==='http')&&g.researchAttemptVersion!==g.version){g.researchRequest={id:randomUUID(),version:g.version,question:g.text};g.researchAttemptVersion=g.version;event(g,'正在检查已配置的授权来源；找到的数据会保留来源，未核验记录不会直接用于结论。');}}}
+  if(isResearchGoal(g)){g.research=collectResearch(d,g);if(!Array.isArray(g.skillData?.candidates)){event(g,researchSummary(g.research));if(g.research.status!=='found'&&(d.sources.some(s=>s.enabled&&s.mode==='http')||(d.searchConfig?.enabled&&d.searchConfig.lastTest?.status==='succeeded'&&d.searchConfig.lastTest.revision===d.searchConfig.revision))&&g.researchAttemptVersion!==g.version){g.researchRequest={id:randomUUID(),version:g.version,question:g.text};g.researchAttemptVersion=g.version;event(g,'正在检查已配置的授权来源；找到的数据会保留来源，未核验记录不会直接用于结论。');}}}
   const checks=await checkTeamInputs(d,g,steps,inputs);
   for(const step of steps){const ready=employeeReadiness(employee(d,step.employeeId),models(d),d.externalSkills.map(publicExternal));if(!ready.ready)checks.push({employeeId:step.employeeId,employeeName:step.employeeName,skillId:null,name:'员工配置',status:'missing',missing:ready.blockers,detail:'配置未就绪'});}
   g.collaboration={goalVersion:g.version,signature,steps,checks,createdAt:stamp()};if(g.executionPlan?.source==='auto-match')g.executionPlan.checks=checks;
-  event(g,'已完成本地能力与输入检查，协作顺序：'+steps.map(s=>s.employeeName).join(' → ')+'。前一步的正式成果会传给后续员工，最后由负责人验收。'+(isSelectionGoal(g.text)?'\n先从已接入的知识库与来源检索候选；没有自动搜索全网或 1688。缺少市场依据时只做参数与报价初筛，不编造销量和质量评分。':''));
+  event(g,'已完成本地能力与输入检查，协作顺序：'+steps.map(s=>s.employeeName).join(' → ')+'。前一步的正式成果会传给后续员工，最后由负责人验收。'+(isSelectionGoal(g.text)?'\n先从已接入的知识库与来源检索候选；网络搜索需先连接并测试搜索服务。缺少市场依据时只做参数与报价初筛，不编造销量和质量评分。':''));
   for(const step of (isResearchGoal(g)?[]:steps)){const rows=checks.filter(c=>c.employeeId===step.employeeId);receipt(g,employee(d,step.employeeId),'能力检查 · 本地规则\n'+rows.map(c=>c.name+'：'+(c.status==='missing'?'待补 '+c.missing.join('、'):c.status==='runtime'?c.detail:'输入校验通过')).join('\n')+(steps.indexOf(step)?'\n执行时接收前序员工的交付物。':''),{workflow:'check'});}
   return g;
  }
@@ -92,7 +92,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
  function create(d,input){
   const ids=[...new Set(input.employeeIds||[])];if((!ids.length&&input.teamSelection!=='auto')||ids.length>8)fail('请选择1–8名员工');ids.forEach(id=>requireReady(d,id));if(input.startCollaboration)ids.sort((a,b)=>Number(employee(d,a).roleId==='coordination')-Number(employee(d,b).roleId==='coordination'));
   const g=createGoal({...input,members:['product','insight'],permission:'draft'});
-  g.knowledge={baseIds:d.knowledge.bases.filter(b=>b.id==='kb-default'&&b.enabled).map(b=>b.id),mode:'bm25',topK:5};g.mode='team';g.teamSelection=input.teamSelection==='auto'?'auto':'manual';g.intent=isSelectionGoal(input.text)?'selection':null;g.members=ids;g.participants=[...ids];g.coordinator='团队执行协调';g.stage='plan';g.permission='draft';g.criterion='按确认资料完成所选员工的交付，人工验收；不执行真实发布、调价或投放';g.runtime={status:'idle',completed:[]};
+  g.knowledge={baseIds:d.knowledge.bases.filter(b=>b.enabled).map(b=>b.id),mode:'bm25',topK:5};g.mode='team';g.teamSelection=input.teamSelection==='auto'?'auto':'manual';g.intent=isSelectionGoal(input.text)?'selection':null;g.members=ids;g.participants=[...ids];g.coordinator='团队执行协调';g.stage='plan';g.permission='draft';g.criterion='按确认资料完成所选员工的交付，人工验收；不执行真实发布、调价或投放';g.runtime={status:'idle',completed:[]};
   const titles=['确认分工与资料',...ids.map(id=>employee(d,id).name+'交付'),'负责人验收'];
   g.tasks=titles.map((title,i)=>({id:randomUUID(),goalId:g.id,title,owner:ids[Math.max(0,Math.min(i-1,ids.length-1))],dependsOn:i?i-1:null,status:'pending'}));
   g.messages[1].text='已建立员工协作目标。总控会检查目标、匹配成员和查找可用资料；确认计划后，员工按分工交接成果。缺少必要条件时会说明具体原因。';update(g);return g;
@@ -196,7 +196,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(g.repliesPaused||!g.queue.length)return;const job=g.queue.shift(),source=g.messages.find(m=>m.id===job.source);
   if(contextSettings(g).startAfter&&g.messages.findIndex(m=>m.id===source.id)<=g.messages.findIndex(m=>m.id===contextSettings(g).startAfter))return;
   if(job.intent!=='discuss'){event(g,'已记录背景或变更请求。业务事实请在资料页更新，确认后生成新版本。');return;}
-  if(isResearchGoal(g)&&(researchQuestion(source.text)||/寻找|搜索|检索|帮我.{0,12}(找|搜)|^(?:请)?(?:找|搜|查找)|淋浴头|花洒|角阀|水龙头/.test(source.text))){
+  if(isResearchGoal(g)&&(researchQuestion(source.text)||/全网|1688|网上|网络|寻找|搜索|检索|帮我.{0,12}(找|搜)|^(?:请)?(?:找|搜|查找)|淋浴头|花洒|角阀|水龙头/.test(source.text))){
    if(!source.researchHandled){source.researchHandled=true;g.researchRequest={id:randomUUID(),source:source.id,version:g.version,contextRevision:contextSettings(g).revision,question:source.text};}
    return;
   }

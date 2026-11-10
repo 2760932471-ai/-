@@ -1,3 +1,4 @@
+import {createWorkspaceManager} from './workspaces.js';
 import {chunkText} from './knowledge-retrieval.js';
 import { previewGoal } from './agents/builtins.js';
 import { createPlatform } from './platform.js';
@@ -28,7 +29,7 @@ let rooms=[];
 try { rooms=JSON.parse(await readFile(roomsFile,'utf8')); if(!Array.isArray(rooms))throw new Error('群存储格式错误'); } catch(error){if(error.code!=='ENOENT')throw error;}
 let roomSaving=Promise.resolve();
 function saveRooms(){const snapshot=JSON.stringify(rooms,null,2);roomSaving=roomSaving.then(async()=>{await writeFile(roomsFile+'.tmp',snapshot);await rename(roomsFile+'.tmp',roomsFile);});return roomSaving;}
-const platform=await createPlatform(dataDir);
+const workspaces=await createWorkspaceManager(dataDir);
 function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
 async function body(req) {
   const limit=/^\/api\/(knowledge|goals|skills|external-skills)(\/|$)/.test(req.url)?512000:64000;
@@ -42,11 +43,22 @@ const server = http.createServer(async (req, res) => {
       if(process.env.PLATFORM_TOKEN&&req.headers.authorization!==`Bearer ${process.env.PLATFORM_TOKEN}`)return json(res,401,{error:'请填写工作空间访问令牌'});
       if(req.method!=='GET'&&req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)return json(res,403,{error:'不允许跨站修改工作空间'});
     }
+    if(url.pathname==='/api/workspaces'&&req.method==='GET')return json(res,200,workspaces.list());
+    if(url.pathname==='/api/workspaces'&&req.method==='POST')return json(res,201,await workspaces.save(null,await body(req)));
+    const workspaceMatch=url.pathname.match(/^\/api\/workspaces\/([^/]+)$/);if(workspaceMatch&&req.method==='PUT')return json(res,200,await workspaces.save(workspaceMatch[1],await body(req)));
+    const workspaceId=req.headers['x-workspace-id']||'default';
+    const platform=url.pathname.startsWith('/api/')?await workspaces.get(workspaceId):null;
+    if(workspaceId!=='default'&&/^\/api\/(rooms|tasks|plan)(\/|$)/.test(url.pathname))return json(res,404,{error:'旧版演示接口仅属于默认工作空间'});
+    if(url.pathname==='/api/integrations'&&req.method==='GET')return json(res,200,platform.integrations.view());
+    if(url.pathname==='/api/integrations/search'&&req.method==='PUT')return json(res,200,await platform.integrations.saveSearch(await body(req)));
+    const searchMatch=url.pathname.match(/^\/api\/integrations\/search\/(test|query)$/);if(searchMatch&&req.method==='POST')return json(res,200,await platform.integrations[searchMatch[1]==='test'?'testSearch':'query'](await body(req)));
+    const shopMatch=url.pathname.match(/^\/api\/integrations\/stores(?:\/([^/]+))?(?:\/(test))?$/);if(shopMatch){const [,id,op]=shopMatch;if(op==='test'&&req.method==='POST')return json(res,200,await platform.integrations.testStore(id));if(!op&&((id&&req.method==='PUT')||(!id&&req.method==='POST')))return json(res,200,await platform.integrations.saveStore(id,await body(req)));}
     if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(res,200,platform.knowledge.view());
     if(url.pathname==='/api/knowledge/search'&&req.method==='POST')return json(res,200,await platform.knowledge.search(await body(req)));
     if(url.pathname==='/api/knowledge/preview'&&req.method==='POST'){const input=await body(req);return json(res,200,chunkText(input.body,{size:Number(input.size),overlap:Number(input.overlap)}));}
     const kbMatch=url.pathname.match(/^\/api\/knowledge\/(bases|documents)(?:\/([^/]+))?(?:\/(index|toggle))?$/);
     if(kbMatch){const [,type,id,op]=kbMatch;
+      if(id&&!op&&req.method==='DELETE')return json(res,200,await platform.knowledge[type==='bases'?'deleteBase':'deleteDocument'](id,await body(req)));
       if(type==='documents'&&id&&!op&&req.method==='GET')return json(res,200,platform.knowledge.document(id));
       if(type==='documents'&&op&&req.method==='POST')return json(res,200,await platform.knowledge[op](id,await body(req)));
       if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id))return json(res,200,await platform.knowledge[type==='bases'?'saveBase':'saveDocument'](id,await body(req)));
@@ -107,7 +119,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
@@ -115,7 +127,7 @@ const server = http.createServer(async (req, res) => {
 let ticking = false;
 const timer = setInterval(async () => {
   if (ticking) return; ticking = true;
-  try { await platform.pump(); const activeRooms=rooms.filter(r=>!r.paused&&r.queue.length);for(const room of activeRooms)await tickRoom(room);if(activeRooms.length)await saveRooms(); const active = tasks.filter(t => t.status === 'running'); for (const task of active) await tick(task); if (active.length) await save(); }
+  try { await workspaces.pump(); const activeRooms=rooms.filter(r=>!r.paused&&r.queue.length);for(const room of activeRooms)await tickRoom(room);if(activeRooms.length)await saveRooms(); const active = tasks.filter(t => t.status === 'running'); for (const task of active) await tick(task); if (active.length) await save(); }
   catch (error) { console.error('任务保存失败:', error.message); }
   finally { ticking = false; }
 }, 600);

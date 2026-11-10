@@ -41,7 +41,7 @@ export function matchMembers(d,text){
  if(!recognized)missing.unshift('尚未识别可执行工作，请说明需要选品、制作何种内容、核算什么或处理什么客户问题');
  for(const s of steps){s.objective=s.skillIds.map(id=>skillDefinitions.find(x=>x.id===id).name).join('、');s.deliverable=s.skillIds.map(id=>skillDefinitions.find(x=>x.id===id).description).join('；').slice(0,600);}
  const notes=['总控按目标关键词与已装配能力自动匹配，不是大模型语义推理。'];
- if(selection)notes.push('可比较已有候选；尚无自动搜索全网或 1688 的能力。');
+ if(selection)notes.push('先检索可用候选；网络及 1688 站点搜索需要在 AI基础能力配置连接搜索服务。');
  if(required.includes('copy.image_brief'))notes.push('当前只能交付主图设计简报，不能生成图片。');
  return {method:'本地能力匹配',intent:selection?'selection':listing?'listing':'analysis',recognized,steps,employeeIds:steps.map(s=>s.employeeId),missing,notes,summary:'总控按目标所需能力匹配就绪员工，避免无关工作；专业处理后统一汇总。'};
 }

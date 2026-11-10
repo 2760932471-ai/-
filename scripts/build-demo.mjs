@@ -1,3 +1,4 @@
+import {Script} from 'node:vm';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 const root=new URL('../',import.meta.url);
 const read=file=>readFile(new URL(file,root),'utf8');
@@ -35,12 +36,17 @@ const workforceUI=moduleBundle('previewWorkforceUI',await read('public/workforce
 const sources=moduleBundle('previewSources',await read('src/sources.js'),`const randomUUID=previewUUID;const process={env:{}};const pullSource=async()=>{throw Object.assign(new Error('静态预览不访问外部来源；请运行完整后端配置授权接口'),{sourceSafe:true});};`);
 const sourcesUI=moduleBundle('previewSourcesUI',await read('public/sources.js'));
 const knowledgeRetrieval=moduleBundle('previewKnowledgeRetrieval',await read('src/knowledge-retrieval.js'));
-const knowledge=moduleBundle('previewKnowledge',await read('src/knowledge.js'),`const randomUUID=previewUUID;const {chunkText,bm25,cosine,validateVectors}=previewKnowledgeRetrieval;const embeddingConfiguration=()=>({configured:false,model:'',signature:''});const embedTexts=async()=>{throw new Error('静态预览不能调用 Embedding，请使用完整后端');};`);
+const starters=moduleBundle('previewStarters',await read('src/knowledge-starters.js'));
+const knowledge=moduleBundle('previewKnowledge',await read('src/knowledge.js'),`const {knowledgeStarters}=previewStarters;const randomUUID=previewUUID;const {chunkText,bm25,cosine,validateVectors}=previewKnowledgeRetrieval;const embeddingConfiguration=()=>({configured:false,model:'',signature:''});const embedTexts=async()=>{throw new Error('静态预览不能调用 Embedding，请使用完整后端');};`);
 const knowledgeUI=moduleBundle('previewKnowledgeUI',await read('public/knowledge.js'));
 const businessUI=moduleBundle('previewBusinessUI',await read('public/business.js'));
-const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const {createResearchManager,researchInputs,assertResearch}=previewResearch;const {contentPacks,validateCopyBrief}=previewContent;const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {createPlanningManager,assertPlanCurrent}=previewPlanning;const {discussionMembers,contextSettings,selectConversation}=previewConversation;const {runEmployee}=previewEmployeeRuntime;const {callModel}=previewModel;const {executeSkill,skillDefinitions}=previewSkills;const {externalDefinitions,externalBlockers,publicExternal}=previewExternal;const invokeExternal=async()=>{throw new Error('静态预览不能调用外部 Agent，请启动完整后端');};const {initialSources,createSourceManager}=previewSources;const {initialKnowledge,createKnowledgeManager}=previewKnowledge;`);
+const integrations=moduleBundle('previewIntegrations',await read('src/integrations.js'),`const randomUUID=previewUUID;const process={env:{}};const searchTransport=async()=>{throw Object.assign(new Error('免安装预览不调用外部搜索，请运行完整后端'),{code:'PREVIEW_ONLY'});};const storeTransport=async()=>{throw Object.assign(new Error('免安装预览不能核验店铺授权，请运行完整后端'),{code:'PREVIEW_ONLY'});};`);
+const setupUI=moduleBundle('previewSetupUI',await read('public/setup.js'));
+const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const {createIntegrations}=previewIntegrations;const {createResearchManager,researchInputs,assertResearch,collectResearch,isResearchGoal}=previewResearch;const {contentPacks,validateCopyBrief}=previewContent;const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {createPlanningManager,assertPlanCurrent}=previewPlanning;const {discussionMembers,contextSettings,selectConversation}=previewConversation;const {runEmployee}=previewEmployeeRuntime;const {callModel}=previewModel;const {executeSkill,skillDefinitions}=previewSkills;const {externalDefinitions,externalBlockers,publicExternal}=previewExternal;const invokeExternal=async()=>{throw new Error('静态预览不能调用外部 Agent，请启动完整后端');};const {initialSources,createSourceManager}=previewSources;const {initialKnowledge,createKnowledgeManager}=previewKnowledge;`);
+const workspaces=moduleBundle('previewWorkspaces',await read('src/workspaces.js'),`const randomUUID=previewUUID;const {readFile,writeFile,mkdir,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createPlatform}=previewPlatform;`);
 const bootstrap=`
-const localPlatform=await previewPlatform.createPlatform('/preview');
+const workspaceManager=await previewWorkspaces.createWorkspaceManager('/preview');
+const localPlatform=await workspaceManager.get('default');
 if(!localPlatform.goals().length){
  const g=await localPlatform.create({requestId:'preview-seed-listing',text:'【演示样例】四名员工协作准备角阀上新资料，交付后由我验收',kind:'listing',employeeIds:['employee-merchandise','employee-creative','employee-profit','employee-coordination'],permission:'draft'});
  await localPlatform.action(g.id,{kind:'facts',expectedVersion:g.version,facts:previewBuiltins.testSample('product').facts,confirmed:true});
@@ -49,11 +55,20 @@ if(!localPlatform.goals().length){
 }
 const previewAPI=async(route,options={})=>{
  const method=options.method||'GET',input=options.body?JSON.parse(options.body):{};const [resource,id,action]=route.split('/');
+ if(resource==='workspaces')return method==='GET'?workspaceManager.list():workspaceManager.save(id,input);
+ const localPlatform=await workspaceManager.get(previewSession.getItem('workspaceId')||'default');
+ if(resource==='integrations'){
+  if(!id)return localPlatform.integrations.view();
+  if(id==='search')return action?localPlatform.integrations[action==='test'?'testSearch':'query'](input):localPlatform.integrations.saveSearch(input);
+  if(id==='stores')return route.split('/')[3]==='test'?localPlatform.integrations.testStore(action):localPlatform.integrations.saveStore(action,input);
+ }
+
  if(resource==='knowledge'){
   if(!id)return localPlatform.knowledge.view();
   if(id==='search')return localPlatform.knowledge.search(input);
   if(id==='preview')return previewKnowledgeRetrieval.chunkText(input.body,{size:Number(input.size),overlap:Number(input.overlap)});
   const op=route.split('/')[3];
+  if(method==='DELETE')return localPlatform.knowledge[id==='bases'?'deleteBase':'deleteDocument'](action,input);
   if(id==='documents'&&op)return localPlatform.knowledge[op](action,input);
   if(id==='documents'&&action&&method==='GET')return localPlatform.knowledge.document(action);
   return localPlatform.knowledge[id==='bases'?'saveBase':'saveDocument'](action,input);
@@ -86,23 +101,24 @@ const previewAPI=async(route,options={})=>{
  if(resource==='goal-preview'&&method==='POST')return previewBuiltins.previewGoal(input.text);
  throw new Error('预览中未提供此操作');
 };
-setInterval(()=>localPlatform.pump().catch(error=>{previewBar.textContent='本地运行未完成：'+error.message;}),300);
+setInterval(()=>workspaceManager.pump().catch(error=>{previewBar.textContent='本地运行未完成：'+error.message;}),300);
 `;
 let app=await read('public/app.js');
 if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
 app=app.replace(/^import .*;\n/gm,'').replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
 const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['访问令牌可由服务端 PLATFORM_TOKEN 启用，当前仍是单工作空间。','预览没有联网鉴权或多人同步；完整版可配置访问令牌。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['目标、任务与协作空间已保存到服务端','目标、任务与协作空间已保存到当前浏览器'],['服务端持久化','浏览器本地保存'],['使用服务端已保存的配置','使用当前浏览器已保存的配置'],['后端自动执行','浏览器规则执行'],['数据保存在后端','数据保存在当前浏览器'],['等待后端执行','等待本地执行'],['代码 / HTTP 能力','本地代码能力']];
-let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,commerce,external,starter,conversation,discussionUI,content,contentUI,skills,employees,model,runtime,planning,planningUI,matching,sources,knowledgeRetrieval,research,team,workforceUI,sourcesUI,knowledge,knowledgeUI,businessUI,platform,bootstrap,'const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,commerce,external,starter,conversation,discussionUI,content,contentUI,skills,employees,model,runtime,planning,planningUI,matching,sources,knowledgeRetrieval,research,team,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,integrations,setupUI,platform,workspaces,bootstrap,'const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
 for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
-let html=await read('public/index.html');
-html=html.replace('<link rel="stylesheet" href="/style.css">',`<style>${await read('public/style.css')}\n.preview-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 28px;background:var(--tint);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink)}.preview-bar p{color:var(--ink)}.preview-bar button{white-space:nowrap;min-height:44px}.preview-bar~main{min-height:calc(100dvh - 164px)}@media(max-width:760px){.preview-bar{padding:8px 12px;font-size:11px}.preview-bar p{line-height:1.7}}\n</style>`)
+let html=await read('public/index.html');const css=await read('public/style.css');
+html=html.replace('<link rel="stylesheet" href="/style.css">',()=>`<style>${css}\n.preview-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 28px;background:var(--tint);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink)}.preview-bar p{color:var(--ink)}.preview-bar button{white-space:nowrap;min-height:44px}.preview-bar~main{min-height:calc(100dvh - 164px)}@media(max-width:760px){.preview-bar{padding:8px 12px;font-size:11px}.preview-bar p{line-height:1.7}}\n</style>`)
  .replace('<script type="module" src="/app.js"></script>','')
  .replace('</header><main','</header><div class="preview-bar"><p id="preview-status" role="status">正在打开本地预览…</p><button class="text-button" id="preview-reset">重置样例</button></div><main')
  .replace('服务端工作空间','免安装预览')
  .replace('团队执行受配置约束 · 模型需连接后使用 · 业务写入尚未接通','免安装预览 · 本地规则运行 · 模型连接需完整后端 · 无真实业务写入')
  .replace('<option value="http">外部 HTTP Agent</option>','<option value="http" disabled>外部 HTTP Agent（完整版可用）</option>')
  .replace('这里只保存变量名。密钥值由服务器环境提供；域名需加入服务端 AGENT_ALLOWED_HOSTS。','外部 Agent 配置与密钥仅在完整后端中使用，预览不发送网络请求。');
-html=html.replace('</body>',`<noscript><p>请用支持 JavaScript 的浏览器打开此文件。</p></noscript><script>\n(async()=>{\n${code.replace(/<\/script/gi,'<\\/script')}\n})().catch(error=>{document.querySelector('#preview-status').textContent='预览未能加载：'+error.message+'。可点击“重置样例”清理此预览的本地数据后重试。';});\n</script></body>`);
+html=html.replace('</body>',()=>`<noscript><p>请用支持 JavaScript 的浏览器打开此文件。</p></noscript><script>\n(async()=>{\n${code.replace(/<\/script/gi,'<\\/script')}\n})().catch(error=>{document.querySelector('#preview-status').textContent='预览未能加载：'+error.message+'。可点击“重置样例”清理此预览的本地数据后重试。';});\n</script></body>`);
+new Script(html.match(/<script>([\s\S]*?)<\/script>/)[1],{filename:'preview-inline.js'});
 await mkdir(new URL('deliverables/',root),{recursive:true});
 for(const file of ['ai-platform-preview.html','AI数字员工协作工作台.html','慕雅居-交互演示.html'])await writeFile(new URL('deliverables/'+file,root),html);
 console.log(`Built current offline preview: ${Buffer.byteLength(html)} bytes; no network or backend required. Historical V1 stays archived.`);

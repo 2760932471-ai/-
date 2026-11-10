@@ -65,7 +65,7 @@ export function researchSummary(r){
  else lines.push(r.hits.length?'检索命中了相关文档，但没有识别到可比较的商品报价记录。方案或说明文字不能替代真实商品数据。':'没有检索到可用的商品报价记录。');
  if(!r.specific)lines.push('需要你明确要找的品类，预算也可以一并说明；候选资料由系统继续从已接入来源查找。');
  if(r.checked.pending)lines.push(`另有 ${r.checked.pending} 项来源资料待核验，尚未用于比较，无需重新录入。`);
- if(!r.checked.httpSources)lines.push('尚无启用的 HTTP 来源；当前不能自动搜索全网或 1688。可在 AI基础能力配置中接入授权供应商接口。');
+ if(!r.checked.httpSources)lines.push(r.webSearchReady?'当前已启用网络搜索；网页线索与可核验报价分开展示。':'尚未连接可用的网络搜索或供应商接口。可在 AI基础能力配置启用网络搜索 / 1688 站点搜索，或接入授权供应商资料。');
  if(r.status==='found')lines.push('这些记录可以用于参数与报价初筛；未获取销量、质量或风险依据时，不会编造综合性价比分数。');
  return lines.join('\n');
 }
@@ -78,10 +78,12 @@ export function assertResearch(d,r){
  for(const c of r.candidates){const p=c.provenance;if(p.kind==='knowledge'){const doc=d.knowledge.documents.find(x=>x.id===p.id);if(!doc?.enabled||doc.revision!==p.revision||!d.knowledge.bases.some(b=>b.id===p.baseId&&b.enabled))throw new Error('检索到的商品资料已更新或停用，请重新检索');}
   else{const m=d.materials.find(x=>x.id===p.id);if(!m||m.revision!==p.revision||materialProblem(m,d.sources.find(s=>s.id===p.sourceId)))throw new Error('检索到的来源资料已更新或不可用，请重新检索');}}
 }
-export function createResearchManager({getData,transaction,sources,event}){
+export function createResearchManager({getData,transaction,sources,event,integrations}){
  async function run(id){
   const snapshot=getData().goals.find(g=>g.id===id),request=snapshot?.researchRequest;if(!request)return;
-  const diagnostics=[];
+  const diagnostics=[];let webResult=null;
+  const local=collectResearch(getData(),snapshot,request.question);
+  if(integrations?.view().search.ready&&local.specific&&(local.status!=='found'||/全网|1688|网上|网络/.test(request.question))){try{webResult=await integrations.query({query:local.query+(local.maxPrice!==null?' 预算'+local.maxPrice+'元':''),site:/1688/.test(snapshot.text+request.question)?'1688.com':''});}catch{diagnostics.push('网络搜索暂未完成，请在 AI基础能力配置检查搜索连接');}}
   for(const s of getData().sources.filter(s=>s.enabled&&s.mode==='http').slice(0,3)){
    if(!request.forceSync&&s.lastSync?.revision===s.revision&&Date.now()-Date.parse(s.lastSync.at)<300000){if(s.lastSync.status!=='succeeded')diagnostics.push(s.name+'：最近同步未成功，本轮未重复请求；可在协作详情中主动重试');continue;}
    try{const result=await sources.sync(s.id);diagnostics.push(s.name+'：已同步 '+result.received+' 项，新增或变更内容需核验后使用');}catch(error){diagnostics.push(s.name+(String(error.message).startsWith('静态预览')?'：免安装预览不能调用外部来源，请运行完整后端':'：同步未完成，请检查接口配置与授权'));}
@@ -89,8 +91,9 @@ export function createResearchManager({getData,transaction,sources,event}){
   await transaction(d=>{
    const g=d.goals.find(g=>g.id===id);if(!g||g.researchRequest?.id!==request.id)return;if(g.repliesPaused&&request.source)return;delete g.researchRequest;
    if(g.version!==request.version||(request.contextRevision&&g.chatContext?.revision&&g.chatContext.revision!==request.contextRevision)){event(g,'查找期间目标或话题已变更，此次结果未用于新目标。');return;}
-   g.research={...collectResearch(d,g,request.question),diagnostics};
+   g.research={...collectResearch(d,g,request.question),diagnostics,webSearchReady:!!integrations?.view().search.ready};
    if(g.researchExecution?.version===g.version)diagnostics.push('本轮执行继续使用开始时的候选快照；新的筛选条件用于查找，变更执行范围需重新确认计划');
+   if(webResult){g.webResearch={...webResult,goalVersion:g.version};event(g,webResult.results.length?'已搜索到 '+webResult.results.length+' 条网页线索。以下是搜索服务返回的摘要，尚未核验报价、库存或供应商资质；不会直接用于上架或认定性价比。':'本次网络搜索未返回匹配网页，请调整品类或关键词。');g.messages.at(-1).links=webResult.results;g.messages.at(-1).workflow='research';}
    const prefix=request.source?'你不需要重复提供已有资料。我已先检查当前可用来源。\n':'';
    event(g,prefix+researchSummary(g.research)+(diagnostics.length?'\n来源同步：\n'+diagnostics.join('\n'):''));const msg=g.messages.at(-1);msg.replyTo=request.source||null;msg.workflow='research';msg.goalVersion=g.version;
    if(g.research.status==='found'&&!Array.isArray(g.skillData?.candidates)&&g.stage==='draft'&&g.runtime?.status==='needs_input'){g.runtime={status:'idle',completed:g.runtime.completed||[]};event(g,'已找到可用候选，将继续已确认的执行计划。');}

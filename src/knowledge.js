@@ -1,3 +1,4 @@
+import {knowledgeStarters} from './knowledge-starters.js';
 import {randomUUID} from 'node:crypto';
 import {chunkText,bm25,cosine,validateVectors} from './knowledge-retrieval.js';
 import {embedTexts,embeddingConfiguration} from './knowledge-embedding.js';
@@ -9,7 +10,7 @@ export function createKnowledgeManager({getData,transaction,embed=embedTexts,con
  const find=(list,id,label)=>list.find(x=>x.id===id)||fail(label+'不存在',404);
  const safeDoc=({chunks,body,...doc})=>({...doc,index:doc.index.status==='ready'&&doc.index.signature!==configuration().signature?{...doc.index,status:'stale'}:doc.index,characters:body.length,chunkCount:chunks.length});
  const publicConfig=()=>{const c=configuration();return {configured:c.configured,model:c.model};};
- function view(){const k=getData().knowledge;return structuredClone({bases:k.bases,documents:k.documents.map(safeDoc),embedding:publicConfig()});}
+ function view(){const k=getData().knowledge;return structuredClone({bases:k.bases,documents:k.documents.map(safeDoc),starters:knowledgeStarters,embedding:publicConfig()});}
  function document(id){const doc=find(getData().knowledge.documents,id,'文档');return structuredClone({...doc,chunks:doc.chunks.map(({vector,...c})=>c)});}
  const saveBase=(id,input)=>transaction(d=>{const k=d.knowledge,old=id?find(k.bases,id,'知识库'):null;if(old&&input.revision!==old.revision)fail('知识库版本已变化',409);if(k.bases.length>=20&&!old)fail('当前最多创建 20 个知识库');const name=field(input.name,'知识库名称',80),description=field(input.description||'','知识库说明',500,false);if(typeof input.enabled!=='boolean')fail('请选择启用状态');const base={id:old?.id||randomUUID(),name,description,enabled:input.enabled,revision:(old?.revision||0)+1};if(old)k.bases[k.bases.indexOf(old)]=base;else k.bases.push(base);return base;});
  const saveDocument=(id,input)=>transaction(d=>{
@@ -25,6 +26,8 @@ export function createKnowledgeManager({getData,transaction,embed=embedTexts,con
   if(old)k.documents[k.documents.indexOf(old)]=doc;else k.documents.unshift(doc);return safeDoc(doc);
  });
  const toggle=(id,input)=>transaction(d=>{const doc=find(d.knowledge.documents,id,'文档');if(input.revision!==doc.revision)fail('文档版本已变化',409);if(typeof input.enabled!=='boolean')fail('请选择启用状态');doc.enabled=input.enabled;doc.revision++;doc.updatedAt=now();doc.index={status:'not_indexed'};for(const c of doc.chunks)delete c.vector;return safeDoc(doc);});
+ const deleteDocument=(id,input)=>transaction(d=>{const doc=find(d.knowledge.documents,id,'文档');if(input.confirmed!==true)fail('请确认删除文档和全部切片');if(input.revision!==doc.revision)fail('文档版本已变化，请刷新',409);if(doc.index.status==='indexing')fail('文档正在索引，请稍后删除',409);d.knowledge.documents=d.knowledge.documents.filter(x=>x.id!==id);return {deleted:true,id};});
+ const deleteBase=(id,input)=>transaction(d=>{const base=find(d.knowledge.bases,id,'知识库');if(input.confirmed!==true)fail('请确认删除知识库');if(input.revision!==base.revision)fail('知识库版本已变化',409);if(d.knowledge.documents.some(x=>x.baseId===id))fail('请先删除或迁出库内文档，非空知识库不能删除');d.knowledge.bases=d.knowledge.bases.filter(x=>x.id!==id);for(const g of d.goals)if(g.knowledge)g.knowledge.baseIds=g.knowledge.baseIds.filter(x=>x!==id);return {deleted:true,id};});
  function validateScope(input,d=getData()){
   const baseIds=input?.baseIds||[];if(!Array.isArray(baseIds)||baseIds.length>20||new Set(baseIds).size!==baseIds.length)fail('知识库选择无效');
   for(const id of baseIds)if(!find(d.knowledge.bases,id,'知识库').enabled)fail('所选知识库已停用');
@@ -63,5 +66,5 @@ export function createKnowledgeManager({getData,transaction,embed=embedTexts,con
   const recall={query,...scope,algorithm:{bm25:'BM25（中文双字词 / 英文词）',vector:'Embedding 余弦相似度',hybrid:'BM25 + 向量 · RRF 融合'}[scope.mode],totalChunks:rows.length,hits,at:now()};
   if(scope.mode!=='bm25'&&configuration().signature!==cfg.signature)fail('Embedding 配置已变化，请重新检索');validateScope(scope);assertRecall(recall);return recall;
  }
- return {view,document,saveBase,saveDocument,toggle,index,search,validateScope,assertRecall};
+ return {view,document,saveBase,saveDocument,deleteDocument,deleteBase,toggle,index,search,validateScope,assertRecall};
 }
