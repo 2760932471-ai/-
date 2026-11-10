@@ -1,0 +1,19 @@
+import {validateDestination} from './agents/registry.js';
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import path from 'node:path';
+const safe=(message,outcome='failed')=>Object.assign(new Error(message),{imageSafe:true,outcome});
+export function imageCredentialState(c){return !!(process.env.PLATFORM_TOKEN&&c.secretEnv&&process.env[c.secretEnv]);}
+export function imageFiles(root){const dir=path.join(root,'generated-images');const file=id=>{if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id))throw safe('图片标识无效');return path.join(dir,id+'.png');};return {save:async(id,base64)=>{await mkdir(dir,{recursive:true});await writeFile(file(id),Buffer.from(base64,'base64'),{mode:0o600});},read:async id=>(await readFile(file(id))).toString('base64')};}
+async function bytes(response,limit,signal){if(!response.body)throw safe('服务未返回图片内容','unknown');const chunks=[],reader=response.body.getReader();let size=0;const abort=new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(safe('图片请求超时','unknown')),{once:true}));while(true){const {done,value}=await Promise.race([reader.read(),abort]);if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw safe('图片服务响应超过大小上限','unknown');}chunks.push(value);}return Buffer.concat(chunks);}
+export function validPNG(base64){if(typeof base64!=='string'||base64.length>28000000||!base64.length||!/^[A-Za-z0-9+/]+={0,2}$/.test(base64))throw safe('服务未返回有效的 PNG 图片','unknown');const b=Buffer.from(base64,'base64');if(b.length<24||b.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||b.toString('ascii',12,16)!=='IHDR')throw safe('服务返回的内容不是 PNG 图片','unknown');return {width:b.readUInt32BE(16),height:b.readUInt32BE(20)};}
+export async function generateImage(config,input,{fetch:request=fetch,resolve}={}){
+ if(!imageCredentialState(config))throw safe('请在完整后端配置 IMAGE_SECRET_ 生图密钥和 PLATFORM_TOKEN');const key=process.env[config.secretEnv];
+ const endpoint=config.endpoint.replace(/\/$/,'')+(input.referenceUrl?'/images/edits':'/images/generations'),signal=AbortSignal.timeout(180000);let dispatched=false;
+ try{
+  await validateDestination(endpoint,resolve);let body,headers={Authorization:'Bearer '+key};
+  if(input.referenceUrl){const u=new URL(input.referenceUrl);if(u.protocol!=='https:'||u.username||u.password)throw safe('商品参考图地址无效');const check=new URL(u);check.search='';check.hash='';await validateDestination(check.href,resolve);const r=await request(u.href,{redirect:'error',signal});if(!r.ok)throw safe('商品参考图读取失败');const buffer=await bytes(r,10000000,signal),mime=r.headers.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime))throw safe('参考图需为 PNG、JPEG 或 WebP');body=new FormData();for(const [k,v]of Object.entries({model:config.model,prompt:input.prompt,n:'1',size:input.size,quality:'medium',output_format:'png'}))body.append(k,v);body.append('image',new Blob([buffer],{type:mime}),'product.'+mime.split('/')[1]);
+  }else{headers['Content-Type']='application/json';body=JSON.stringify({model:config.model,prompt:input.prompt,n:1,size:input.size,quality:'medium',output_format:'png'});}
+  dispatched=true;const response=await request(endpoint,{method:'POST',headers,body,signal,redirect:'error'});
+  if(!response.ok)throw safe('生图服务返回 HTTP '+response.status+'；请检查额度、模型和权限',response.status>=500?'unknown':'failed');const raw=(await bytes(response,30000000,signal)).toString('utf8');if(raw.includes(key))throw safe('响应包含敏感凭证，已拒绝保存','unknown');let out;try{out=JSON.parse(raw);}catch{throw safe('生图服务未返回有效 JSON','unknown');}const base64=out.data?.[0]?.b64_json;const dimensions=validPNG(base64);if(!dimensions.width||!dimensions.height||dimensions.width>8192||dimensions.height>8192)throw safe('返回图片尺寸无效','unknown');return {base64,...dimensions};
+ }catch(e){throw e.imageSafe?e:safe(dispatched?'出图结果未能确认，可能已产生费用。不会自动重新提交':'尚未发起生图，请检查服务域名、参考图域名和网络配置',dispatched?'unknown':'failed');}
+}

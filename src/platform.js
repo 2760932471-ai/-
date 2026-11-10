@@ -1,3 +1,5 @@
+import {createImages} from './images.js';
+import {imageFiles} from './image-transport.js';
 import {createStoreOperations} from './store-operations.js';
 import {createIntegrations} from './integrations.js';
 import {createResearchManager,researchInputs,assertResearch,collectResearch,isResearchGoal} from './workforce/research.js';
@@ -23,7 +25,7 @@ import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
 const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
-export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall}={}){
+export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall,imageCall,imageReady}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
  data.externalSkills??=[];data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];data.knowledge??=initialKnowledge();
@@ -32,11 +34,12 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  for(const s of data.sources)if(s.syncing){s.syncing=false;s.lastSync={status:"failed",at:now(),error:"服务重启中断同步，请重试"};}
  let chain=Promise.resolve(),pumping=false;
  async function transaction(fn){const op=chain.then(async()=>{const next=structuredClone(data);const result=await fn(next);await writeFile(file+'.tmp',JSON.stringify(next),{mode:0o600});await rename(file+'.tmp',file);data=next;return structuredClone(result);});chain=op.catch(()=>{});return op;}
- await transaction(d=>{for(const o of d.storeOperations||[])if(o.status==='submitting'){o.status='unknown';o.message='服务重启中断结果确认；请回查平台状态，不会重复提交';}for(const r of d.runs)if(r.status==='running'){r.status='interrupted';r.error='服务重启中断了本次调用，请确认后重试';r.finishedAt=now();const g=d.goals.find(g=>g.id===r.goalId);if(g?.runtime?.runId===r.id)g.runtime={...g.runtime,status:'failed',error:r.error};}});
+ await transaction(d=>{for(const j of d.imageJobs||[])if(j.status==='running'){j.status='unknown';j.error='服务重启中断出图，结果未确认。不会自动重新提交或扣费';}for(const o of d.storeOperations||[])if(o.status==='submitting'){o.status='unknown';o.message='服务重启中断结果确认；请回查平台状态，不会重复提交';}for(const r of d.runs)if(r.status==='running'){r.status='interrupted';r.error='服务重启中断了本次调用，请确认后重试';r.finishedAt=now();const g=d.goals.find(g=>g.id===r.goalId);if(g?.runtime?.runId===r.id)g.runtime={...g.runtime,status:'failed',error:r.error};}});
  const findGoal=(d,id)=>{const g=d.goals.find(g=>g.id===id);if(!g)throw Object.assign(new Error('目标不存在'),{status:404});return g;};
  const findAgent=(d,id)=>{const a=d.agents.find(a=>a.id===id);if(!a)throw Object.assign(new Error('Agent不存在'),{status:404});return a;};
  const sources=createSourceManager({getData:()=>data,transaction,transport:sourceTransport});
  const knowledge=createKnowledgeManager({getData:()=>data,transaction,embed,configuration:embeddingConfig});
+ const images=createImages({getData:()=>data,transaction,knowledge,files:imageFiles(dataDir),imageCall,imageReady});
  const planning=createPlanningManager({getData:()=>data,transaction,inputs,modelCall,event});
  const integrations=createIntegrations({getData:()=>data,transaction,searchCall,storeCall,nativeStoreCall});
  const storeOperations=createStoreOperations({getData:()=>data,transaction,nativeStoreCall});
@@ -181,7 +184,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  return {
   goals:()=>structuredClone(data.goals),agents:()=>data.agents.map(publicConfig),runs:()=>data.runs.map(({config,input,result,...r})=>r),
   run:id=>{const r=data.runs.find(r=>r.id===id);if(!r)throw Object.assign(new Error('运行记录不存在'),{status:404});const {config,...safe}=r;return structuredClone(safe);},
-  create,action,pump,workforce:team,sources,knowledge,planning,integrations,storeOperations,
+  create,action,pump,workforce:team,sources,knowledge,planning,integrations,storeOperations,images,
   saveAgent:(id,input)=>transaction(d=>{const prev=findAgent(d,id);const next=validateConfig(input,prev);d.agents[d.agents.indexOf(prev)]=next;return publicConfig(next);}),
   testAgent:(id,input)=>transaction(d=>{if(input!==undefined&&(!input||typeof input!=='object'||Array.isArray(input)))throw new Error('测试输入必须为JSON对象');const run=enqueue(d,id,input??testSample(id),{purpose:'test'});return {id:run.id,status:run.status};}),
   sample:id=>{findAgent(data,id);return testSample(id);},

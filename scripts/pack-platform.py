@@ -10,6 +10,7 @@ for folder in ['src','public','test','scripts','docs','design-system']:
 files.append(root/'deliverables/历史交互原型_V1.html')
 files.append(root/'deliverables/电商数字员工通用知识包_V0.14.md')
 files.extend((root/'deliverables/知识库入门包_V0.14').glob('*.md'))
+files.extend((root/'deliverables/企业知识资料_V0.16').glob('*.md'))
 with ZipFile(output,'w',ZIP_DEFLATED) as z:
     z.write(root/'deliverables/ai-platform-preview.html','AI数字员工协作平台/先打开预览.html')
     for p in sorted(set(files)):

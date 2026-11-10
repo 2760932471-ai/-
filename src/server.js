@@ -49,6 +49,10 @@ const server = http.createServer(async (req, res) => {
     const workspaceId=req.headers['x-workspace-id']||'default';
     const platform=url.pathname.startsWith('/api/')?await workspaces.get(workspaceId):null;
     if(workspaceId!=='default'&&/^\/api\/(rooms|tasks|plan)(\/|$)/.test(url.pathname))return json(res,404,{error:'旧版演示接口仅属于默认工作空间'});
+    if(url.pathname==='/api/images'&&req.method==='GET')return json(res,200,platform.images.view());
+    if(url.pathname==='/api/images/config'&&req.method==='PUT')return json(res,200,await platform.images.save(await body(req)));
+    if(url.pathname==='/api/images/jobs'&&req.method==='POST')return json(res,202,await platform.images.create(await body(req)));
+    const imageMatch=url.pathname.match(/^\/api\/images\/jobs\/([a-zA-Z0-9_-]+)\/image$/);if(imageMatch&&req.method==='GET')return json(res,200,await platform.images.image(imageMatch[1]));
     if(url.pathname==='/api/integrations'&&req.method==='GET')return json(res,200,platform.integrations.view());
     if(url.pathname==='/api/integrations/search'&&req.method==='PUT')return json(res,200,await platform.integrations.saveSearch(await body(req)));
     const searchMatch=url.pathname.match(/^\/api\/integrations\/search\/(test|query)$/);if(searchMatch&&req.method==='POST')return json(res,200,await platform.integrations[searchMatch[1]==='test'?'testSearch':'query'](await body(req)));
@@ -124,13 +128,14 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
 });
 let ticking = false;
 const timer = setInterval(async () => {
+  void workspaces.pumpImages().catch(()=>console.error('图片任务状态保存失败'));
   if (ticking) return; ticking = true;
   try { await workspaces.pump(); const activeRooms=rooms.filter(r=>!r.paused&&r.queue.length);for(const room of activeRooms)await tickRoom(room);if(activeRooms.length)await saveRooms(); const active = tasks.filter(t => t.status === 'running'); for (const task of active) await tick(task); if (active.length) await save(); }
   catch (error) { console.error('任务保存失败:', error.message); }
