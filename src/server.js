@@ -52,6 +52,11 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/api/integrations'&&req.method==='GET')return json(res,200,platform.integrations.view());
     if(url.pathname==='/api/integrations/search'&&req.method==='PUT')return json(res,200,await platform.integrations.saveSearch(await body(req)));
     const searchMatch=url.pathname.match(/^\/api\/integrations\/search\/(test|query)$/);if(searchMatch&&req.method==='POST')return json(res,200,await platform.integrations[searchMatch[1]==='test'?'testSearch':'query'](await body(req)));
+    const productMatch=url.pathname.match(/^\/api\/integrations\/stores\/([^/]+)\/(products|operations)(?:\/([^/]+)\/(confirm|verify|resolve))?$/);
+    if(productMatch){const [,shop,type,id,op]=productMatch;
+      if(type==='operations'&&!id&&req.method==='GET')return json(res,200,platform.storeOperations.history(shop));
+      if(req.method==='POST')return json(res,200,await (type==='products'?platform.storeOperations.list(shop,await body(req)):id?platform.storeOperations[op](shop,id,await body(req)):platform.storeOperations.prepare(shop,await body(req))));
+    }
     const shopMatch=url.pathname.match(/^\/api\/integrations\/stores(?:\/([^/]+))?(?:\/(test))?$/);if(shopMatch){const [,id,op]=shopMatch;if(op==='test'&&req.method==='POST')return json(res,200,await platform.integrations.testStore(id));if(!op&&((id&&req.method==='PUT')||(!id&&req.method==='POST')))return json(res,200,await platform.integrations.saveStore(id,await body(req)));}
     if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(res,200,platform.knowledge.view());
     if(url.pathname==='/api/knowledge/search'&&req.method==='POST')return json(res,200,await platform.knowledge.search(await body(req)));
@@ -105,7 +110,7 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/api/rooms'&&req.method==='POST'){const input=await body(req);const room=createRoom(input.goal,input.agents);rooms.unshift(room);await saveRooms();return json(res,201,room);}
     const roomMatch=url.pathname.match(/^\/api\/rooms\/([^/]+)\/(messages|pause)$/);
     if(roomMatch&&req.method==='POST'){const room=rooms.find(r=>r.id===roomMatch[1]);if(!room)return json(res,404,{error:'协作群不存在'});const input=await body(req);if(roomMatch[2]==='messages')sendMessage(room,input.text,input.target);else{if(typeof input.paused!=='boolean')throw new Error('无效暂停状态');room.paused=input.paused;}await saveRooms();return json(res,200,room);}
-    if (url.pathname === '/api/health') return json(res, 200, { ok: true, mode: 'platform', storeAdapter: 'simulation', authenticationRequired: !!process.env.PLATFORM_TOKEN });
+    if (url.pathname === '/api/health') return json(res, 200, { ok: true, mode: 'platform', storeAdapter: 'configured-official-adapters', goalStoreAdapter: 'simulation', authenticationRequired: !!process.env.PLATFORM_TOKEN });
     if (url.pathname === '/api/plan' && req.method === 'POST') return json(res, 200, planGoal((await body(req)).goal));
     if (url.pathname === '/api/tasks' && req.method === 'GET') return json(res, 200, tasks);
     if (url.pathname === '/api/tasks' && req.method === 'POST') {
@@ -119,7 +124,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
@@ -131,6 +136,6 @@ const timer = setInterval(async () => {
   catch (error) { console.error('任务保存失败:', error.message); }
   finally { ticking = false; }
 }, 600);
-server.listen(Number(process.env.PORT || 3000), process.env.ENABLE_CODEX_LOCAL==='1'?'127.0.0.1':'0.0.0.0', () => console.log('慕雅居数字员工 · port ' + (process.env.PORT || 3000) + ' · PLATFORM / simulated store'));
+server.listen(Number(process.env.PORT || 3000), process.env.ENABLE_CODEX_LOCAL==='1'?'127.0.0.1':'0.0.0.0', () => console.log('慕雅居数字员工 · port ' + (process.env.PORT || 3000) + ' · PLATFORM / configured store adapters'));
 function shutdown() { clearInterval(timer); server.close(() => process.exit(0)); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
