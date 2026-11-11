@@ -1,3 +1,4 @@
+import {normalizeChannel,placeholderFact} from './content-preparation.js';
 // Deterministic content assembly: every product claim comes from the confirmed brief.
 export const contentPacks=[
  {id:'titles',name:'商品标题',employeeName:'商品标题数字员工',output:'3 组标题候选、字符数与取舍依据',description:'调整信息顺序，保留关键规格，形成可比较的标题。'},
@@ -6,20 +7,22 @@ export const contentPacks=[
  {id:'video',name:'短视频脚本',employeeName:'短视频脚本数字员工',output:'30 / 60 秒分镜、画面、口播与字幕',description:'围绕商品事实组织镜头节奏，明确拍摄所需素材。'},
  {id:'image_brief',name:'主图设计简报',employeeName:'主图策划数字员工',output:'3 版构图方向、画面文字与素材清单',description:'准备可交给设计师的制作要求；本能力不生成图片。'}
 ].map(p=>({...p,skillId:'copy.'+p.id,employeeId:'employee-copy-'+p.id}));
-export const contentDefinitions=contentPacks.map(p=>({id:p.skillId,name:p.name+'编排',description:p.description+'基于确认资料的代码草拟，未经人工审核。',roleIds:['creative','merchandise'],requires:['copyBrief：商品、渠道、受众、已核验特点、来源、人工确认'],version:1}));
+export const contentDefinitions=contentPacks.map(p=>({id:p.skillId,name:p.name+'编排',description:p.description+'可从已有资料自动提取并编排；输出需审核。',roleIds:['creative','merchandise'],requires:['商品名称；渠道默认全渠道，受众与特点可由系统从已有资料自动整理'],version:1}));
 export function validateCopyBrief(value){
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('请填写内容制作资料');
+ value={...value,channel:normalizeChannel(value.channel)};
  const b={};for(const [key,label,max]of [['productName','商品名称',80],['channel','使用渠道',40],['audience','目标人群',120],['source','资料来源',500]]){if(typeof value[key]!=='string'||!value[key].trim()||value[key].trim().length>max)throw new Error(label+'必填，最多 '+max+' 字');b[key]=value[key].trim();}
  if(!Array.isArray(value.facts)||value.facts.length<1||value.facts.length>8||value.facts.some(v=>typeof v!=='string'||!v.trim()||v.trim().length>120))throw new Error('请提供 1–8 条已核验特点，每条最多 120 字');
+ if(placeholderFact(value.source)||value.facts.some(placeholderFact))throw new Error('内容特点或来源是占位文字，请使用自动整理或填写具体信息');
  b.facts=[...new Set(value.facts.map(v=>v.trim()))];
  if(value.confirmed!==true)throw new Error('请先核对商品特点与来源并确认');b.confirmed=true;
  b.duration=Number(value.duration??30);if(![30,60].includes(b.duration))throw new Error('视频时长请选择 30 或 60 秒');
  const hits=['全网最低','永久不漏','百分百','100%','零风险','国家级','顶级'].filter(w=>[b.productName,...b.facts].join('\n').includes(w));if(hits.length)throw new Error('以下表述需核验并修改后再生成：'+hits.join('、'));
  return b;
 }
-export function contentSample(){return {goal:'为示例角阀制作内容草稿',kind:'analysis',scope:{store:'虚构示例店',sku:'COPY-DEMO',product:'示例角阀'},copyBrief:{productName:'示例黄铜角阀',channel:'商品详情页',audience:'核对管件规格的家庭用户',facts:['材质：黄铜（虚构样例）','接口：G1/2（虚构样例）','包装：1 只装（虚构样例）'],source:'虚构测试资料，请替换为真实核验资料',confirmed:true,duration:30}};}
+export function contentSample(){return {goal:'为示例角阀制作内容草稿',kind:'analysis',scope:{store:'虚构示例店',sku:'COPY-DEMO',product:'示例角阀'},copyBrief:{productName:'示例黄铜角阀',channel:'全渠道',audience:'核对管件规格的家庭用户',facts:['材质：黄铜（虚构样例）','接口：G1/2（虚构样例）','包装：1 只装（虚构样例）'],source:'虚构测试资料，请替换为真实核验资料',confirmed:true,duration:30}};}
 export function executeContent(id,input){
- const pack=contentPacks.find(p=>p.skillId===id);if(!pack)throw new Error('未知内容能力');let b;try{b=validateCopyBrief(input.copyBrief);}catch(error){return {status:'needs_input',summary:'内容草稿尚未生成。',missing:[error.message],artifacts:[],metrics:{}};}
+ const pack=contentPacks.find(p=>p.skillId===id);if(!pack)throw new Error('未知内容能力');let b;try{b=validateCopyBrief(input.autoContent?{...input.autoContent,confirmed:true}:input.copyBrief);}catch(error){return {status:'needs_input',summary:'内容草稿尚未生成。',missing:[error.message],artifacts:[],metrics:{}};}
  const facts=b.facts,numbered=facts.map((f,i)=>`[${i+1}] ${f}`).join('\n');let body='',metrics={factCount:facts.length};
  if(id==='copy.titles'){
   const candidates=[`${b.productName}｜${facts[0]}`,`${facts[0]}｜${b.productName}${facts[1]?'｜'+facts[1]:''}`,`${b.productName}｜${facts.join(' / ')}`];
@@ -35,7 +38,7 @@ export function executeContent(id,input){
  }else{
   body=['白底商品与参数卡','细节特写与证据标注','包装与规格核对'].map((direction,i)=>`方向 ${i+1}：${direction}\n主标题：${b.productName}\n画面文字：${facts[i%facts.length]}\n构图要求：商品主体清晰，文字与实物分区；留出平台裁切安全区。\n素材需求：对应实拍和可核验参数；保留原有结构，不增添虚构配件。`).join('\n\n')+'\n\n未生成图片。尺寸、背景、文字比例以实际渠道规范为准；第三方素材须确认使用权限。';
  }
- const header=`${pack.name}草稿 · 待审核\n商品：${b.productName}\n渠道：${b.channel}\n目标受众：${b.audience}\n制作方式：基于确认事实的代码编排，未调用大模型。\n\n`;
- const evidence=`资料来源：${b.source}\n已确认的输入事实：\n${numbered}`;
+ const header=`${pack.name}草稿 · 待审核\n商品：${b.productName}\n渠道：${b.channel}\n目标受众：${b.audience}\n制作方式：${input.autoContent?'自动检索与资料提取；建议人群不是已验证画像':'基于确认事实的代码编排'}，未调用大模型。\n\n`;
+ const evidence=`资料来源：${b.source}\n${input.autoContent?'自动提取的来源陈述（不等于独立核验）':'已确认的输入事实'}：\n${numbered}`;
  return {status:'succeeded',summary:pack.name+'草稿已编排，请人工审核。',missing:[],artifacts:[{title:pack.name+'草稿（待审核）',body:header+body+'\n\n'+evidence,evidence}],metrics};
 }

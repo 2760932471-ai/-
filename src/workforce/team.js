@@ -1,3 +1,4 @@
+import {imageOutputs,prepareContent} from './content-preparation.js';
 import {isResearchGoal,researchQuestion,collectResearch,researchSummary} from './research.js';
 import {matchMembers,matchingKey} from './matching.js';
 import {validateCopyBrief} from './content.js';
@@ -61,11 +62,13 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   const signature=planningSignature(d,g);if(g.collaboration?.goalVersion===g.version&&g.collaboration.signature===signature)return g;
   const steps=g.members.map(id=>{const e=employee(d,id);return {employeeId:id,employeeName:e.name,skillIds:g.executionPlan?.steps.find(s=>s.employeeId===id)?.skillIds||e.skillIds};});
   if(isResearchGoal(g)){g.research=collectResearch(d,g);if(!Array.isArray(g.skillData?.candidates)){event(g,researchSummary(g.research));if(g.research.status!=='found'&&(d.sources.some(s=>s.enabled&&s.mode==='http')||(d.searchConfig?.enabled&&d.searchConfig.lastTest?.status==='succeeded'&&d.searchConfig.lastTest.revision===d.searchConfig.revision))&&g.researchAttemptVersion!==g.version){g.researchRequest={id:randomUUID(),version:g.version,question:g.text};g.researchAttemptVersion=g.version;event(g,'正在检查已配置的授权来源；找到的数据会保留来源，未核验记录不会直接用于结论。');}}}
+  if(!g.contentDraft&&imageOutputs(g.text).length){g.autoContent=prepareContent(d,g);return g;}
   const checks=await checkTeamInputs(d,g,steps,inputs);
   for(const step of steps){const ready=employeeReadiness(employee(d,step.employeeId),models(d),d.externalSkills.map(publicExternal));if(!ready.ready)checks.push({employeeId:step.employeeId,employeeName:step.employeeName,skillId:null,name:'员工配置',status:'missing',missing:ready.blockers,detail:'配置未就绪'});}
   g.collaboration={goalVersion:g.version,signature,steps,checks,createdAt:stamp()};if(g.executionPlan?.source==='auto-match')g.executionPlan.checks=checks;
   event(g,'已完成本地能力与输入检查，协作顺序：'+steps.map(s=>s.employeeName).join(' → ')+'。前一步的正式成果会传给后续员工，最后由负责人验收。'+(isSelectionGoal(g.text)?'\n先从已接入的知识库与来源检索候选；网络搜索需先连接并测试搜索服务。缺少市场依据时只做参数与报价初筛，不编造销量和质量评分。':''));
   for(const step of (isResearchGoal(g)?[]:steps)){const rows=checks.filter(c=>c.employeeId===step.employeeId);receipt(g,employee(d,step.employeeId),'能力检查 · 本地规则\n'+rows.map(c=>c.name+'：'+(c.status==='missing'?'待补 '+c.missing.join('、'):c.status==='runtime'?c.detail:'输入校验通过')).join('\n')+(steps.indexOf(step)?'\n执行时接收前序员工的交付物。':''),{workflow:'check'});}
+  const skillIds=steps.flatMap(s=>s.skillIds);if(g.teamSelection==='auto'&&!g.planProposal&&skillIds.some(id=>id.startsWith('copy.'))&&skillIds.every(id=>id.startsWith('copy.')||id==='task.brief')&&!prepareContent(d,g).missing.length)action(d,g,{kind:'plan',expectedVersion:g.version});
   return g;
  }
  function regroup(d,g){
@@ -78,10 +81,12 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   event(g,'已按你的操作重新匹配选品执行团队；历史消息和资料保留，旧成员仍可参与讨论。');
  }
  function update(g){
+  if(g.production){if(g.stage==='completed')g.tasks.forEach(t=>t.status='completed');return;}
   const completed=g.runtime?.completed||[];
   g.tasks.forEach((t,i)=>{t.status=i===0?(g.stage==='plan'?'confirmation':'completed'):i===g.tasks.length-1?(g.stage==='completed'?'completed':g.stage==='review'?'acceptance':'pending'):completed.includes(t.owner)?'completed':g.stage==='draft'&&g.members.find(id=>!completed.includes(id))===t.owner?(g.paused?'paused':['failed','needs_input'].includes(g.runtime.status)?'waiting':'active'):'pending';});
  }
  function schedule(d,g){
+  if(!g.contentDraft&&imageOutputs(g.text).length)return;
   if(g.paused||g.researchRequest||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime.status))return;
   const completed=g.runtime.completed||[],id=g.members.find(id=>!completed.includes(id));
   if(!id){g.stage='review';g.runtime={status:'completed',completed};event(g,'所选员工已完成本轮交付，请人工验收；未执行真实业务写入。','review');update(g);return;}
@@ -100,7 +105,9 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
  function revise(g){g.version++;g.planProposal=null;g.executionPlan=null;g.stage='plan';g.runtime={status:'idle',completed:[]};g.artifacts.forEach(a=>{if(a.status==='draft')a.status='superseded';});event(g,'资料已保存为新版本，请重新确认计划。','plan');}
  function action(d,g,input){
   const k=input.kind;
-  if(['knowledge','references','facts','ledger','inputs','plan','retry','complete','revise','adoptPlan','discardPlan','replan','kickoff','regroupSelection','setTeam','research'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
+  if(k==='complete'&&!g.contentDraft&&imageOutputs(g.text).some(kind=>!d.imageJobs?.some(j=>j.goalId===g.id&&j.goalVersion===g.version&&j.outputKind===kind&&j.status==='succeeded')))fail('图片尚未全部生成，文字简报不能作为图片交付验收');
+  if(k==='complete'&&g.production)for(const id of g.production.jobIds||[])images.assertDelivery(id);
+  if(['contentPreferences','knowledge','references','facts','ledger','inputs','plan','retry','complete','revise','adoptPlan','discardPlan','replan','kickoff','regroupSelection','setTeam','research'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
   if(k==='message'){
    const text=String(input.text||'').trim();if(!text||text.length>2000)fail('请输入1–2000字的消息');if(g.queue.length>=24)fail('待回复队列已满');
    const invites=input.inviteIds||[];if(!Array.isArray(invites)||invites.length>4)fail('一次最多邀请 4 位员工');invites.forEach(id=>requireReady(d,id));
@@ -146,6 +153,10 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
     g.runtime={status:'idle',completed:[]};event(g,'已采用总控分工。请补齐所列资料后确认计划，采用分工本身不会开始执行。');
    }else if(k==='discardPlan'){
     if(!g.planProposal||g.planProposal.id!==input.proposalId)fail('草案已变化，请刷新');g.planProposal=null;
+   }else if(k==='contentPreferences'){
+    if(!['plan','draft'].includes(g.stage))fail('当前阶段请新建后续目标');
+    for(const [key,max] of [['productName',80],['channel',40],['audience',120]])if(typeof input[key]!=='string'||input[key].length>max)fail('制作偏好格式无效');
+    g.skillData={...g.skillData,copyBrief:{productName:input.productName.trim(),channel:input.channel||'全渠道',audience:input.audience.trim(),confirmed:false}};revise(g);
    }else if(k==='inputs'){
     if(!['plan','draft'].includes(g.stage))fail('当前阶段不能修改Skill业务资料');const context=input.data;
     if(!context||typeof context!=='object'||Array.isArray(context)||Object.keys(context).some(k=>!['candidates','unitCosts','inventory','commerce','campaign','replenishment','traffic','serviceQuestion','copyBrief'].includes(k)))fail('只接受已定义的业务资料字段');
