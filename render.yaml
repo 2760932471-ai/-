@@ -1,0 +1,29 @@
+# Full Node backend, NOT the GitHub Pages preview.
+# Paid service + persistent disk: review current Render pricing before creating.
+services:
+  - type: web
+    name: ai-employee-workbench
+    runtime: node
+    plan: starter
+    numInstances: 1
+    buildCommand: npm run check
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: false
+    disk:
+      name: workspace-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data/workbench
+      - key: PLATFORM_TOKEN
+        generateValue: true
+      - key: AGENT_ALLOWED_HOSTS
+        value: generativelanguage.googleapis.com
+      - key: IMAGE_SECRET_GEMINI
+        sync: false

@@ -103,3 +103,5 @@ button,a{-webkit-tap-highlight-color:transparent}
 @media(max-width:800px){.image-intro{align-items:stretch;flex-direction:column}.image-grid{grid-template-columns:1fr}.image-modes{grid-template-columns:1fr}}
 
 .select-error{display:block;color:#62646a;margin-top:6px}.select-error[hidden],.select-control[hidden]{display:none}.select-chevron svg{display:block}
+
+.image-chat-card{margin:12px 0;padding:16px;border:1px solid var(--line);border-radius:10px;background:#fff;display:grid;gap:12px}.image-chat-card p{font-size:13px}.image-chat-card .image-chat-description{white-space:pre-wrap;max-height:220px;overflow:auto;margin-top:8px}.image-chat-card details{font-size:12px;color:var(--muted)}.image-chat-card .action-buttons{flex-wrap:wrap}

@@ -13,7 +13,7 @@ import {skillSample,skillDefinitions,skillInputHint} from './skills.js';
 import {financeFields,isSelectionGoal} from '../agents/builtins.js';
 const stamp=()=>new Date().toISOString();
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});};
-export function createTeamManager({getData,transaction,enqueue,inputs,event,sources,knowledge}){
+export function createTeamManager({getData,transaction,enqueue,inputs,event,sources,knowledge,images}){
  const models=d=>d.models.map(publicModel);
  const employee=(d,id)=>d.employees.find(e=>e.id===id)||fail('员工不存在',404);
  function requireReady(d,id){const e=employee(d,id),r=employeeReadiness(e,models(d),d.externalSkills.map(publicExternal));if(!r.ready)fail(e.name+'：'+r.blockers.join('；'));return e;}
@@ -196,6 +196,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(g.repliesPaused||!g.queue.length)return;const job=g.queue.shift(),source=g.messages.find(m=>m.id===job.source);
   if(contextSettings(g).startAfter&&g.messages.findIndex(m=>m.id===source.id)<=g.messages.findIndex(m=>m.id===contextSettings(g).startAfter))return;
   if(job.intent!=='discuss'){event(g,'已记录背景或变更请求。业务事实请在资料页更新，确认后生成新版本。');return;}
+  if(source.imageRequest||images?.prepareChat(g,source))return;
   if(isResearchGoal(g)&&(researchQuestion(source.text)||/全网|1688|网上|网络|寻找|搜索|检索|帮我.{0,12}(找|搜)|^(?:请)?(?:找|搜|查找)|淋浴头|花洒|角阀|水龙头/.test(source.text))){
    if(!source.researchHandled){source.researchHandled=true;g.researchRequest={id:randomUUID(),source:source.id,version:g.version,contextRevision:contextSettings(g).revision,question:source.text};}
    return;

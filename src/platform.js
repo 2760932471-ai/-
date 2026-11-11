@@ -44,7 +44,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const integrations=createIntegrations({getData:()=>data,transaction,searchCall,storeCall,nativeStoreCall});
  const storeOperations=createStoreOperations({getData:()=>data,transaction,nativeStoreCall});
  const research=createResearchManager({getData:()=>data,transaction,sources,event,integrations});
- const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources,knowledge});
+ const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources,knowledge,images});
  await transaction(async d=>{await team.syncPending(d);for(const g of d.goals)if(g.mode==='team'&&isResearchGoal(g)&&!g.research){g.research=collectResearch(d,g);if(['plan','draft'].includes(g.stage))g.researchRequest={id:randomUUID(),version:g.version,question:g.text};}});
  function enqueue(d,agentId,input,meta={},override){
   if(d.runs.filter(r=>['queued','running'].includes(r.status)).length>=100)throw new Error('运行队列已满，请稍后再试');

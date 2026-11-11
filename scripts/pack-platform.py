@@ -4,7 +4,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 root=Path(__file__).resolve().parents[1]
 version=json.loads((root/'package.json').read_text())['version']
 output=root/f'deliverables/ai-platform-{version}.zip'
-files=[root/x for x in ['package.json','README.md','PROJECT_CONTEXT.md','.env.example','.gitignore','start-platform.sh','start-platform.cmd']]
+files=[root/x for x in ['package.json','render.yaml','README.md','PROJECT_CONTEXT.md','.env.example','.gitignore','start-platform.sh','start-platform.cmd']]
 for folder in ['src','public','test','scripts','docs','design-system']:
     files.extend(p for p in (root/folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts)
 files.append(root/'deliverables/历史交互原型_V1.html')

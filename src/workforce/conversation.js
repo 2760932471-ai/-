@@ -56,3 +56,10 @@ export function updateContext(g,input){
  if(pinnedIds.some(id=>excludedIds.includes(id)))throw new Error('同一条消息不能同时固定和排除');
  g.chatContext={...current,revision:current.revision+1,note,maxMessages,maxChars,pinnedIds,excludedIds};
 }
+
+// Route explicit image creation separately from copy briefs and ordinary questions.
+export function requestsImage(text){
+ const value=String(text||'');
+ if(/(?:不要|不用|别|先不|暂不|无需).{0,12}(?:生图|出图|生成|制作|做|画)|为什么|为何|怎么|如何|能不能|能否|是否|吗[？?]?$|提示词|简报|文案|教程|流程|方案|代码/.test(value))return false;
+ return /(?:生图|出图)|(?:生成|制作|做|画|设计|来|给).{0,35}(?:主图|详情(?:页)?图|图片|配图|海报)|(?:主图|详情(?:页)?图|图片|配图|海报).{0,15}(?:生成|制作|做出来|画出来)/.test(value);
+}
