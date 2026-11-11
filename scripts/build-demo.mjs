@@ -43,7 +43,7 @@ const knowledgeUI=moduleBundle('previewKnowledgeUI',await read('public/knowledge
 const businessUI=moduleBundle('previewBusinessUI',await read('public/business.js'));
 const storeOperations=moduleBundle('previewStoreOperations',await read('src/store-operations.js'),`const randomUUID=previewUUID;const nativeStoreTransport=async()=>{throw Object.assign(new Error('免安装预览不能操作真实店铺，请启动完整后端并配置应用授权'),{code:'PREVIEW_ONLY'});};`);
 const storeUI=moduleBundle('previewStoreUI',await read('public/store-operations.js'));
-const images=moduleBundle('previewImages',await read('src/images.js'),`const randomUUID=previewUUID;const {materialProblem}=previewSources;const imageCredentialState=()=>false;const generateImage=async()=>{throw new Error('免安装预览不能生成图片');};const validPNG=()=>{};`);
+const images=moduleBundle('previewImages',await read('src/images.js'),`const randomUUID=previewUUID;const {materialProblem}=previewSources;const imageCredentialState=()=>false;const testImageConnection=async()=>{throw new Error('免安装预览不能测试 Gemini，请启动完整后端并配置密钥');};const generateImage=async()=>{throw new Error('免安装预览不能生成图片');};const validPNG=()=>{};`);
 const imagesUI=moduleBundle('previewImagesUI',await read('public/images.js'));
 const integrations=moduleBundle('previewIntegrations',await read('src/integrations.js'),`const nativeStoreTransport=async()=>{throw Object.assign(new Error('免安装预览不能核验店铺授权，请运行完整后端'),{code:'PREVIEW_ONLY'});};const randomUUID=previewUUID;const process={env:{}};const searchTransport=async()=>{throw Object.assign(new Error('免安装预览不调用外部搜索，请运行完整后端'),{code:'PREVIEW_ONLY'});};const storeTransport=async()=>{throw Object.assign(new Error('免安装预览不能核验店铺授权，请运行完整后端'),{code:'PREVIEW_ONLY'});};`);
 const setupUI=moduleBundle('previewSetupUI',await read('public/setup.js'),`const {createStoreUI}=previewStoreUI;`);
@@ -62,7 +62,7 @@ const previewAPI=async(route,options={})=>{
  const method=options.method||'GET',input=options.body?JSON.parse(options.body):{};const [resource,id,action]=route.split('/');
  if(resource==='workspaces')return method==='GET'?workspaceManager.list():workspaceManager.save(id,input);
  const localPlatform=await workspaceManager.get(previewSession.getItem('workspaceId')||'default');
- if(resource==='images'){if(!id)return localPlatform.images.view();if(id==='config')return localPlatform.images.save(input);if(id==='jobs')return action?localPlatform.images.image(action):localPlatform.images.create(input);}
+ if(resource==='images'){if(!id)return localPlatform.images.view();if(id==='config')return localPlatform.images.save(input);if(id==='test')return localPlatform.images.test();if(id==='jobs')return action?localPlatform.images.image(action):localPlatform.images.create(input);}
  if(resource==='integrations'){
   if(!id)return localPlatform.integrations.view();
   if(id==='search')return action?localPlatform.integrations[action==='test'?'testSearch':'query'](input):localPlatform.integrations.saveSearch(input);

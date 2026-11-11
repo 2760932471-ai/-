@@ -51,6 +51,7 @@ const server = http.createServer(async (req, res) => {
     if(workspaceId!=='default'&&/^\/api\/(rooms|tasks|plan)(\/|$)/.test(url.pathname))return json(res,404,{error:'旧版演示接口仅属于默认工作空间'});
     if(url.pathname==='/api/images'&&req.method==='GET')return json(res,200,platform.images.view());
     if(url.pathname==='/api/images/config'&&req.method==='PUT')return json(res,200,await platform.images.save(await body(req)));
+    if(url.pathname==='/api/images/test'&&req.method==='POST')return json(res,200,await platform.images.test());
     if(url.pathname==='/api/images/jobs'&&req.method==='POST')return json(res,202,await platform.images.create(await body(req)));
     const imageMatch=url.pathname.match(/^\/api\/images\/jobs\/([a-zA-Z0-9_-]+)\/image$/);if(imageMatch&&req.method==='GET')return json(res,200,await platform.images.image(imageMatch[1]));
     if(url.pathname==='/api/integrations'&&req.method==='GET')return json(res,200,platform.integrations.view());

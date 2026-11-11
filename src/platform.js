@@ -25,7 +25,7 @@ import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
 const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
-export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall,imageCall,imageReady}={}){
+export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall,imageCall,imageReady,imageTest}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
  data.externalSkills??=[];data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];data.knowledge??=initialKnowledge();
@@ -39,7 +39,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const findAgent=(d,id)=>{const a=d.agents.find(a=>a.id===id);if(!a)throw Object.assign(new Error('Agent不存在'),{status:404});return a;};
  const sources=createSourceManager({getData:()=>data,transaction,transport:sourceTransport});
  const knowledge=createKnowledgeManager({getData:()=>data,transaction,embed,configuration:embeddingConfig});
- const images=createImages({getData:()=>data,transaction,knowledge,files:imageFiles(dataDir),imageCall,imageReady});
+ const images=createImages({getData:()=>data,transaction,knowledge,files:imageFiles(dataDir),imageCall,imageReady,imageTest});
  const planning=createPlanningManager({getData:()=>data,transaction,inputs,modelCall,event});
  const integrations=createIntegrations({getData:()=>data,transaction,searchCall,storeCall,nativeStoreCall});
  const storeOperations=createStoreOperations({getData:()=>data,transaction,nativeStoreCall});
