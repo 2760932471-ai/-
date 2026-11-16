@@ -1,3 +1,5 @@
+import './environment.js';
+import {accessPolicy} from './access-policy.js';
 import {createWorkspaceManager} from './workspaces.js';
 import {chunkText} from './knowledge-retrieval.js';
 import { previewGoal } from './agents/builtins.js';
@@ -10,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { agents, createTask, tick, decide, planGoal } from './engine.js';
 
-if(process.env.ENABLE_CODEX_LOCAL==='1'&&!process.env.PLATFORM_TOKEN)throw new Error('本机Codex桥接需要先设置 PLATFORM_TOKEN');
+const access = accessPolicy();
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dataDir = process.env.DATA_DIR || path.join(root, '.data');
 await mkdir(dataDir, { recursive: true });
@@ -40,7 +42,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if(url.pathname.startsWith('/api/')&&url.pathname!=='/api/health'){
-      if(process.env.PLATFORM_TOKEN&&req.headers.authorization!==`Bearer ${process.env.PLATFORM_TOKEN}`)return json(res,401,{error:'请填写工作空间访问令牌'});
+      if(!access.accepts(req.headers.authorization))return json(res,401,{error:'请填写工作空间访问令牌'});
       if(req.method!=='GET'&&req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)return json(res,403,{error:'不允许跨站修改工作空间'});
     }
     if(url.pathname==='/api/workspaces'&&req.method==='GET')return json(res,200,workspaces.list());
@@ -115,7 +117,7 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/api/rooms'&&req.method==='POST'){const input=await body(req);const room=createRoom(input.goal,input.agents);rooms.unshift(room);await saveRooms();return json(res,201,room);}
     const roomMatch=url.pathname.match(/^\/api\/rooms\/([^/]+)\/(messages|pause)$/);
     if(roomMatch&&req.method==='POST'){const room=rooms.find(r=>r.id===roomMatch[1]);if(!room)return json(res,404,{error:'协作群不存在'});const input=await body(req);if(roomMatch[2]==='messages')sendMessage(room,input.text,input.target);else{if(typeof input.paused!=='boolean')throw new Error('无效暂停状态');room.paused=input.paused;}await saveRooms();return json(res,200,room);}
-    if (url.pathname === '/api/health') return json(res, 200, { ok: true, mode: 'platform', storeAdapter: 'configured-official-adapters', goalStoreAdapter: 'simulation', authenticationRequired: !!process.env.PLATFORM_TOKEN });
+    if (url.pathname === '/api/health') return json(res, 200, { ok: true, mode: 'platform', storeAdapter: 'configured-official-adapters', goalStoreAdapter: 'simulation', authenticationRequired: access.authenticationRequired, accessMode: access.mode });
     if (url.pathname === '/api/plan' && req.method === 'POST') return json(res, 200, planGoal((await body(req)).goal));
     if (url.pathname === '/api/tasks' && req.method === 'GET') return json(res, 200, tasks);
     if (url.pathname === '/api/tasks' && req.method === 'POST') {
@@ -142,6 +144,6 @@ const timer = setInterval(async () => {
   catch (error) { console.error('任务保存失败:', error.message); }
   finally { ticking = false; }
 }, 600);
-server.listen(Number(process.env.PORT || 3000), process.env.ENABLE_CODEX_LOCAL==='1'?'127.0.0.1':'0.0.0.0', () => console.log('慕雅居数字员工 · port ' + (process.env.PORT || 3000) + ' · PLATFORM / configured store adapters'));
+server.listen(Number(process.env.PORT || 3000), access.host, () => console.log('慕雅居数字员工 · port ' + server.address().port + ' · access: ' + access.mode + (access.mode==='codespaces'?' · Codespaces 端口请保持 Private（私有）':'')));
 function shutdown() { clearInterval(timer); server.close(() => process.exit(0)); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);

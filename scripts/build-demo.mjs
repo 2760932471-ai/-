@@ -87,6 +87,7 @@ const previewAPI=async(route,options={})=>{
   if(action==='review'&&method==='POST')return localPlatform.sources.review(id,input);
   if(['POST','PUT'].includes(method))return localPlatform.sources[resource==='sources'?'saveSource':'saveMaterial'](id,input);
  }
+ if(resource==='health')return {ok:true,authenticationRequired:false,accessMode:'preview'};
  if(resource==='workforce'){if(id==='install')return localPlatform.workforce.install(input.recipeId);if(id==='recommend')return localPlatform.workforce.recommend(input.text);return localPlatform.workforce.view();}
  if(resource==='external-skills'){if(action==='test')return localPlatform.workforce.testExternal(id,input.input);return localPlatform.workforce.saveExternal(id,input);}
  if(['employees','models','skills'].includes(resource)){

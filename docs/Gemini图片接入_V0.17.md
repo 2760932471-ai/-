@@ -7,7 +7,7 @@
 进入「AI基础能力配置 → 图片生成」，选择「Google Gemini · 原生生图」。页面自动填入官方地址、图片模型示例与密钥变量名；模型可按实际项目权限修改。
 
 1. 将 API Key 保存到服务器私密环境变量 `IMAGE_SECRET_GEMINI`，不要填进网页、聊天、仓库或 URL。此前若已在聊天中发过密钥，应在 Google AI Studio 撤销并重建。
-2. 服务器设置 `PLATFORM_TOKEN`，用于本平台登录。将 `generativelanguage.googleapis.com` 加入 `AGENT_ALLOWED_HOSTS` 和部署环境网络白名单，保留原有域名。参考图所在 CDN 也需加入白名单。
+2. Codespaces 无需 `PLATFORM_TOKEN`，保持转发端口 Private；其他公网部署仍需配置平台访问保护。将 `generativelanguage.googleapis.com` 加入 `AGENT_ALLOWED_HOSTS` 和部署环境网络白名单，保留原有域名。参考图所在 CDN 也需加入白名单。
 3. 本地可从 `.env.example` 创建不提交到 Git 的 `.env`，填写后运行 `node --env-file=.env src/server.js`；云环境私密变量须经保存、发布和重新加载后才生效。保存配置草稿不等于已应用。
 4. 页面启用并保存生图连接。点击「检查 Gemini 连接」，只读取模型元数据，不提交生成任务。成功仅说明密钥能访问该模型，不保证图片输出权限或剩余额度。
 5. 进入「工作应用 → 生成主图 / 详情图」，输入画面描述、选择比例并确认生成；也可从图片目标中的「生成图片」进入。无需底图即可生成概念图。参考商品图模式需要选择已审核并获授权的素材。

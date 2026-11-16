@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {mkdtemp,rm} from 'node:fs/promises';import {once} from 'node:events';import net from 'node:net';import os from 'node:os';import path from 'node:path';import {testSample} from '../src/agents/builtins.js';
 test('HTTP platform protects configured access, runs agents and restores saved configuration after restart',async t=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'platform-http-'));const socket=net.createServer();socket.listen(0,'127.0.0.1');await once(socket,'listening');const port=socket.address().port;await new Promise(r=>socket.close(r));let child;
- const start=async()=>{child=spawn(process.execPath,['src/server.js'],{cwd:new URL('../',import.meta.url),env:{...process.env,DATA_DIR:dir,PORT:String(port),PLATFORM_TOKEN:'integration-test-token'},stdio:['ignore','pipe','pipe']});await Promise.race([once(child.stdout,'data'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('服务未启动')),8000).unref())]);};
+ const start=async()=>{child=spawn(process.execPath,['src/server.js'],{cwd:new URL('../',import.meta.url),env:{...process.env,DATA_DIR:dir,CODESPACES:'false',PORT:String(port),PLATFORM_TOKEN:'integration-test-token'},stdio:['ignore','pipe','pipe']});await Promise.race([once(child.stdout,'data'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('服务未启动')),8000).unref())]);};
  const stop=async()=>{if(child&&child.exitCode===null){child.kill('SIGTERM');await once(child,'exit');}};
  t.after(async()=>{await stop();await rm(dir,{recursive:true,force:true});});await start();
  const base=`http://127.0.0.1:${port}/api/`,headers={'Authorization':'Bearer integration-test-token','Content-Type':'application/json'};

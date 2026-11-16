@@ -97,8 +97,8 @@ test('personal Codex bridge is opt-in, uses SDK ChatGPT auth and returns decisio
  const {callLocalCodex}=await import('../src/workforce/codex-local.js');const vars=['ENABLE_CODEX_LOCAL','PLATFORM_TOKEN','MODEL_SECRET_PRIVATE'];const saved=Object.fromEntries(vars.map(k=>[k,process.env[k]]));
  try{
   delete process.env.ENABLE_CODEX_LOCAL;await assert.rejects(()=>callLocalCodex({timeoutMs:1000},[],[]),/未启用/);
-  process.env.ENABLE_CODEX_LOCAL='1';delete process.env.PLATFORM_TOKEN;await assert.rejects(()=>callLocalCodex({timeoutMs:1000},[],[]),/PLATFORM_TOKEN/);
-  process.env.PLATFORM_TOKEN='private-test-token';process.env.MODEL_SECRET_PRIVATE='private-test-secret';let captured;
+  process.env.ENABLE_CODEX_LOCAL='1';delete process.env.PLATFORM_TOKEN;
+  process.env.MODEL_SECRET_PRIVATE='private-test-secret';let captured;
   class FakeCodex {constructor(options){captured=options;}startThread(options){assert.equal(options.sandboxMode,'read-only');assert.equal(options.webSearchMode,'disabled');assert.equal(options.approvalPolicy,'never');return {run:async(prompt,options)=>{assert(prompt.includes('product_validate'));assert(options.signal);assert.deepEqual(options.outputSchema.properties.skill.enum,['','product_validate']);return {finalResponse:JSON.stringify({action:'skill',skill:'product_validate',answer:''}),usage:{input_tokens:100,output_tokens:20}};}};}}
   const result=await callLocalCodex({timeoutMs:1000},[{role:'user',content:'核验商品'}],[{function:{name:'product_validate',description:'核验'}}],{CodexClass:FakeCodex});
   assert.equal(result.message.tool_calls[0].function.name,'product_validate');assert.equal(captured.config.forced_login_method,'chatgpt');assert.equal(captured.config.features.shell_tool,false);assert.equal(captured.env.PLATFORM_TOKEN,undefined);assert.equal(captured.env.MODEL_SECRET_PRIVATE,undefined);assert.deepEqual(captured.configOverrides,['mcp_servers={}']);

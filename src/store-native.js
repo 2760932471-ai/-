@@ -7,7 +7,6 @@ export function topSignature(params,secret){return createHash('md5').update(secr
 export function douyinSignature(params,secret){return createHmac('sha256',secret).update(secret+'app_key'+params.app_key+'method'+params.method+'param_json'+params.param_json+'timestamp'+params.timestamp+'v2'+secret).digest('hex');}
 export function createNativeStoreTransport({fetch:request=fetch,resolve,env=process.env,now=()=>Date.now()}={}){
  async function call(c,method,business,write=false){
-  if(write&&!env.PLATFORM_TOKEN)throw error('真实店铺写入需要服务器设置 PLATFORM_TOKEN 并通过访问令牌登录');
   const keys=['appKeyEnv','appSecretEnv','accessTokenEnv'].map(k=>env[c[k]]);if(keys.some(k=>!k))throw error('服务器缺少店铺应用凭证或授权令牌，请配置三个环境变量后重试');
   const [appKey,secret,token]=keys,base=c.platform==='taobao'?'https://eco.taobao.com/router/rest':'https://openapi-fxg.jinritemai.com/'+method.replaceAll('.','/');
   const signal=AbortSignal.timeout(20000),abort=new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(error('平台请求超时',write?'unknown':'not_sent')),{once:true}));

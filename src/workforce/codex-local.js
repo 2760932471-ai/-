@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 export async function callLocalCodex(model,messages,tools=[],{CodexClass}={}){
  if(process.env.ENABLE_CODEX_LOCAL!=='1')throw new Error('本机Codex桥接未启用；在你自己的电脑设置 ENABLE_CODEX_LOCAL=1');
- if(!process.env.PLATFORM_TOKEN)throw new Error('本机Codex桥接要求设置 PLATFORM_TOKEN');
  if(!CodexClass){try{({Codex:CodexClass}=await import('@openai/codex-sdk'));}catch{throw new Error('尚未安装官方Codex SDK；请在本地项目执行 npm run setup:codex');}}
  // The SDK reads its own local login. This application never opens or copies auth files.
  const env={};for(const key of ['PATH','HOME','USERPROFILE','APPDATA','LOCALAPPDATA','SYSTEMROOT','SystemRoot','TEMP','TMP','TMPDIR','HTTP_PROXY','HTTPS_PROXY','NO_PROXY','SSL_CERT_FILE','NODE_EXTRA_CA_CERTS','CODEX_HOME'])if(process.env[key])env[key]=process.env[key];
