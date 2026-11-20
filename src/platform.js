@@ -1,3 +1,4 @@
+import {createTaskflowManager} from './taskflows/manager.js';
 import {prepareContent,imageOutputs,assertContentEvidence} from './workforce/content-preparation.js';
 import {createProductionManager} from './workforce/production.js';
 import {createImages} from './images.js';
@@ -25,9 +26,9 @@ import {createGoal,goalAction,tickGoal} from './goals.js';
 import {defaultConfigs,publicConfig,validateConfig,invokeAgent} from './agents/registry.js';
 import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
-const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:'数字员工',text,card,at:now()});
+const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:g.mode==='flow'?'目标总控':'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
-export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall,imageCall,imageReady,imageTest}={}){
+export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall,imageCall,imageReady,imageTest,flowSkillCall}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
  data.externalSkills??=[];data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];data.knowledge??=initialKnowledge();
@@ -47,6 +48,8 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const storeOperations=createStoreOperations({getData:()=>data,transaction,nativeStoreCall});
  const research=createResearchManager({getData:()=>data,transaction,sources,event,integrations});
  const production=createProductionManager({getData:()=>data,transaction,images,event});
+ const flows=createTaskflowManager({getData:()=>data,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall:flowSkillCall});
+ await transaction(d=>{for(const g of d.goals.filter(g=>g.mode==='flow')){if(g.flow.status==='planning_running'){g.flow.status='planning_failed';g.flow.error='服务重启中断规划，请重新规划';}for(const n of g.flow.nodes)if(n.status==='running'){n.status='failed';n.error='服务重启中断执行，请核查后重试';}}});
  const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources,knowledge,images});
  await transaction(async d=>{await team.syncPending(d);for(const g of d.goals)if(g.mode==='team'&&isResearchGoal(g)&&!g.research){g.research=collectResearch(d,g);if(['plan','draft'].includes(g.stage))g.researchRequest={id:randomUUID(),version:g.version,question:g.text};}});
  function enqueue(d,agentId,input,meta={},override){
@@ -93,23 +96,24 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(!/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId||''))throw new Error('缺少有效创建请求编号');
   const signature=JSON.stringify({...input,requestId:undefined});
   if(Object.hasOwn(d.requests,input.requestId)){const old=d.requests[input.requestId];if(old.signature!==signature)throw conflict('同一创建请求不能更换内容');return findGoal(d,old.goalId);}
-  const isTeam=Array.isArray(input.employeeIds)||input.teamSelection==='auto';if(input.teamSelection!==undefined&&!['auto','manual'].includes(input.teamSelection))throw new Error('成员安排方式无效');
+  const isTeam=input.executionMode!=='flow'&&(Array.isArray(input.employeeIds)||input.teamSelection==='auto');if(input.teamSelection!==undefined&&!['auto','manual'].includes(input.teamSelection))throw new Error('成员安排方式无效');
   const creationInput=input.teamSelection==='auto'?{...input,employeeIds:[]}:input;
+  const isFlow=input.executionMode==='flow';
   const required=input.kind==='listing'?'product':'insight';
-  if(!isTeam&&!input.members?.includes(required))throw new Error(`请邀请${required==='product'?'商品运营':'经营分析'} Agent 参与此目标`);
-  for(const id of isTeam?[]:input.members){if(!findAgent(d,id).enabled)throw new Error('所选Agent已停用');}
-  const g=isTeam?team.create(d,creationInput):createGoal(input);if(!isTeam){g.mode='platform';g.runtime={status:'idle',completed:[]};}
+  if(!isFlow&&!isTeam&&!input.members?.includes(required))throw new Error(`请邀请${required==='product'?'商品运营':'经营分析'} Agent 参与此目标`);
+  for(const id of isFlow||isTeam?[]:input.members){if(!findAgent(d,id).enabled)throw new Error('所选Agent已停用');}
+  const g=isFlow?flows.create(d,input):isTeam?team.create(d,creationInput):createGoal(input);if(!isTeam&&!isFlow){g.mode='platform';g.runtime={status:'idle',completed:[]};}
   if(input.scope){for(const k of ['store','sku','product']){if(typeof input.scope[k]!=='string'||!input.scope[k].trim()||input.scope[k].length>120)throw new Error('请填写有效的店铺、SKU / 数据范围和商品名称');g.scope[k]=input.scope[k].trim();}g.scope.platform='用户指定范围（未连接平台）';}
   if(input.storeConnectionId){const shop=d.stores?.find(s=>s.id===input.storeConnectionId&&s.enabled);if(!shop)throw new Error('所选店铺不属于本空间或已停用');g.storeConnectionId=shop.id;g.scope.store=shop.name;g.scope.platform=({taobao:'淘宝 / 天猫',douyin:'抖店','1688':'1688',shopify:'Shopify',other:'其他平台'}[shop.platform])+'（已关联，仅草案）';g.permission='draft';}
   if(input.proposal){const price=Number(input.proposal.price);if(!Number.isFinite(price)||price<=0||price>100000||Math.abs(price*100-Math.round(price*100))>1e-6)throw new Error('售价必须是有效正数，最多2位小数');g.proposal={title:String(input.proposal.title||g.scope.product).slice(0,120),price};}
-  if(!isTeam)g.messages[1].text='目标、任务与协作空间已保存到服务端。请确认资料和计划；代码型 Agent 将处理录入数据。店铺发布仍使用模拟连接器。';
+  if(!isTeam&&!isFlow)g.messages[1].text='目标、任务与协作空间已保存到服务端。请确认资料和计划；代码型 Agent 将处理录入数据。店铺发布仍使用模拟连接器。';
   if(input.contentDraft){const pack=contentPacks.find(p=>p.id===input.contentDraft);if(!isTeam||!pack||g.members.length!==1||g.members[0]!==pack.employeeId)throw new Error('请选择对应的内容员工');const e=d.employees.find(e=>e.id===pack.employeeId);if(e.mode!=='skills'||e.skillIds.length!==1||e.skillIds[0]!==pack.skillId)throw new Error('内容快捷入口只运行对应代码能力；员工配置已改变，请使用新建目标');if(input.automaticContent){const b=input.copyBrief||{};if(typeof b.productName!=='string'||!b.productName.trim()||b.productName.length>80)throw new Error('请说明商品名称');for(const k of ['channel','audience'])if(b[k]!==undefined&&(typeof b[k]!=='string'||b[k].length>(k==='channel'?40:120)))throw new Error('制作偏好格式无效');g.skillData={copyBrief:{productName:b.productName,channel:b.channel||'全渠道',audience:b.audience||'',confirmed:false}};}else g.skillData={copyBrief:validateCopyBrief(input.copyBrief)};g.contentDraft=pack.id;g.proposal=null;team.action(d,g,{kind:'plan',expectedVersion:g.version});}
   if(isTeam&&g.teamSelection==='auto'&&!input.contentDraft)team.autoAssign(d,g,{initial:true});
   if(isTeam&&(input.startCollaboration||g.teamSelection==='auto')&&!input.contentDraft)await team.kickoff(d,g);
   d.goals.unshift(g);d.requests[input.requestId]={goalId:g.id,signature};return g;
  });}
  async function action(id,input){return transaction(async d=>{
-  const g=findGoal(d,id);const kind=input.kind;
+  const g=findGoal(d,id);const kind=input.kind;if(g.mode==='flow')return flows.action(d,g,input);
   if(g.mode!=='team'&&((kind==='message'&&input.workforceChat===true)||['inviteDiscussion','chatContext'].includes(kind)||(kind==='pauseReplies'&&g.discussionMode==='employees'))){
    if(g.discussionMode!=='employees'&&g.queue.length)throw new Error('旧会话仍有待回复消息，请等回复完成后重试');g.discussionMode='employees';g.participants=discussionMembers(g);return team.action(d,g,input);
   }
@@ -152,12 +156,13 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  });}
  async function pump(){
   if(pumping)return;
+  await flows.pump();
   const hasQueue=data.runs.some(r=>r.status==='queued'&&(!r.goalId||r.purpose==='chat'||!data.goals.find(g=>g.id===r.goalId)?.paused));
   const hasGoal=data.goals.some(g=>(g.researchRequest&&(!g.repliesPaused||!g.researchRequest.source))||team.needsMatching(data,g)||(!g.repliesPaused&&g.queue.length)||(['platform','team'].includes(g.mode)&&!g.paused&&g.stage==='draft'&&!['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status)));
   if(!hasQueue&&!hasGoal&&!production.pending())return;pumping=true;
   try{
    if(data.goals.some(g=>team.needsMatching(data,g)))await transaction(async d=>{await team.syncPending(d);for(const g of d.goals)if(g.mode==='team'&&isResearchGoal(g)&&!g.research){g.research=collectResearch(d,g);if(['plan','draft'].includes(g.stage))g.researchRequest={id:randomUUID(),version:g.version,question:g.text};}});
-   await transaction(d=>{for(const g of d.goals){if(g.mode==='team'){schedule(d,g);team.pumpMessages(d,g);continue;}if(g.discussionMode==='employees'){schedule(d,g);team.pumpMessages(d,g);continue;}if(g.mode!=='platform'){tickGoal(g);continue;}schedule(d,g);
+   await transaction(d=>{for(const g of d.goals){if(g.mode==='flow')continue;if(g.mode==='team'){schedule(d,g);team.pumpMessages(d,g);continue;}if(g.discussionMode==='employees'){schedule(d,g);team.pumpMessages(d,g);continue;}if(g.mode!=='platform'){tickGoal(g);continue;}schedule(d,g);
     if(!g.repliesPaused&&g.queue.length){const job=g.queue.shift();const source=g.messages.find(m=>m.id===job.source);let id=job.target;
      if(id==='coordinator')id=/利润|成本|费用|亏损/.test(source.text)?'insight':g.kind==='listing'?'product':'insight';
      if(job.intent!=='discuss'||!g.members.includes(id)||g.stage==='completed'){
@@ -189,7 +194,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  return {
   goals:()=>structuredClone(data.goals.map(g=>({...g,autoContent:prepareContent(data,g)}))),agents:()=>data.agents.map(publicConfig),runs:()=>data.runs.map(({config,input,result,...r})=>r),
   run:id=>{const r=data.runs.find(r=>r.id===id);if(!r)throw Object.assign(new Error('运行记录不存在'),{status:404});const {config,...safe}=r;return structuredClone(safe);},
-  create,action,pump,workforce:team,sources,knowledge,planning,integrations,storeOperations,images,
+  create,action,pump,flows,workforce:team,sources,knowledge,planning,integrations,storeOperations,images,
   saveAgent:(id,input)=>transaction(d=>{const prev=findAgent(d,id);const next=validateConfig(input,prev);d.agents[d.agents.indexOf(prev)]=next;return publicConfig(next);}),
   testAgent:(id,input)=>transaction(d=>{if(input!==undefined&&(!input||typeof input!=='object'||Array.isArray(input)))throw new Error('测试输入必须为JSON对象');const run=enqueue(d,id,input??testSample(id),{purpose:'test'});return {id:run.id,status:run.status};}),
   sample:id=>{findAgent(data,id);return testSample(id);},
