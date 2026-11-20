@@ -33,9 +33,10 @@ let roomSaving=Promise.resolve();
 function saveRooms(){const snapshot=JSON.stringify(rooms,null,2);roomSaving=roomSaving.then(async()=>{await writeFile(roomsFile+'.tmp',snapshot);await rename(roomsFile+'.tmp',roomsFile);});return roomSaving;}
 const workspaces=await createWorkspaceManager(dataDir);
 function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
-async function body(req) {
-  const limit=/^\/api\/(knowledge|goals|skills|external-skills)(\/|$)/.test(req.url)?512000:64000;
-  let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > limit) throw new Error('请求内容过长'); }
+async function body(req, maxBytes) {
+  const limit=maxBytes ?? (/^\/api\/(knowledge|goals|skills|external-skills)(\/|$)/.test(req.url)?512000:64000);
+  const chunks=[]; let length=0; for await(const chunk of req){length+=chunk.length;if(length>limit)throw Object.assign(new Error('请求内容过长'),{status:413});chunks.push(chunk);}
+  const raw=Buffer.concat(chunks).toString('utf8');
   try { return JSON.parse(raw); } catch { throw new Error('请求 JSON 无效'); }
 }
 const server = http.createServer(async (req, res) => {
@@ -57,6 +58,7 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/api/images'&&req.method==='GET')return json(res,200,platform.images.view());
     if(url.pathname==='/api/images/config'&&req.method==='PUT')return json(res,200,await platform.images.save(await body(req)));
     if(url.pathname==='/api/images/test'&&req.method==='POST')return json(res,200,await platform.images.test());
+    if(url.pathname==='/api/images/upload'&&req.method==='POST')return json(res,202,await platform.images.fromUpload(await body(req,7020000)));
     if(url.pathname==='/api/images/jobs'&&req.method==='POST')return json(res,202,await platform.images.create(await body(req)));
     const imageMatch=url.pathname.match(/^\/api\/images\/jobs\/([a-zA-Z0-9_-]+)\/image$/);if(imageMatch&&req.method==='GET')return json(res,200,await platform.images.image(imageMatch[1]));
     if(url.pathname==='/api/integrations'&&req.method==='GET')return json(res,200,platform.integrations.view());

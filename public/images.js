@@ -11,6 +11,10 @@ export function createImagesUI({state,api,esc,toast,refresh,render}){
  function gallery(){return data().jobs.length?`<section class="image-gallery"><div class="section-title"><h3>图片任务与作品</h3><small>已自动保存到当前工作空间</small></div><div class="image-grid">${data().jobs.slice(0,12).map(j=>`<article class="panel image-job"><div class="artifact-top"><strong>${j.mode==='concept'?'概念图片':'参考商品图生成'}</strong><span class="badge ${j.status==='succeeded'?'blue':''}">${labels[j.status]}</span></div><p>${esc(j.description)}</p><p class="field-hint">${j.width&&j.height?j.width+' × '+j.height+' px':({'1024x1024':'1:1','1024x1536':'2:3','1536x1024':'3:2'}[j.size])} · ${esc(new Date(j.createdAt).toLocaleString('zh-CN'))}</p>${j.referenceTitle?`<p class="field-hint">参考图：${esc(j.referenceTitle)}</p>`:''}<p class="field-hint">${j.knowledgeSources.length?'引用 '+j.knowledgeSources.map(h=>esc(h.title)+' v'+h.revision).join('、'):'未命中相关企业知识'}</p>${j.error?`<p class="form-error">${esc(j.error)}</p>`:''}${j.status==='succeeded'?`<button class="primary" data-image-view="${j.id}">查看图片与下载</button>`:['failed','unknown'].includes(j.status)?'<p class="field-hint">未自动重试。确认服务端结果和费用后，可新建一次生成。</p>':'<p class="field-hint" role="status">图片生成可能需要几分钟，可离开此页，返回后查看结果。</p>'}</article>`).join('')}</div></section>`:'';}
  function goalAction(g){if(g.production)return '';return /主图|图片|配图|详情图/.test(g.text)?`<button type="button" class="text-button" data-image-create data-image-goal="${g.id}">生成图片 ↗</button>`:'';}
  function chatCard(m,g){
+  if(m.uploadedJobs)return m.uploadedJobs.map(id=>{
+   const job=data().jobs.find(j=>j.id===id);
+   return job?`<small class="field-hint">${job.outputKind==='main'?'主图':'详情图'} · ${labels[job.status]} </small>`:'';
+  }).join('');
   if(m.role==='human'||!m.imageRequest)return '';
   const r=m.imageRequest,j=data().jobs.find(j=>j.goalId===g.id&&j.sourceMessageId===r.sourceMessageId),c=data().config;
   const stale=r.goalVersion!==g.version||r.contextRevision!==(g.chatContext?.revision||1);
@@ -26,5 +30,33 @@ export function createImagesUI({state,api,esc,toast,refresh,render}){
  document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.imageChat){if(submitting)return;submitting=true;b.disabled=true;try{await post('images/jobs',{goalId:b.dataset.imageGoal,sourceMessageId:b.dataset.imageChat,confirmed:true});await refresh();render(true);toast('图片任务已提交，结果会回到当前对话');}catch(error){toast(error.message);}finally{submitting=false;b.disabled=false;}return;}if(b.hasAttribute('data-image-test')){if(submitting)return;submitting=true;b.disabled=true;const f=b.closest('form'),revision=data().config.revision;const controls=[...f.elements];controls.forEach(el=>el.disabled=true);f.querySelector('.form-error').textContent='';$('#image-test-status').textContent='正在读取 Gemini 模型信息…';try{await post('images/test',{});if(f.isConnected)$('#image-test-status').textContent='模型访问已核验；出图权限与额度仍以实际生成结果为准。';}catch(error){if(f.isConnected){f.querySelector('.form-error').textContent=error.message;$('#image-test-status').textContent='连接检查未通过。';}}finally{submitting=false;if(f.isConnected){controls.forEach(el=>el.disabled=false);b.disabled=data().config.revision!==revision;}}return;}if(b.hasAttribute('data-image-create')){mount();goalId=b.dataset.imageGoal||null;const g=state.goals.find(g=>g.id===goalId);requestId=crypto.randomUUID();const f=$('#image-create-form');f.reset();f.elements.description.value=b.dataset.imageDescription||g?.text||'';$('#image-reference-field').hidden=true;f.elements.referenceId.innerHTML='<option value="">选择参考商品图</option>'+(state.sources?.materials||[]).filter(m=>m.type==='image'&&!m.problem).map(m=>`<option value="${m.id}">${esc(m.title)} · ${esc(m.sku||'未绑定 SKU')}</option>`).join('');$('#image-connection-note').textContent=data().config.ready?'服务已配置：'+data().config.model+'。本次将实际调用图片服务。':'尚未连接图片服务。先到 AI基础能力配置 → 图片生成 配置完整后端；免安装预览不能直接出图。';f.querySelector('.form-error').textContent='';$('#image-create-dialog').showModal();}
  if(b.dataset.imageView)openJob(b.dataset.imageView);if(b.dataset.imageClose&&!submitting)$('#'+b.dataset.imageClose).close();});
  document.addEventListener('submit',async e=>{const f=e.target;if(!['image-create-form','image-config-form'].includes(f.id))return;e.preventDefault();if(submitting)return;submitting=true;const b=e.submitter;b.disabled=true;const v=Object.fromEntries(new FormData(f));f.querySelector('.form-error').textContent='';try{if(f.id==='image-config-form'){await post('images/config',{...v,enabled:v.enabled==='on',revision:data().config.revision},'PUT');await refresh();render(true);toast('生图连接已保存；实际生成时会验证服务权限和额度');}else{await post('images/jobs',{...v,confirmed:v.confirmed==='on',requestId,goalId});$('#image-create-dialog').close();await refresh();render(true);toast('已加入图片生成队列；可在工作应用查看图片任务');}}catch(e){f.querySelector('.form-error').textContent=e.message;}finally{submitting=false;b.disabled=false;}});
+ document.addEventListener('click',e=>{
+  const trigger=e.target.closest('[data-product-upload]');if(!trigger)return;
+  if(data().previewOnly||!data().config.ready){toast(data().previewOnly?'静态预览不提供实时出图，请打开完整后端。':'请先到 AI基础能力配置 → 图片生成连接模型。');return;}
+  const dialog=document.createElement('dialog');
+  dialog.setAttribute('aria-label','上传商品图出图');
+  dialog.innerHTML=`<form><div class="dialog-head"><h2>用商品实拍出图</h2><button type="button" class="icon-btn" aria-label="关闭">×</button></div><label>商品参考图<input required type="file" name="photo" accept="image/png,image/jpeg,image/webp"></label><small>PNG、JPEG 或 WebP，最大 5 MB</small><label>画面要求<textarea name="brief" maxlength="2000" rows="2" placeholder="例如：主图用白底，详情图放在洗手台场景中"></textarea></label><fieldset><legend>生成图片</legend><label class="confirm-check"><input type="checkbox" name="kind" value="main" checked>商品主图</label><label class="confirm-check"><input type="checkbox" name="kind" value="detail" checked>详情图</label></fieldset><p class="field-hint">原图会发送至当前图片服务，按所选张数调用。</p><p role="alert" class="form-error"></p><button class="primary" type="submit">生成并发回协作</button></form>`;
+  document.body.append(dialog);const form=dialog.querySelector('form');
+  form.elements.brief.value=document.querySelector('#chat-input')?.value||'';
+  const id=trigger.dataset.productUpload, requestId=crypto.randomUUID();
+  const workspace=sessionStorage.getItem('workspaceId');
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+  dialog.querySelector('[type=button]').onclick=()=>dialog.close();
+  let busy=false;
+  dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault();});
+  form.onsubmit=async e=>{
+   e.preventDefault();if(busy)return;
+   const file=form.elements.photo.files[0],kinds=new FormData(form).getAll('kind'),error=form.querySelector('[role=alert]');
+   if(!file||file.size>5*1024*1024||!kinds.length){error.textContent='请选择 5 MB 以内的商品图和至少一种交付图片';return;}
+   busy=true;const controls=[...form.elements];controls.forEach(el=>el.disabled=true);
+   try{
+    const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('商品图读取失败'));reader.readAsDataURL(file);});
+    if(sessionStorage.getItem('workspaceId')!==workspace)throw new Error('工作空间已变更，请重新打开');
+    await post('images/upload',{goalId:id,requestId,description:form.elements.brief.value.trim(),kinds,base64});
+    dialog.close();await refresh();toast('已提交 '+kinds.length+' 张图片，完成后会发回本目标');
+   }catch(err){error.textContent=err.message;}finally{busy=false;controls.forEach(el=>el.disabled=false);}
+  };
+  dialog.showModal();
+ });
  return {card,configPage,goalAction,openJob,chatCard,thumbnail,hydrate,productionCard};
 }

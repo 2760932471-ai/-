@@ -1,9 +1,21 @@
 import {validateDestination} from './agents/registry.js';
-import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {mkdir,writeFile,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
 const safe=(message,outcome='failed')=>Object.assign(new Error(message),{imageSafe:true,outcome});
 export function imageCredentialState(c){return !!(c.secretEnv&&process.env[c.secretEnv]);}
-export function imageFiles(root){const dir=path.join(root,'generated-images');const file=id=>{if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id))throw safe('图片标识无效');return path.join(dir,id+'.png');};return {save:async(id,base64)=>{await mkdir(dir,{recursive:true});await writeFile(file(id),Buffer.from(base64,'base64'),{mode:0o600});},read:async id=>(await readFile(file(id))).toString('base64')};}
+export function productUpload(base64){
+ if(typeof base64!=='string'||!base64.length||base64.length>6990508||!/^[a-zA-Z0-9+/]+={0,2}$/.test(base64))throw safe('请选择 5 MB 以内的商品图');
+ const buffer=Buffer.from(base64,'base64');
+ if(buffer.length>5*1024*1024)throw safe('商品图不能超过 5 MB');
+ let mime;
+ if(buffer.length>=24&&buffer.subarray(0,8).toString('hex')==='89504e470d0a1a0a'&&buffer.toString('ascii',12,16)==='IHDR')mime='image/png';
+ else if(buffer.subarray(0,3).toString('hex')==='ffd8ff')mime='image/jpeg';
+ else if(buffer.toString('ascii',0,4)==='RIFF'&&buffer.toString('ascii',8,12)==='WEBP')mime='image/webp';
+ else throw safe('请选择 PNG、JPEG 或 WebP 商品图片');
+ return {id:'input-'+createHash('sha256').update(buffer).digest('hex'),mime};
+}
+export function imageFiles(root){const dir=path.join(root,'generated-images');const file=id=>{if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id))throw safe('图片标识无效');return path.join(dir,id+'.png');};return {save:async(id,base64)=>{await mkdir(dir,{recursive:true});const target=file(id),temp=target+'.'+randomUUID()+'.tmp';await writeFile(temp,Buffer.from(base64,'base64'),{mode:0o600});await rename(temp,target);},read:async id=>(await readFile(file(id))).toString('base64')};}
 async function bytes(response,limit,signal){if(!response.body)throw safe('服务未返回图片内容','unknown');const chunks=[],reader=response.body.getReader();let size=0;const abort=new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(safe('图片请求超时','unknown')),{once:true}));while(true){const {done,value}=await Promise.race([reader.read(),abort]);if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw safe('图片服务响应超过大小上限','unknown');}chunks.push(value);}return Buffer.concat(chunks);}
 export function validPNG(base64){if(typeof base64!=='string'||base64.length>28000000||!base64.length||!/^[A-Za-z0-9+/]+={0,2}$/.test(base64))throw safe('服务未返回有效的 PNG 图片','unknown');const b=Buffer.from(base64,'base64');if(b.length<24||b.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||b.toString('ascii',12,16)!=='IHDR')throw safe('服务返回的内容不是 PNG 图片','unknown');return {width:b.readUInt32BE(16),height:b.readUInt32BE(20)};}
 function imageProvider(config){const p=config.provider||'openai';if(!['openai','gemini'].includes(p))throw safe('图片服务类型无效');if(p==='gemini'&&(config.endpoint!=='https://generativelanguage.googleapis.com/v1beta'||!/^gemini-[a-zA-Z0-9._-]+$/.test(config.model)))throw safe('Gemini 需使用官方 v1beta 地址与有效模型名称');return p;}
@@ -17,9 +29,9 @@ function geminiResult(out){
 async function referenceImage(url,{request,resolve,signal}){const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw safe('商品参考图地址无效');const check=new URL(u);check.search='';check.hash='';await validateDestination(check.href,resolve);const r=await request(u.href,{redirect:'error',signal});if(!r.ok)throw safe('商品参考图读取失败');const buffer=await bytes(r,10000000,signal),mime=r.headers.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime))throw safe('参考图需为 PNG、JPEG 或 WebP');return {buffer,mime};}
 export async function generateImage(config,input,{fetch:request=fetch,resolve}={}){
  if(!imageCredentialState(config))throw safe('请在完整后端配置 IMAGE_SECRET_ 生图密钥');const key=process.env[config.secretEnv],provider=imageProvider(config);
- const endpoint=provider==='gemini'?config.endpoint+'/models/'+config.model+':generateContent':config.endpoint.replace(/\/$/,'')+(input.referenceUrl?'/images/edits':'/images/generations'),signal=AbortSignal.timeout(180000);let dispatched=false;
+ const endpoint=provider==='gemini'?config.endpoint+'/models/'+config.model+':generateContent':config.endpoint.replace(/\/$/,'')+(input.referenceUrl||input.upload?'/images/edits':'/images/generations'),signal=AbortSignal.timeout(180000);let dispatched=false;
  try{
-  await validateDestination(endpoint,resolve);let body,headers;const ref=input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,signal}):null;
+  await validateDestination(endpoint,resolve);let body,headers;const ref=input.upload|| (input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,signal}):null);
   if(provider==='gemini'){
    const aspectRatio={'1024x1024':'1:1','1024x1536':'2:3','1536x1024':'3:2'}[input.size];if(!aspectRatio)throw safe('请选择支持的图片比例');
    headers={'Content-Type':'application/json','x-goog-api-key':key};body=JSON.stringify({contents:[{role:'user',parts:[{text:input.prompt},...(ref?[{inlineData:{mimeType:ref.mime,data:ref.buffer.toString('base64')}}]:[])]}],generationConfig:{responseModalities:['TEXT','IMAGE'],imageConfig:{aspectRatio}}});
