@@ -121,3 +121,5 @@ button,a{-webkit-tap-highlight-color:transparent}
 #flow-settings-form .data-fields{margin:20px 0;}
 #flow-settings-form button,.flow-panel button,.flow-template-grid button{min-height:44px;}
 @media(max-width:600px){.flow-panel{padding:14px;}.flow-node-grid,.flow-template-grid{grid-template-columns:1fr;}.flow-panel .section-title{flex-wrap:wrap;}}
+
+.product-demo-image{display:block;width:100%;max-height:640px;object-fit:contain;border:1px solid #e2e4ea;border-radius:10px;background:#f7f7f8;margin:16px 0;}.product-demo-card .section-title{flex-wrap:wrap;gap:12px}.product-demo-card a.secondary{display:inline-flex;align-items:center;min-height:44px;text-decoration:none;}

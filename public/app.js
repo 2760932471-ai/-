@@ -200,6 +200,6 @@ const contentUI=createContentUI({state,api,esc,receive,openGoal,render,act});
 const setupUI=createSetupUI({state,api,esc,badge,toast,refresh,render,currentWorkspace:()=>sessionStorage.getItem('workspaceId')||'default',switchWorkspace:async id=>{sessionStorage.setItem('workspaceId',id);sessionStorage.removeItem('selectedGoal');location.reload();}});
 const workforceUI=createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowledgeUI,sourcesUI,state,api,esc,badge,toast,refresh,render,navigate:go,legacyPage:platformEmployees,openRun:async id=>{runPreviewId=id;$('#run-input').textContent='正在载入…';$('#run-output').textContent='正在载入…';$('#run-dialog').showModal();await updateRunPreview();}});
 
-const flowsUI=createFlowsUI({state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts});
+const flowsUI=createFlowsUI({state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal});
 const initialRoute=applyRoute(location.hash.slice(1)||'overview');if(location.hash.slice(1)!==initialRoute)history.replaceState(null,'','#'+initialRoute);
 initializeSelects();await refresh();setInterval(refresh,1800);

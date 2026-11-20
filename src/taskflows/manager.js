@@ -100,7 +100,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const prep=prepareContent(d,{...g,research:discovery});if(prep.missing.length)return blocked(prep.missing.join('；'));
    if(/找|搜|选品/.test(g.text)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
    const config=images.view().config;if(!config.enabled||!config.credentialConfigured)return blocked('图片服务未就绪，请在 AI基础能力配置连接图片模型。');
-   const j=await images.create({requestId:'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,'渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary].join('\n'),mode:prep.referenceId?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
+   const j=await images.create({requestId:'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'用户画面要求：'+g.text,'商品：'+prep.productName,'渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary].join('\n'),mode:prep.referenceId?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
    return {status:'waiting_external',summary:'图片请求已提交，等待真实图片结果',imageJobId:j.id,preparation:prep,artifacts:[]};
   }
   if(n.capability==='result.compile'){
