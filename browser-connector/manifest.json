@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "电商工作台 · 云电脑连接器",
+  "version": "1.0.0",
+  "description": "连接当前工作台，读取打开的美团商品并填写闲鱼商品草稿。",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["https://*.meituan.com/*", "https://*.goofish.com/*"],
+  "action": {"default_popup": "pair.html"},
+  "background": {"service_worker": "worker.js", "type": "module"}
+}

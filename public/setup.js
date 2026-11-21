@@ -1,3 +1,4 @@
+import {createCloudBrowser} from './cloud-browser.js';
 import {createStoreUI} from './store-operations.js';
 export function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace,currentWorkspace}){
  const $=s=>document.querySelector(s),post=(route,input={},method='POST')=>api(route,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
@@ -30,12 +31,17 @@ export function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWo
  }catch(err){error.textContent=err.message;}finally{b.disabled=false;if(f.id==='search-query-form'&&b.isConnected)b.textContent=data().search.ready?'开始搜索':'测试连接并搜索';}});
  let selection=null,searchSeq=0;
  const listingStatus={draft:'待确认',submitting:'正在提交',unknown:'结果待核对，请查看店铺后台',published:'平台已返回发布回执'};
+ const browser=createCloudBrowser({esc,render,currentWorkspace});
+ let marketMethod=new URLSearchParams(location.search).get('method')==='browser'?'browser':'api';
+ document.addEventListener('click',e=>{const b=e.target.closest('[data-market-method]');if(b){marketMethod=b.dataset.marketMethod;render(true);}});
  function marketPage(){
+  const methods=`<div class="workforce-tabs" role="group" aria-label="平台连接方式">${[['api','授权接口'],['browser','云电脑浏览器']].map(([id,name])=>`<button data-market-method="${id}" class="${marketMethod===id?'active':''}" aria-pressed="${marketMethod===id}">${name}</button>`).join('')}</div>`;
+  if(marketMethod==='browser')return methods+browser.page();
   const sources=(state.sources?.sources||[]).filter(s=>s.kind==='supplier'&&s.enabled&&s.mode==='http'&&s.offerPlatform);
   const stores=data().stores.filter(s=>s.driver==='gateway'&&s.enabled&&s.shopId&&s.endpoint);
   const selected=selection;
   const options=(list,id)=>list.map(x=>`<option value="${esc(x.id)}" ${id===x.id?'selected':''}>${esc(x.name)}</option>`).join('');
-  return `<section class="section-title"><div><h2>跨平台选品与铺货</h2><p>从授权货源选商品，核对价格和履约条件后发布到销售店铺。</p></div></section>
+  return methods+`<section class="section-title"><div><h2>跨平台选品与铺货</h2><p>从授权货源选商品，核对价格和履约条件后发布到销售店铺。</p></div></section>
   <div class="action-buttons"><button class="secondary" data-view="ai-config/sources">配置选品来源</button><button class="secondary" data-view="ai-config/stores">连接销售店铺</button></div>
   <form id="market-search" class="panel"><div class="data-fields"><label>选品来源<select name="sourceId" required>${options(sources,selected?.sourceId)||'<option value="">请先配置支持选品的供应商网关</option>'}</select></label><label>销售店铺<select name="storeId" required>${options(stores,selected?.storeId)||'<option value="">请先接入目标店铺网关</option>'}</select></label></div><label>搜索商品<input name="query" required maxlength="160" placeholder="商品名称或关键词" value="${esc(selected?.query||'')}"></label><button class="primary" ${sources.length&&stores.length?'':'disabled'}>查找候选商品</button><p class="field-hint">例如从美团联盟选品，铺货到闲鱼。联盟仅授予推广权的商品会显示原因。</p></form>
   <section id="market-results">${selected?selected.items.map((x,i)=>`<form class="panel" data-market-offer="${i}"><h3>${esc(x.title)}</h3><p>来源报价 ¥${(x.priceFen/100).toFixed(2)} · ${esc(x.blocker||x.fulfillment)}</p>${x.blocker?'':`<p>${esc(x.terms)}</p><label>销售价（元）<input type="number" name="price" min="0.01" step="0.01" required></label><button class="secondary">准备发布草稿</button>`}</form>`).join('')||'<p>没有匹配商品。</p>':''}</section>
