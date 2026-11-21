@@ -139,7 +139,7 @@ button,a{-webkit-tap-highlight-color:transparent}
 <button class="nav-item desktop-nav" data-view="runs"><span data-icon="layers"></span>运行记录</button>
 <button class="nav-item mobile-nav" data-nav-more aria-haspopup="dialog"><span data-icon="layers"></span>更多</button>
 </nav><div class="sidebar-bottom"><span class="avatar">你</span><div>工作空间管理员<small>目标负责人</small></div></div></aside>
-<div class="main-shell"><header class="topbar"><span><button class="text-button workspace-top" data-workspaces aria-label="切换或创建工作空间"><span data-workspace-name>我的工作空间</span> ⌄</button><i>/</i> <strong id="page-crumb">协同工作台</strong></span><div><span class="badge">免安装预览</span><span id="connection-state">正在连接</span></div></header><div class="preview-bar"><p id="preview-status" role="status">正在打开本地预览…</p><button class="text-button" id="preview-reset">重置样例</button></div><main id="main" tabindex="-1"></main><footer>免安装预览 · 本地规则运行 · 模型连接需完整后端 · 无真实业务写入</footer></div></div>
+<div class="main-shell"><header class="topbar"><span><button class="text-button workspace-top" data-workspaces aria-label="切换或创建工作空间"><span data-workspace-name>我的工作空间</span> ⌄</button><i>/</i> <strong id="page-crumb">协同工作台</strong></span><div><button type="button" id="stock-notices" class="text-button">备券通知</button><span class="badge">免安装预览</span><span id="connection-state">正在连接</span></div></header><div class="preview-bar"><p id="preview-status" role="status">正在打开本地预览…</p><button class="text-button" id="preview-reset">重置样例</button></div><main id="main" tabindex="-1"></main><footer>免安装预览 · 本地规则运行 · 模型连接需完整后端 · 无真实业务写入</footer></div></div>
 <dialog id="navigation-dialog" aria-labelledby="navigation-title"><div class="dialog-head"><h2 id="navigation-title">更多功能</h2><button type="button" class="icon-btn" data-nav-close aria-label="关闭更多功能">×</button></div><div class="more-navigation"><button class="secondary" data-view="flows">任务流</button><button class="secondary" data-view="employees">数字员工（可选入口）</button><button class="secondary" data-view="ai-config/models">AI基础能力配置</button><button class="secondary" data-view="tasks">任务中心</button><button class="secondary" data-view="runs">运行记录</button></div></dialog>
 <dialog id="task-dialog" aria-labelledby="new-title"><form id="task-form"><div class="dialog-head"><div><span class="eyebrow" id="new-step">新建目标 · 1 / 2</span><h2 id="new-title">交给 AI 一个目标</h2></div><button type="button" class="icon-btn" id="close-dialog" aria-label="关闭新建目标">×</button></div>
 <section id="create-step-one"><label for="goal">你想完成什么？</label><textarea id="goal" required maxlength="2000" rows="3" placeholder="例如：为角阀准备上新资料，确认后发布，并观察一周经营表现。"></textarea><label for="goal-kind">选择协作模板</label><select id="goal-kind"><option value="analysis">分析与选品 · 准备建议，不执行发布</option><option value="listing">商品上新 · 资料、草案、审批与复盘</option></select><p class="field-hint">任务流模式直接从目标出发；连接总控模型后支持自主规划，未连接时使用基础组合。</p><label for="create-engine">协作方式</label><select id="create-engine"><option value="flow">目标总控 · 自动选择或创建任务流（推荐）</option><option value="team">数字员工团队 · 使用已装配能力</option><option value="legacy">旧版规则流程 · 保留模拟发布</option></select><p class="field-hint">任务流模式无需选择员工；独立任务并行执行。旧团队模式保留历史分工和交互。</p><label for="team-selection">成员安排</label><select id="team-selection"><option value="auto">总控自动匹配（默认）</option><option value="manual">我来指定成员</option></select><p class="field-hint" id="auto-team-hint">总控按目标需要的能力自动选人、安排顺序并说明理由。你可以在群里调整。</p><div id="manual-team-options" hidden><button type="button" class="secondary" id="recommend-team">按目标装配并推荐员工</button><p id="team-recommendation" class="field-hint" role="status"></p><fieldset><legend>邀请参与的成员</legend><div id="agent-options"></div></fieldset></div></section>
@@ -3909,6 +3909,37 @@ function createMarketConnectors({getData,transaction,request=requestIntegration}
    return row;
   });
  }
+ function record(d,fields){
+  const notices=d.stockNotices??=[];
+  const prior=notices.find(n=>n.shopId===fields.shopId&&n.listingId===fields.listingId);
+  if(prior)return prior;
+  const notice={id:randomUUID(),...fields,createdAt:new Date().toISOString(),read:false,push:'pending',attempts:0};
+  notices.unshift(notice);return notice;
+ }
+ function confirmBrowser(input){
+  if(input.confirmed!==true)fail('请先核实闲鱼商品已上架');
+  if(!Number.isSafeInteger(input.priceFen)||input.priceFen<=0)fail('请填写有效售价');
+  const fields={shopId:required(input.shopId,'店铺 ID'),listingId:required(input.listingId,'闲鱼商品编号'),title:required(input.title,'商品名称'),storeName:input.shopId,sourceName:required(input.sourceName,'选品来源',450),priceFen:input.priceFen,method:'manual'};
+  return transaction(d=>record(d,fields));
+ }
+ function readNotice({id}){
+  return transaction(d=>{const n=d.stockNotices?.find(n=>n.id===id);if(!n)fail('通知不存在',404);n.read=true;return n;});
+ }
+ function listNotices(){return getData().stockNotices||[];}
+ function claimPush(id){
+  return transaction(d=>{
+   const n=d.stockNotices?.find(n=>n.id===id);
+   if(!n||n.push==='sent'||n.push==='failed'||(n.nextAttempt||0)>Date.now())return null;
+   n.attempts++;n.nextAttempt=Date.now()+120000;return n;
+  });
+ }
+ function finishPush(id,ok){
+  return transaction(d=>{
+   const n=d.stockNotices.find(n=>n.id===id);
+   n.push=ok?'sent':n.attempts>=5?'failed':'pending';
+   n.nextAttempt=ok?0:Date.now()+30000*2**Math.min(n.attempts,5);
+  });
+ }
  async function publish({id,revision,confirmed}){
   if(confirmed!==true)fail('请确认店铺与售价');
   function check(d){
@@ -3929,10 +3960,12 @@ function createMarketConnectors({getData,transaction,request=requestIntegration}
   } catch { /* A write may have reached the channel. Keep it out of the retry queue. */ }
   return transaction(d=>{
    const saved=d.channelListings.find(x=>x.id===id);
-   saved.status=listingId?'published':'unknown';saved.listingId=listingId;return saved;
+   saved.status=listingId?'published':'unknown';saved.listingId=listingId;
+   if(listingId&&t.platform==='xianyu')record(d,{shopId:t.shopId,storeName:t.name||t.shopId,listingId,title:saved.offer.title,priceFen:saved.priceFen,sourceName:[s.name||s.offerPlatform,saved.offer.id].join(' · '),method:'gateway'});
+   return saved;
   });
  }
- return {search,prepare,publish};
+ return {search,prepare,publish,confirmBrowser,readNotice,listNotices,claimPush,finishPush};
 }
 
 return {offerBlocker,createMarketConnectors};
@@ -3948,7 +3981,7 @@ function createIntegrations({getData,transaction,searchCall=searchTransport,stor
  const market=createMarketConnectors({getData,transaction});
  const searchView=()=>{const c=getData().searchConfig||{provider:'tavily',enabled:false,revision:0,endpoint:'https://api.tavily.com/search',secretEnv:'SEARCH_SECRET_PRIMARY',toolName:'web_search',queryField:'query'};return {...c,credentialConfigured:!!(c.secretEnv&&process.env[c.secretEnv]),ready:!!(c.enabled&&c.lastTest?.status==='succeeded'&&c.lastTest.revision===c.revision)};};
  const storeView=s=>({...s,credentialConfigured:s.driver==='official'?['appKeyEnv','appSecretEnv','accessTokenEnv'].every(k=>s[k]&&process.env[s[k]]):!!(s.secretEnv&&process.env[s.secretEnv]),connection:s.lastTest?.revision===s.revision?{...s.lastTest,...(s.lastTest.expiresAt&&Date.parse(s.lastTest.expiresAt)<=Date.now()?{status:'expired'}:{})}:null});
- const view=()=>({search:searchView(),stores:(getData().stores||[]).map(storeView),listings:structuredClone(getData().channelListings||[]),history:structuredClone(getData().searchHistory||[])});
+ const view=()=>({search:searchView(),stores:(getData().stores||[]).map(storeView),stockNotices:structuredClone(market.listNotices()),listings:structuredClone(getData().channelListings||[]),history:structuredClone(getData().searchHistory||[])});
  const saveSearch=input=>transaction(d=>{const old=d.searchConfig;if(input.revision!==(old?.revision||0))fail('搜索配置已变化',409);if(!['tavily','mcp'].includes(input.provider))fail('搜索服务类型无效');if(input.readOnlyConfirmed!==true)fail('请确认仅调用只读搜索工具');if(typeof input.enabled!=='boolean')fail('启用状态无效');d.searchConfig={provider:input.provider,endpoint:input.provider==='tavily'?'https://api.tavily.com/search':endpoint(input.endpoint),secretEnv:secret(input.secretEnv,'SEARCH_SECRET_'),toolName:input.provider==='mcp'?name(input.toolName,'MCP 工具名称',100):'',queryField:input.queryField==='q'?'q':'query',readOnlyConfirmed:true,enabled:input.enabled,revision:(old?.revision||0)+1};return {...d.searchConfig};});
  async function query(input,{test=false}={}){const query=name(input.query,'搜索词',600),site=input.site==='1688.com'?'1688.com':'';const c=structuredClone(getData().searchConfig);if(!c?.enabled)fail('尚未启用网络搜索连接');if(!test&&!searchView().ready)fail('搜索连接需要先测试成功');const prior=(getData().searchHistory||[]).find(h=>h.revision===c.revision&&h.query===query&&h.site===site&&Date.now()-Date.parse(h.at)<300000);if(prior&&!test)return structuredClone(prior);
   try{const results=normalizeSearchResults(await searchCall(c,{query,site}),site);return await transaction(d=>{if(d.searchConfig?.revision!==c.revision||!d.searchConfig.enabled)fail('搜索期间配置已变化，结果未采用',409);const record={id:randomUUID(),query,site,results,revision:c.revision,at:new Date().toISOString()};d.searchHistory=[record,...(d.searchHistory||[])].slice(0,10);if(test)d.searchConfig.lastTest={status:'succeeded',revision:c.revision,at:record.at};return record;});}catch(e){if(test)await transaction(d=>{if(d.searchConfig?.revision===c.revision)d.searchConfig.lastTest={status:'failed',revision:c.revision,at:new Date().toISOString()};});if(e.code==='PREVIEW_ONLY')throw new Error('免安装预览不能联网搜索，请运行完整后端后测试连接');throw new Error('搜索未完成：'+(e.status?e.message:'请检查域名授权、密钥、工具名称和服务响应；未生成搜索结果'));}
@@ -3966,7 +3999,9 @@ function createVoucherUI({api,post,esc,render,toast,state,currentWorkspace}){
  let stock=null,loading=false,loadedFor='',error='',demoStep=0;
  const states={pending:'已锁定 · 待核对交付',unknown:'发送结果待核对',sent:'已发券'};
  const input=(name,label,attrs='')=>`<label>${label}<input required name="${name}" ${attrs}></label>`;
+ const params=new URLSearchParams(location.search),stockShop=params.get('stockShop'),stockListing=params.get('stockListing');
  const shopFields=input('shop','闲鱼店铺 ID')+input('listing','闲鱼商品 ID');
+ const stockFields=input('shop','闲鱼店铺 ID','value="'+esc(stockShop||'')+'"')+input('listing','闲鱼商品 ID','value="'+esc(stockListing||'')+'"');
  async function reload(){
   if(loading)return;loading=true;const ws=currentWorkspace();
   try{const data=await api('vouchers');if(ws===currentWorkspace()){stock=data;error='';loadedFor=ws;}}
@@ -3982,7 +4017,7 @@ function createVoucherUI({api,post,esc,render,toast,state,currentWorkspace}){
   const gateways=(state.integrations?.stores||[]).filter(s=>s.enabled&&s.platform==='xianyu'&&s.driver==='gateway'&&s.connection?.status==='succeeded'&&['order.read','voucher.deliver'].every(scope=>s.connection.scopes.includes(scope)));
   return `<div class="section-title"><h2>静态券库</h2><button class="secondary" data-voucher-action="reload">刷新库存</button></div>
   ${stock.inventory.map(r=>`<p>店铺 ${esc(r.shop)} · 商品 ${esc(r.listing)} · 可售 <strong>${r.available}</strong> / 入库 ${r.total}</p>`).join('')||'<p>尚无库存。先按店铺和商品导入一张券。</p>'}
-  <details><summary>二维码入库</summary><form data-voucher-form="add" class="panel"><div class="data-fields">${shopFields}${input('serial','供应方唯一券号')}${input('expiry','有效期（北京时间）','type="date"')}${input('file','静态二维码 PNG（最大 2 MB）','type="file" accept="image/png"')}</div><button class="primary">保存到券库</button></form></details>
+  <details ${stockShop&&stockListing?'open':''}><summary>二维码入库</summary><form data-voucher-form="add" class="panel"><div class="data-fields">${stockFields}${input('serial','供应方唯一券号')}${input('expiry','有效期（北京时间）','type="date"')}${input('file','静态二维码 PNG（最大 2 MB）','type="file" accept="image/png"')}</div><button class="primary">保存到券库</button></form></details>
   <details><summary>云电脑订单 · 人工核实付款后取券</summary><form data-voucher-form="manual" class="panel"><div class="data-fields">${shopFields}${input('orderNo','已付款订单号')}${input('buyer','订单对应买家 ID')}${input('qty','订单张数','type="number" min="1" max="20" value="1"')}</div><label class="confirm-check"><input required type="checkbox" name="verified">已在闲鱼核对付款、商品及买家</label><button class="primary">锁券给该订单</button></form></details>
   <details><summary>授权网关 · 按订单发送</summary>${gateways.length?`<form data-voucher-form="deliver" class="panel"><label>发券店铺<select name="storeId">${gateways.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}</select></label>${input('orderNo','订单号')}<button class="primary">核验付款并发送给订单买家</button></form>`:'<p>需连接支持订单读取和发券的闲鱼网关。</p>'}</details>
   <h3>订单交付记录</h3>${stock.deliveries.map(r=>{
@@ -4066,9 +4101,12 @@ return {createVoucherUI};
 })();
 const previewCloudUI=(()=>{
 
-function createCloudBrowser({esc,render,currentWorkspace}){
+function createCloudBrowser({esc,render,currentWorkspace,post,refresh}){
  let connected=false,tabs=[],product=null,message='',source='',target='',pending=false,workspace=currentWorkspace();
  let draft={title:'',price:'',description:'',confirmed:false};
+ const receiptKey=()=> 'cloud-published-draft-'+currentWorkspace();
+ function fills(){try{return JSON.parse(localStorage.getItem(receiptKey()))||[];}catch{return [];}}
+ function saveFills(rows){localStorage.setItem(receiptKey(),JSON.stringify(rows));}
  const waits=new Map();
  document.addEventListener('commerce-cloud-result',e=>{
   try{const r=JSON.parse(e.detail),wait=waits.get(r.id);if(wait){waits.delete(r.id);r.error?wait.reject(Error(r.error)):wait.resolve(r.value);}}catch{}
@@ -4085,12 +4123,14 @@ function createCloudBrowser({esc,render,currentWorkspace}){
  function page(){
   if(workspace!==currentWorkspace()){reset();message='';workspace=currentWorkspace();}
   const options=(role,selected)=>'<option value="">选择已打开的页面</option>'+tabs.filter(t=>t.role===role).map(t=>`<option value="${Number(t.id)}" ${String(t.id)===selected?'selected':''}>${esc(t.title)}</option>`).join('');
+  const receipts=fills();
   return `<section class="panel" data-cloud-workspace="${esc(workspace)}"><div class="section-title"><h2>云电脑浏览器</h2><span class="badge">${connected?'当前浏览器已连接':'等待连接'}</span></div>
   <p>在你控制的云电脑里打开此工作台。在同一 Chrome 窗口登录美团联盟和闲鱼，分别打开一个商品详情页和一个空白发布表单。</p>
   <details ${connected?'':'open'}><summary>安装并连接浏览器扩展</summary><p><a class="text-button" href="data:application/zip;base64,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" download="云电脑浏览器连接器.zip">下载 Chrome 扩展</a>，解压后在 chrome://extensions 开启开发者模式，选择「加载已解压的扩展程序」。回到本页，点扩展图标里的「连接此工作台」。页面刷新后可重新连接。</p></details>
   <div class="action-buttons"><button class="secondary" data-cloud="tabs">检测连接与页面</button>${connected?'<button class="text-button" data-cloud="disconnect">断开连接</button>':''}</div>
   <p role="status" class="field-hint">${esc(message)}</p>
   ${connected?`<label>美团商品详情页<select id="cloud-source">${options('source',source)}</select></label><button class="secondary" data-cloud="read" ${source?'':'disabled'}>读取这件商品</button>`:''}
+  ${receipts.map(saved=>`<form data-cloud-receipt="${esc(saved.id)}" class="panel"><h3>核实闲鱼上架结果</h3><p>货源：${esc(saved.sourceName)}</p><label>最终商品标题<input name="title" required maxlength="200" value="${esc(saved.title)}"></label><label>实际上架售价（元）<input name="price" required type="number" step="0.01" min="0.01" value="${(saved.priceFen/100).toFixed(2)}"></label><label>闲鱼店铺 ID<input name="shopId" required maxlength="160"></label><label>发布成功的商品编号<input name="listingId" required maxlength="160"></label><label class="confirm-check"><input required type="checkbox">已在闲鱼核实该商品正在出售</label><button class="primary">确认已上架，生成备券提醒</button></form>`).join('')}
   ${product?`<form id="cloud-draft"><p>来自 ${esc(product.host)} · ${esc(product.title)} · 来源报价 ${esc(product.price||'未识别')}</p>
   <label>闲鱼发布页<select id="cloud-target" required>${options('target',target)}</select></label>
   <label>标题<input name="title" required maxlength="160" value="${esc(draft.title)}"></label><label>描述、履约方式与使用条件<textarea name="description" required maxlength="2000">${esc(draft.description)}</textarea></label>
@@ -4107,7 +4147,9 @@ function createCloudBrowser({esc,render,currentWorkspace}){
    if(op==='read'){
     const tab=source;product=null;const result=await command(op,{tab:Number(tab)});if(source!==tab)return;product=result;draft={title:product.title,description:product.terms,price:'',confirmed:false};message='已读取商品，请核对履约条件与销售价格。';
    }
-   if(op==='fill'){await command(op,{tab:Number(target),draft:{...draft}});message='已填入网页的标题、描述和售价。请切换到闲鱼核对类目、图片和其他必填项，发布由你操作。';}
+   if(op==='fill'){const filled={...draft},ref=product;await command(op,{tab:Number(target),draft:filled});
+    saveFills([...fills(),{id:crypto.randomUUID(),title:filled.title,priceFen:Math.round(Number(filled.price)*100),sourceName:ref.host+' · '+ref.title}]);
+    message='已填入网页的标题、描述和售价。请切换到闲鱼核对类目、图片和其他必填项，发布由你操作。';}
   }catch(e){message=e.message;if(op==='tabs')reset();}
   finally{pending=false;render(true);}
  }
@@ -4118,14 +4160,83 @@ function createCloudBrowser({esc,render,currentWorkspace}){
   if(e.target.id==='cloud-target')target=e.target.value;
  });
  document.addEventListener('input',e=>{if(e.target.closest('#cloud-draft')&&Object.hasOwn(draft,e.target.name))draft[e.target.name]=e.target.type==='checkbox'?e.target.checked:e.target.value;});
- document.addEventListener('submit',e=>{if(e.target.id==='cloud-draft'){e.preventDefault();act('fill');}});
+ document.addEventListener('submit',async e=>{if(e.target.dataset.cloudReceipt){
+  e.preventDefault();const button=e.submitter;button.disabled=true;
+  try{const id=e.target.dataset.cloudReceipt,saved=fills().find(n=>n.id===id);if(!saved)throw Error('该记录已处理，请刷新');
+   const fields=Object.fromEntries(new FormData(e.target));await post('integrations/market/confirmBrowser',{...saved,...fields,priceFen:Math.round(Number(fields.price)*100),confirmed:true});
+   saveFills(fills().filter(n=>n.id!==id));message='已登记上架，备券通知已保存';await refresh();render(true);
+  }catch(err){message=err.message;render(true);}finally{button.disabled=false;}
+ }else if(e.target.id==='cloud-draft'){e.preventDefault();act('fill');}});
  return {page};
 }
 
 return {createCloudBrowser};
 })();
+const previewNoticesUI=(()=>{
+
+function createStockNotices({state,api,post,esc,toast,currentWorkspace,refresh}){
+ let seen=new Set(),space='',opened=false;
+ const label=n=>n.method==='gateway'?'平台发布回执':'人工核实上架';
+ function update(){
+  const ws=currentWorkspace();if(space!==ws){seen=new Set();space=ws;}
+  const notes=state.integrations?.stockNotices||[],unread=notes.filter(n=>!n.read);
+  const button=document.querySelector('#stock-notices');if(!button)return;
+  button.textContent='备券通知'+(unread.length?' · '+unread.length:'');
+  const fresh=unread.filter(n=>!seen.has(n.id));
+  if(fresh.length){
+   const n=fresh[0],msg=n.title+'已在闲鱼上架，请核对券库存。';
+   toast(fresh.length===1?msg:'有 '+fresh.length+' 条新的闲鱼上架备券提醒');
+   if(globalThis.Notification?.permission==='granted'){
+    try{const notification=new Notification('闲鱼上架 · 待备券',{body:msg,tag:ws+'-'+n.id});notification.onclick=()=>{window.focus();open();};}catch{}
+   }
+  }
+  for(const n of notes)seen.add(n.id);
+  if(!opened&&new URLSearchParams(location.search).get('method')==='notices'){opened=true;open();}
+ }
+ async function open(){
+  let dialog=document.querySelector('#stock-notice-dialog');
+  if(dialog)return;
+  dialog=document.createElement('dialog');dialog.id='stock-notice-dialog';dialog.setAttribute('aria-label','备券通知');
+  document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.showModal();
+  dialog.innerHTML='<p>正在读取上架记录…</p>';
+  const ws=currentWorkspace();
+  async function draw(){
+   const {items,channel,preview}=await api('stock-notices');if(!dialog.isConnected||ws!==currentWorkspace())return;
+   dialog.innerHTML=`<div class="dialog-head"><h2>备券通知</h2><button class="secondary" data-close>关闭</button></div><p>闲鱼上架成功后，提醒你核对货源并备券。</p>
+   <p class="field-hint">${preview?'静态预览 · 示例保存在此浏览器':channel?'站外推送：'+esc(channel):'当前使用工作台提醒。关闭网页后接收提醒，可在服务端配置企业微信或钉钉机器人。'}</p>
+   ${preview?'<button class="secondary" data-demo>体验一条上架提醒</button>':''}
+   ${globalThis.Notification?.permission==='default'?'<button class="text-button" data-desktop>开启浏览器通知</button>':''}
+   ${items.map(n=>`<article class="panel"><div class="section-title"><h3>${esc(n.title)}</h3><span class="badge">${n.read?'已读':'未读'}</span></div>
+    <p>${esc(n.storeName)} · 闲鱼商品 ${esc(n.listingId)} · ¥${(n.priceFen/100).toFixed(2)}</p><p>货源：${esc(n.sourceName)}</p>
+    <p>当前可售 ${Number.isInteger(n.available)?n.available+' 张':'库存待查询'} · ${esc(label(n))}</p>
+    <small>${esc(new Date(n.createdAt).toLocaleString('zh-CN'))}${channel?' · '+({sent:'机器人已接收',failed:'推送未送达，请检查机器人配置',pending:'等待推送'}[n.push]||''):''}</small>
+    <div class="action-buttons"><button class="primary" data-stock="${esc(n.id)}">去券库备券</button>${n.read?'':`<button class="text-button" data-read="${esc(n.id)}">标为已读</button>`}</div></article>`).join('')||'<p>目前没有已确认上架的闲鱼商品。</p>'}`;
+   dialog.onclick=async e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.hasAttribute('data-close'))return dialog.close();
+    b.disabled=true;
+    try{
+     if(b.hasAttribute('data-desktop')){await Notification.requestPermission();}
+     if(b.hasAttribute('data-demo')){await post('stock-notices/demo',{});}
+     if(b.dataset.read||b.dataset.stock){
+      const n=items.find(n=>n.id===(b.dataset.read||b.dataset.stock));
+      if(!n.read)await post('integrations/market/readNotice',{id:n.id});
+      if(b.dataset.stock){const u=new URL(location.href);u.searchParams.set('method','vouchers');u.searchParams.set('stockShop',n.shopId);u.searchParams.set('stockListing',n.listingId);u.hash='ai-config/market';location.href=u.href;return;}
+     }
+     await refresh();await draw();
+    }catch(err){toast(err.message);}finally{b.disabled=false;}
+   };
+  }
+  try{await draw();}catch(err){dialog.close();toast(err.message);}
+ }
+ document.addEventListener('click',e=>{if(e.target.closest('#stock-notices'))open();});
+ return {update};
+}
+
+return {createStockNotices};
+})();
 const previewSetupUI=(()=>{
-const {createStoreUI}=previewStoreUI;const {createCloudBrowser}=previewCloudUI;const {createVoucherUI}=previewVoucherUI;
+const {createStockNotices}=previewNoticesUI;const {createStoreUI}=previewStoreUI;const {createCloudBrowser}=previewCloudUI;const {createVoucherUI}=previewVoucherUI;
 function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace,currentWorkspace}){
  const $=s=>document.querySelector(s),post=(route,input={},method='POST')=>api(route,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
  const platforms={taobao:'淘宝 / 天猫',douyin:'抖店','1688':'1688',xianyu:'闲鱼',meituan:'美团',shopify:'Shopify',other:'其他平台'};
@@ -4137,7 +4248,8 @@ function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace
  function storesPage(){const manage=storeUI.view();if(manage)return manage;return `<div class="section-title"><div><h2>店铺连接</h2><p class="field-hint">接入你的店铺，读取商品，执行已有商品的上下架。</p></div><button class="primary" data-store-new>＋ 添加店铺</button></div><div class="source-flow"><span>01 连接应用授权</span><span>02 核对店铺身份</span><span>03 读取并确认商品</span><span>04 提交与回查</span></div><div class="note">淘宝 / 天猫、抖店支持官方接口直连。应用凭证和已授权的 access token 放在服务器环境变量中；读权限检查通过后，每次上下架仍需人工确认，写权限由平台校验。</div><div class="employee-grid">${data().stores.map(s=>`<article class="panel"><div class="artifact-top"><h3>${esc(s.name)}</h3>${badge(!s.enabled?'已停用':s.connection?.status==='succeeded'?'店铺身份已核验':s.connection?.status==='failed'?'授权检查失败':s.connection?.status==='expired'?'授权已过期':'待授权',s.enabled&&s.connection?.status==='succeeded')}</div><p>${platforms[s.platform]} · ${esc(s.shopId||'未填写店铺 ID')}</p><a class="store-url" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">查看店铺 ↗</a><p class="field-hint">${s.driver==='official'?'官方接口直连 · '+(s.writesEnabled?'确认后可提交上下架':'仅读取商品'):'授权网关 · 按返回权限开放'}</p><p class="field-hint">${s.credentialConfigured?'服务器已配置凭证变量':'服务器凭证尚未配置；免安装预览不调用店铺'}</p><div class="action-buttons"><button class="secondary" data-store-edit="${s.id}">编辑连接</button><button class="text-button" data-store-test="${s.id}" ${s.enabled&&s.shopId&&(s.driver==='official'||s.endpoint)?'':'disabled'}>检查授权</button>${s.driver==='official'?`<button class="primary" data-store-manage="${s.id}">管理商品</button>`:''}</div></article>`).join('')||'<div class="panel empty-state"><h3>连接第一家店铺</h3><p>你已有应用和店铺授权，可以直接绑定服务器凭证。</p><p class="field-hint">只填店铺网址不会获得商品读写权限。</p></div>'}</div>`;}
  function mount(){if($('#workspace-dialog'))return;document.body.insertAdjacentHTML('beforeend',`<dialog id="workspace-dialog" aria-labelledby="workspace-title"><div class="dialog-head"><h2 id="workspace-title">工作空间</h2><button class="icon-btn" data-setup-close="workspace-dialog" aria-label="关闭">×</button></div><p>各空间的目标、消息、知识库、员工及连接配置独立保存。当前为同一管理员管理，不是多租户权限系统。</p><div id="workspace-list"></div><form id="workspace-form"><label id="workspace-label">创建工作空间<input name="name" required maxlength="60" placeholder="例如：家居品牌运营团队"></label><p class="form-error" role="alert"></p><div class="action-buttons"><button class="primary" id="workspace-save">创建并进入</button><button type="button" class="text-button" data-workspace-new>改为新建</button></div></form></dialog><dialog id="store-dialog" aria-labelledby="store-title"><form id="store-form"><div class="dialog-head"><h2 id="store-title">店铺连接</h2><button type="button" class="icon-btn" data-setup-close="store-dialog" aria-label="关闭">×</button></div><fieldset class="store-platforms"><legend>选择店铺平台</legend>${['taobao','douyin','1688','shopify','xianyu','meituan','other'].map(id=>[id,platforms[id]]).map(([id,n])=>`<label class="platform-card"><input type="radio" name="platform" value="${id}" ${id==='taobao'?'checked':''}><span><strong>${n}</strong><small>${['taobao','douyin'].includes(id)?'官方直连 · 商品上下架':'登记与网关身份检查'}</small></span></label>`).join('')}</fieldset><div class="data-fields"><label>店铺名称<input name="name" required maxlength="80" placeholder="例如：品牌旗舰店"></label><label>店铺 ID<input name="shopId" maxlength="120" required placeholder="开放平台返回的店铺 ID"></label></div><label>店铺公开地址<input name="url" type="url" required placeholder="https://你的店铺地址"></label><div class="note" id="shop-platform-hint"></div><fieldset class="store-drivers"><legend>连接方式</legend><label class="confirm-check"><input type="radio" name="driver" value="official" checked>官方接口直连</label><label class="confirm-check"><input type="radio" name="driver" value="gateway">已有服务商网关（仅读身份）</label></fieldset><div id="store-official-fields"><div class="note">将应用凭证与已授权的 access token 配置在服务器环境变量中。这里只填写变量名称，不填写密钥本身。</div><label>App Key / 应用 ID 变量<input name="appKeyEnv" placeholder="STORE_APP_KEY_PRIMARY"></label><label>App Secret 变量<input name="appSecretEnv" placeholder="STORE_APP_SECRET_PRIMARY"></label><label>店铺 Access Token 变量<input name="accessTokenEnv" placeholder="STORE_ACCESS_TOKEN_PRIMARY"></label><label class="confirm-check"><input type="checkbox" name="writesEnabled">允许人工确认后提交商品上下架</label><p class="field-hint" id="store-domain-hint"></p></div><div id="store-gateway-fields" hidden><label>授权网关地址<input name="endpoint" type="url" placeholder="https://gateway.example.com/shop"></label><label>服务器密钥变量<input name="secretEnv" placeholder="STORE_SECRET_PRIMARY"></label><p class="field-hint">网关需支持 connection_status 核对身份；发布新商品另需 listing.create 权限。</p><label class="confirm-check"><input type="checkbox" name="listingEnabled">允许确认后发布新商品</label></div><label class="confirm-check"><input type="checkbox" name="enabled" checked>启用此店铺</label><p class="form-error" role="alert"></p><div class="dialog-footer"><span>保存后检查授权，再进入商品管理</span><button class="primary">保存店铺</button></div></form></dialog>`);}
  function workspaceRows(){const id=currentWorkspace();$('#workspace-list').innerHTML=(state.workspaces||[]).map(w=>`<div class="workspace-row"><div><strong>${esc(w.name)}</strong><small>${w.id===id?'当前空间':'独立资料与目标'}</small></div><button class="text-button" data-workspace-rename="${w.id}">改名</button><button class="secondary" data-workspace-switch="${w.id}" ${w.id===id?'disabled':''}>进入</button></div>`).join('');}
- function update(){const w=state.workspaces?.find(w=>w.id===currentWorkspace());document.querySelectorAll('[data-workspace-name]').forEach(el=>el.textContent=w?.name||'我的工作空间');}
+ const stockNotices=createStockNotices({state,api,post,esc,toast,currentWorkspace,refresh});
+ function update(){stockNotices.update();const w=state.workspaces?.find(w=>w.id===currentWorkspace());document.querySelectorAll('[data-workspace-name]').forEach(el=>el.textContent=w?.name||'我的工作空间');}
  function platformHint(){const f=$('#store-form'),p=f.elements.platform.value,official=['taobao','douyin'].includes(p);f.querySelector('[name=driver][value=official]').disabled=!official;if(!official)f.elements.driver.value='gateway';const direct=f.elements.driver.value==='official';$('#store-official-fields').hidden=!direct;$('#store-gateway-fields').hidden=direct;$('#store-domain-hint').textContent='服务器 AGENT_ALLOWED_HOSTS 与网络策略需允许：'+(p==='taobao'?'eco.taobao.com':'openapi-fxg.jinritemai.com');$('#shop-platform-hint').textContent=p==='taobao'?'淘宝 / 天猫：使用淘宝开放平台已授权的应用凭证。店铺 ID 须与平台回查身份一致。':p==='douyin'?'抖店：使用抖店开放平台已授权的应用凭证。需开通商品读取、上架与下架接口权限。':'使用已授权的服务商网关，跨平台铺货需在身份检查中取得 listing.create 权限。';}
  document.addEventListener('change',e=>{if(e.target.matches('#search-config-form [name=provider]'))$('.search-mcp-fields').hidden=e.target.value!=='mcp';if(e.target.matches('#store-form [name=platform], #store-form [name=driver]'))platformHint();});
  document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{
@@ -4158,7 +4270,7 @@ function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace
  let selection=null,searchSeq=0;
  const listingStatus={draft:'待确认',submitting:'正在提交',unknown:'结果待核对，请查看店铺后台',published:'平台已返回发布回执'};
  const vouchers=createVoucherUI({api,post,esc,render,toast,state,currentWorkspace});
- const browser=createCloudBrowser({esc,render,currentWorkspace});
+ const browser=createCloudBrowser({esc,render,currentWorkspace,post,refresh});
  const requestedMethod=new URLSearchParams(location.search).get('method');
  let marketMethod=['browser','vouchers'].includes(requestedMethod)?requestedMethod:'api';
  document.addEventListener('click',e=>{const b=e.target.closest('[data-market-method]');if(b){marketMethod=b.dataset.marketMethod;render(true);}});
@@ -4652,11 +4764,16 @@ const previewAPI=async(route,options={})=>{
  const method=options.method||'GET',input=options.body?JSON.parse(options.body):{};const [resource,id,action]=route.split('/');
  if(resource==='workspaces')return method==='GET'?workspaceManager.list():workspaceManager.save(id,input);
  const localPlatform=await workspaceManager.get(previewSession.getItem('workspaceId')||'default');
+ if(resource==='stock-notices'){
+  const market=localPlatform.integrations.market;
+  if(method==='GET')return {preview:true,items:market.listNotices().map(n=>({...n,available:null}))};
+  if(id==='demo')return market.confirmBrowser({confirmed:true,shopId:'演示店',listingId:'DEMO-01',title:'【示例】周末双人餐券',priceFen:10900,sourceName:'美团联盟 · 示例套餐'});
+ }
  if(resource==='vouchers'){if(!id&&method==='GET')return {preview:true};throw new Error('静态预览只支持示例券');}
  if(resource==='images'){if(!id)return {...localPlatform.images.view(),previewOnly:true};if(id==='config')return localPlatform.images.save(input);if(id==='test')return localPlatform.images.test();if(id==='jobs')return action?localPlatform.images.image(action):localPlatform.images.create(input);}
  if(resource==='integrations'){
   if(!id)return localPlatform.integrations.view();
-  if(id==='market'&&['search','prepare','publish'].includes(action))return localPlatform.integrations.market[action](input);
+  if(id==='market'&&['search','prepare','publish','readNotice','confirmBrowser'].includes(action))return localPlatform.integrations.market[action](input);
   if(id==='search')return action?localPlatform.integrations[action==='test'?'testSearch':'query'](input):localPlatform.integrations.saveSearch(input);
   if(id==='stores'){const [, ,shop,type,operationId,operation]=route.split('/');if(type==='products')return localPlatform.storeOperations.list(shop,input);if(type==='operations')return operationId?localPlatform.storeOperations[operation](shop,operationId,input):options?.method==='POST'?localPlatform.storeOperations.prepare(shop,input):localPlatform.storeOperations.history(shop);return type==='test'?localPlatform.integrations.testStore(action):localPlatform.integrations.saveStore(action,input);}
  }
@@ -4790,7 +4907,7 @@ function legacyEmployees(){return heading('数字员工','业务岗位负责目�
 function fitChatInput(){const el=$('#chat-input');if(el){el.style.height='44px';el.style.height=Math.min(120,Math.max(44,el.scrollHeight))+'px';}}
 document.addEventListener('input',e=>{if(e.target.id==='chat-input')fitChatInput();});
 function capture(){const form=$('#chat-form'),input=$('#chat-input'),log=$('.chat-log');if(!form)return null;const id=form.dataset.goal,s={id,focus:document.activeElement===input,start:input?.selectionStart,end:input?.selectionEnd,scroll:log?.scrollTop||0,bottom:!log||log.scrollHeight-log.scrollTop-log.clientHeight<70};positions[id]=s;return s;}
-function render(force=false){const next=JSON.stringify(state);if(!force&&next===fingerprint)return;if(!force&&(document.querySelector('#mention-menu')?.hidden===false||document.querySelector('#discussion-dialog')?.open))return;if(!force&&document.querySelector('.select-trigger[aria-expanded=true]'))return;if(!force&&!busy&&document.activeElement?.closest('[data-voucher-form],#market-search,#market-results,#flow-settings-form,#flow-data-form,#image-config-form,#facts-form,#ledger-form,#skill-data-form,#reference-form,#source-search,#kb-search,#kb-goal-form,#business-data-form,#copy-data-form,#search-config-form,#search-query-form'))return;capture();discussionUI.hide();fingerprint=next;$('#main').classList.toggle('conversation-page',state.view==='overview'&&state.goals.length>0);$('#main').innerHTML=({overview:workspace,flows:flowsUI.page,tasks:globalTasks,artifacts:globalArtifacts,employees:workforceUI.employees,knowledge:workforceUI.knowledgePage,'ai-config':workforceUI.capabilityPage,runs:runsView}[state.view])();$('#page-crumb').textContent=viewNames[state.view];$('#nav-count').textContent=state.goals.flatMap(g=>g.tasks).filter(t=>['waiting','approval','confirmation','acceptance'].includes(t.status)).length;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view.split('/')[0]===state.view);b.setAttribute('aria-current',b.dataset.view.split('/')[0]===state.view?'page':'false');});const more=$('[data-nav-more]');if(more){const active=['ai-config','tasks','runs','artifacts'].includes(state.view);more.classList.toggle('active',active);more.setAttribute('aria-current',active?'page':'false');}const saved=positions[state.goal]||{bottom:true},log=$('.chat-log'),input=$('#chat-input');fitChatInput();if(log)log.scrollTop=saved.bottom?log.scrollHeight:saved.scroll;if(input&&saved.focus){input.focus({preventScroll:true});input.setSelectionRange(saved.start,saved.end);}imagesUI.hydrate();}
+function render(force=false){const next=JSON.stringify(state);if(!force&&next===fingerprint)return;if(!force&&(document.querySelector('#mention-menu')?.hidden===false||document.querySelector('#discussion-dialog')?.open))return;if(!force&&document.querySelector('.select-trigger[aria-expanded=true]'))return;if(!force&&!busy&&document.activeElement?.closest('[data-cloud-receipt],[data-voucher-form],#market-search,#market-results,#flow-settings-form,#flow-data-form,#image-config-form,#facts-form,#ledger-form,#skill-data-form,#reference-form,#source-search,#kb-search,#kb-goal-form,#business-data-form,#copy-data-form,#search-config-form,#search-query-form'))return;capture();discussionUI.hide();fingerprint=next;$('#main').classList.toggle('conversation-page',state.view==='overview'&&state.goals.length>0);$('#main').innerHTML=({overview:workspace,flows:flowsUI.page,tasks:globalTasks,artifacts:globalArtifacts,employees:workforceUI.employees,knowledge:workforceUI.knowledgePage,'ai-config':workforceUI.capabilityPage,runs:runsView}[state.view])();$('#page-crumb').textContent=viewNames[state.view];$('#nav-count').textContent=state.goals.flatMap(g=>g.tasks).filter(t=>['waiting','approval','confirmation','acceptance'].includes(t.status)).length;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view.split('/')[0]===state.view);b.setAttribute('aria-current',b.dataset.view.split('/')[0]===state.view?'page':'false');});const more=$('[data-nav-more]');if(more){const active=['ai-config','tasks','runs','artifacts'].includes(state.view);more.classList.toggle('active',active);more.setAttribute('aria-current',active?'page':'false');}const saved=positions[state.goal]||{bottom:true},log=$('.chat-log'),input=$('#chat-input');fitChatInput();if(log)log.scrollTop=saved.bottom?log.scrollHeight:saved.scroll;if(input&&saved.focus){input.focus({preventScroll:true});input.setSelectionRange(saved.start,saved.end);}imagesUI.hydrate();}
 function applyRoute(route){
  const aliases={applications:'flows',capabilities:'flows',connections:'ai-config/models',agents:'ai-config/legacy',sources:'ai-config/sources'};
  route=aliases[route]||route;const [view,tab]=route.split('/');state.view=viewNames[view]?view:'overview';

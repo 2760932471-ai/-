@@ -1,4 +1,5 @@
 import './environment.js';
+import {pushOne,destination} from './stock-push.js';
 import {accessPolicy} from './access-policy.js';
 import {createWorkspaceManager} from './workspaces.js';
 import {chunkText} from './knowledge-retrieval.js';
@@ -32,6 +33,7 @@ try { rooms=JSON.parse(await readFile(roomsFile,'utf8')); if(!Array.isArray(room
 let roomSaving=Promise.resolve();
 function saveRooms(){const snapshot=JSON.stringify(rooms,null,2);roomSaving=roomSaving.then(async()=>{await writeFile(roomsFile+'.tmp',snapshot);await rename(roomsFile+'.tmp',roomsFile);});return roomSaving;}
 let voucherDB;
+const vouchers=()=>(voucherDB??=import('./vouchers.js').then(m=>m.openVouchers(path.join(dataDir,'vouchers.sqlite'))));
 const workspaces=await createWorkspaceManager(dataDir);
 function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
 async function body(req, maxBytes) {
@@ -55,7 +57,7 @@ const server = http.createServer(async (req, res) => {
     if(workspaceId!=='default'&&/^\/api\/(rooms|tasks|plan)(\/|$)/.test(url.pathname))return json(res,404,{error:'旧版演示接口仅属于默认工作空间'});
     const voucherRoute=url.pathname.match(/^\/api\/vouchers(?:\/(add|manual|original|confirm|deliver|reconcile|returns|refund))?$/);
     if(voucherRoute){
-      const db=await (voucherDB??=import('./vouchers.js').then(m=>m.openVouchers(path.join(dataDir,'vouchers.sqlite'))));
+      const db=await vouchers();
       const op=voucherRoute[1];
       if(req.method==='GET'&&!op)return json(res,200,db.view(workspaceId));
       if(req.method==='POST'&&op){
@@ -64,7 +66,13 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res,405,{error:'请求方法无效'});
     }
-    const marketOp=url.pathname.match(/^\/api\/integrations\/market\/(search|prepare|publish)$/);
+    if(url.pathname==='/api/stock-notices'&&req.method==='GET'){
+     let channel;try{channel=destination(workspaceId)?.channel||'';}catch{channel='配置无效';}
+     const notices=platform.integrations.market.listNotices();
+     const db=notices.length?await vouchers():null;
+     return json(res,200,{channel,items:notices.map(n=>({...n,available:db.available(workspaceId,n.shopId,n.listingId)}))});
+    }
+    const marketOp=url.pathname.match(/^\/api\/integrations\/market\/(search|prepare|publish|confirmBrowser|readNotice)$/);
     if(marketOp&&req.method==='POST')return json(res,200,await platform.integrations.market[marketOp[1]](await body(req)));
     if(url.pathname==='/api/flows'&&req.method==='GET')return json(res,200,platform.flows.view());
     if(url.pathname==='/api/flows/settings'&&req.method==='PUT')return json(res,200,await platform.flows.saveSettings(await body(req)));
@@ -150,11 +158,19 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/vouchers.js':['vouchers.js','text/javascript'], '/cloud-browser.zip':['cloud-browser.zip','application/zip'], '/cloud-browser.js':['cloud-browser.js','text/javascript'], '/product-demo.png':['product-demo.png','image/png'], '/flows.js': ['flows.js','text/javascript'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/stock-notices.js':['stock-notices.js','text/javascript'], '/vouchers.js':['vouchers.js','text/javascript'], '/cloud-browser.zip':['cloud-browser.zip','application/zip'], '/cloud-browser.js':['cloud-browser.js','text/javascript'], '/product-demo.png':['product-demo.png','image/png'], '/flows.js': ['flows.js','text/javascript'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
 });
+let pushing=false;
+const pushTimer=setInterval(async()=>{
+ if(pushing)return;pushing=true;
+ try{await Promise.allSettled(workspaces.list().map(async w=>{
+  const platform=await workspaces.get(w.id);
+  await pushOne({market:platform.integrations.market,workspace:w.id,name:w.name,stock:async(ws,shop,id)=>(await vouchers()).available(ws,shop,id)});
+ }));}finally{pushing=false;}
+},10000);
 let ticking = false;
 const timer = setInterval(async () => {
   void workspaces.pumpImages().catch(()=>console.error('图片任务状态保存失败'));
@@ -164,5 +180,5 @@ const timer = setInterval(async () => {
   finally { ticking = false; }
 }, 600);
 server.listen(Number(process.env.PORT || 3000), access.host, () => console.log('慕雅居数字员工 · port ' + server.address().port + ' · access: ' + access.mode + (access.mode==='codespaces'?' · Codespaces 端口请保持 Private（私有）':'')));
-function shutdown() { clearInterval(timer); server.close(() => process.exit(0)); }
+function shutdown() { clearInterval(pushTimer);clearInterval(timer); server.close(() => process.exit(0)); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);

@@ -186,5 +186,6 @@ export function openVouchers(path,{request=requestIntegration}={}){
   }
   return summary(id);
  }
- return {add,view,manual,original,returns,refund,confirm,deliver,reconcile,close:()=>db.close()};
+ function available(ws,shop,listing){return db.prepare("SELECT COUNT(*) AS n FROM vouchers WHERE workspace=? AND shop=? AND listing=? AND delivery IS NULL AND expiry>?").get(ws,shop,listing,now()).n;}
+ return {available,add,view,manual,original,returns,refund,confirm,deliver,reconcile,close:()=>db.close()};
 }

@@ -2,7 +2,9 @@ export function createVoucherUI({api,post,esc,render,toast,state,currentWorkspac
  let stock=null,loading=false,loadedFor='',error='',demoStep=0;
  const states={pending:'已锁定 · 待核对交付',unknown:'发送结果待核对',sent:'已发券'};
  const input=(name,label,attrs='')=>`<label>${label}<input required name="${name}" ${attrs}></label>`;
+ const params=new URLSearchParams(location.search),stockShop=params.get('stockShop'),stockListing=params.get('stockListing');
  const shopFields=input('shop','闲鱼店铺 ID')+input('listing','闲鱼商品 ID');
+ const stockFields=input('shop','闲鱼店铺 ID','value="'+esc(stockShop||'')+'"')+input('listing','闲鱼商品 ID','value="'+esc(stockListing||'')+'"');
  async function reload(){
   if(loading)return;loading=true;const ws=currentWorkspace();
   try{const data=await api('vouchers');if(ws===currentWorkspace()){stock=data;error='';loadedFor=ws;}}
@@ -18,7 +20,7 @@ export function createVoucherUI({api,post,esc,render,toast,state,currentWorkspac
   const gateways=(state.integrations?.stores||[]).filter(s=>s.enabled&&s.platform==='xianyu'&&s.driver==='gateway'&&s.connection?.status==='succeeded'&&['order.read','voucher.deliver'].every(scope=>s.connection.scopes.includes(scope)));
   return `<div class="section-title"><h2>静态券库</h2><button class="secondary" data-voucher-action="reload">刷新库存</button></div>
   ${stock.inventory.map(r=>`<p>店铺 ${esc(r.shop)} · 商品 ${esc(r.listing)} · 可售 <strong>${r.available}</strong> / 入库 ${r.total}</p>`).join('')||'<p>尚无库存。先按店铺和商品导入一张券。</p>'}
-  <details><summary>二维码入库</summary><form data-voucher-form="add" class="panel"><div class="data-fields">${shopFields}${input('serial','供应方唯一券号')}${input('expiry','有效期（北京时间）','type="date"')}${input('file','静态二维码 PNG（最大 2 MB）','type="file" accept="image/png"')}</div><button class="primary">保存到券库</button></form></details>
+  <details ${stockShop&&stockListing?'open':''}><summary>二维码入库</summary><form data-voucher-form="add" class="panel"><div class="data-fields">${stockFields}${input('serial','供应方唯一券号')}${input('expiry','有效期（北京时间）','type="date"')}${input('file','静态二维码 PNG（最大 2 MB）','type="file" accept="image/png"')}</div><button class="primary">保存到券库</button></form></details>
   <details><summary>云电脑订单 · 人工核实付款后取券</summary><form data-voucher-form="manual" class="panel"><div class="data-fields">${shopFields}${input('orderNo','已付款订单号')}${input('buyer','订单对应买家 ID')}${input('qty','订单张数','type="number" min="1" max="20" value="1"')}</div><label class="confirm-check"><input required type="checkbox" name="verified">已在闲鱼核对付款、商品及买家</label><button class="primary">锁券给该订单</button></form></details>
   <details><summary>授权网关 · 按订单发送</summary>${gateways.length?`<form data-voucher-form="deliver" class="panel"><label>发券店铺<select name="storeId">${gateways.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}</select></label>${input('orderNo','订单号')}<button class="primary">核验付款并发送给订单买家</button></form>`:'<p>需连接支持订单读取和发券的闲鱼网关。</p>'}</details>
   <h3>订单交付记录</h3>${stock.deliveries.map(r=>{

@@ -61,6 +61,37 @@ export function createMarketConnectors({getData,transaction,request=requestInteg
    return row;
   });
  }
+ function record(d,fields){
+  const notices=d.stockNotices??=[];
+  const prior=notices.find(n=>n.shopId===fields.shopId&&n.listingId===fields.listingId);
+  if(prior)return prior;
+  const notice={id:randomUUID(),...fields,createdAt:new Date().toISOString(),read:false,push:'pending',attempts:0};
+  notices.unshift(notice);return notice;
+ }
+ function confirmBrowser(input){
+  if(input.confirmed!==true)fail('请先核实闲鱼商品已上架');
+  if(!Number.isSafeInteger(input.priceFen)||input.priceFen<=0)fail('请填写有效售价');
+  const fields={shopId:required(input.shopId,'店铺 ID'),listingId:required(input.listingId,'闲鱼商品编号'),title:required(input.title,'商品名称'),storeName:input.shopId,sourceName:required(input.sourceName,'选品来源',450),priceFen:input.priceFen,method:'manual'};
+  return transaction(d=>record(d,fields));
+ }
+ function readNotice({id}){
+  return transaction(d=>{const n=d.stockNotices?.find(n=>n.id===id);if(!n)fail('通知不存在',404);n.read=true;return n;});
+ }
+ function listNotices(){return getData().stockNotices||[];}
+ function claimPush(id){
+  return transaction(d=>{
+   const n=d.stockNotices?.find(n=>n.id===id);
+   if(!n||n.push==='sent'||n.push==='failed'||(n.nextAttempt||0)>Date.now())return null;
+   n.attempts++;n.nextAttempt=Date.now()+120000;return n;
+  });
+ }
+ function finishPush(id,ok){
+  return transaction(d=>{
+   const n=d.stockNotices.find(n=>n.id===id);
+   n.push=ok?'sent':n.attempts>=5?'failed':'pending';
+   n.nextAttempt=ok?0:Date.now()+30000*2**Math.min(n.attempts,5);
+  });
+ }
  async function publish({id,revision,confirmed}){
   if(confirmed!==true)fail('请确认店铺与售价');
   function check(d){
@@ -81,8 +112,10 @@ export function createMarketConnectors({getData,transaction,request=requestInteg
   } catch { /* A write may have reached the channel. Keep it out of the retry queue. */ }
   return transaction(d=>{
    const saved=d.channelListings.find(x=>x.id===id);
-   saved.status=listingId?'published':'unknown';saved.listingId=listingId;return saved;
+   saved.status=listingId?'published':'unknown';saved.listingId=listingId;
+   if(listingId&&t.platform==='xianyu')record(d,{shopId:t.shopId,storeName:t.name||t.shopId,listingId,title:saved.offer.title,priceFen:saved.priceFen,sourceName:[s.name||s.offerPlatform,saved.offer.id].join(' · '),method:'gateway'});
+   return saved;
   });
  }
- return {search,prepare,publish};
+ return {search,prepare,publish,confirmBrowser,readNotice,listNotices,claimPush,finishPush};
 }

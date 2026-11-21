@@ -42,3 +42,15 @@ test('a missing publication receipt is never replayed as a new listing',async()=
  await assert.rejects(()=>service.prepare(params),/发布记录/);
  assert.equal(writes.length,1);
 });
+
+test('only confirmed Xianyu listings notify; manual and API receipts share one reminder per store and listing',async()=>{
+ const failed=fixture({lostReceipt:true}),bad=await failed.service.prepare(params);
+ await failed.service.publish({id:bad.id,revision:bad.revision,confirmed:true});
+ assert.equal(failed.service.listNotices().length,0);
+ const {service}=fixture(),d=await service.prepare(params);
+ assert.equal(service.listNotices().length,0);
+ await service.publish({id:d.id,revision:d.revision,confirmed:true});
+ const [n]=service.listNotices();assert.equal(n.shopId,'S01');assert.equal(n.listingId,'12345');assert.equal(n.title,'双人餐');
+ const same=await service.confirmBrowser({...n,confirmed:true});assert.equal(same.id,n.id);assert.equal(service.listNotices().length,1);
+ await service.readNotice({id:n.id});assert.equal(service.listNotices()[0].read,true);
+});
