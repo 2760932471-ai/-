@@ -53,13 +53,13 @@ const server = http.createServer(async (req, res) => {
     const workspaceId=req.headers['x-workspace-id']||'default';
     const platform=url.pathname.startsWith('/api/')?await workspaces.get(workspaceId):null;
     if(workspaceId!=='default'&&/^\/api\/(rooms|tasks|plan)(\/|$)/.test(url.pathname))return json(res,404,{error:'旧版演示接口仅属于默认工作空间'});
-    const voucherRoute=url.pathname.match(/^\/api\/vouchers(?:\/(add|manual|original|confirm|deliver|reconcile))?$/);
+    const voucherRoute=url.pathname.match(/^\/api\/vouchers(?:\/(add|manual|original|confirm|deliver|reconcile|returns|refund))?$/);
     if(voucherRoute){
       const db=await (voucherDB??=import('./vouchers.js').then(m=>m.openVouchers(path.join(dataDir,'vouchers.sqlite'))));
       const op=voucherRoute[1];
       if(req.method==='GET'&&!op)return json(res,200,db.view(workspaceId));
       if(req.method==='POST'&&op){
-        const input=await body(req,op==='add'?2850000:64000);
+        const input=await body(req,['add','refund'].includes(op)?2850000:64000);
         return json(res,200,await db[op](workspaceId,input,()=>platform.integrations.view().stores.find(s=>s.id===input.storeId)));
       }
       return json(res,405,{error:'请求方法无效'});

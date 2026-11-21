@@ -26,18 +26,25 @@ export function openVouchers(path,{request=requestIntegration}={}){
  CREATE TABLE IF NOT EXISTS voucher_deliveries(
  id TEXT PRIMARY KEY,workspace TEXT NOT NULL,shop TEXT NOT NULL,listing TEXT NOT NULL,
  orderNo TEXT NOT NULL,buyer TEXT NOT NULL,qty INTEGER NOT NULL,state TEXT NOT NULL,
- receipt TEXT,updated TEXT NOT NULL,method TEXT NOT NULL, UNIQUE(shop,orderNo));`);
+ receipt TEXT,updated TEXT NOT NULL,method TEXT NOT NULL, UNIQUE(shop,orderNo));
+ CREATE TABLE IF NOT EXISTS voucher_assignments(
+ delivery TEXT NOT NULL,voucher TEXT NOT NULL,serial TEXT NOT NULL,exposed INTEGER NOT NULL,
+ returnState TEXT NOT NULL DEFAULT 'active', refundRef TEXT, verification TEXT, processed TEXT,
+ PRIMARY KEY(delivery,voucher));
+ INSERT OR IGNORE INTO voucher_assignments(delivery,voucher,serial,exposed)
+ SELECT delivery,id,serial,1 FROM vouchers WHERE delivery IS NOT NULL;
+ CREATE TABLE IF NOT EXISTS retired_qr(imageHash TEXT PRIMARY KEY,serial TEXT NOT NULL);`);
  const now=()=>new Date().toISOString();
  function atomic(fn){db.exec('BEGIN IMMEDIATE');try{const out=fn();db.exec('COMMIT');return out;}catch(e){db.exec('ROLLBACK');throw e;}}
  function view(ws){
   const inventory=db.prepare(`SELECT shop,listing,COUNT(*) AS total,
    SUM(CASE WHEN delivery IS NULL AND expiry>? THEN 1 ELSE 0 END) AS available
    FROM vouchers WHERE workspace=? GROUP BY shop,listing`).all(now(),ws);
-  const deliveries=db.prepare('SELECT id,shop,listing,orderNo,buyer,qty,state,receipt,updated,method FROM voucher_deliveries WHERE workspace=? ORDER BY updated DESC LIMIT 100').all(ws);
+  const deliveries=db.prepare(`SELECT id,shop,listing,orderNo,buyer,qty,state,receipt,updated,method,(SELECT count(*) FROM voucher_assignments a WHERE a.delivery=voucher_deliveries.id AND a.returnState!='active') AS returned,(SELECT count(*) FROM voucher_assignments a WHERE a.delivery=voucher_deliveries.id AND a.returnState='review') AS reviewing,(SELECT count(*) FROM voucher_assignments a WHERE a.delivery=voucher_deliveries.id AND a.returnState IN ('replace','release')) AS restocked FROM voucher_deliveries WHERE workspace=? ORDER BY updated DESC LIMIT 100`).all(ws);
   return {inventory,deliveries};
  }
- function add(ws,input){
-  const shop=field(input.shop,'闲鱼店铺 ID'),listing=field(input.listing,'闲鱼商品 ID'),serial=field(input.serial,'供应方唯一券号',300);
+ function credential(input){
+  const serial=field(input.serial,'供应方唯一券号',300);
   const expiry=field(input.expiry,'有效期',10);
   const end=Date.parse(expiry+'T15:59:59.999Z');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(expiry)||!Number.isFinite(end)||new Date(end).toISOString().slice(0,10)!==expiry||end<=Date.now())fail('有效期必须是尚未过期的日期（北京时间）');
@@ -45,9 +52,18 @@ export function openVouchers(path,{request=requestIntegration}={}){
   const bytes=Buffer.from(input.png,'base64');
   if(bytes.length>2097152||bytes.length<40||bytes.toString('ascii',12,16)!=='IHDR'||bytes.toString('ascii',bytes.length-8,bytes.length-4)!=='IEND')fail('无效的二维码 PNG');
   const hash=createHash('sha256').update(bytes).digest('hex');
+  return {serial,hash,expires:new Date(end).toISOString()};
+ }
+ function unique(serial,hash,except=''){
+  if(db.prepare('SELECT 1 FROM vouchers WHERE (serial=? AND id!=?) OR imageHash=?').get(serial,except,hash)||
+     db.prepare('SELECT 1 FROM retired_qr WHERE imageHash=? OR serial=?').get(hash,serial))fail('该券号或二维码已入库或已退役',409);
+ }
+ function add(ws,input){
+  const shop=field(input.shop,'闲鱼店铺 ID'),listing=field(input.listing,'闲鱼商品 ID');
+  const {serial,hash,expires}=credential(input);
   return atomic(()=>{
-   if(db.prepare('SELECT 1 FROM vouchers WHERE serial=? OR imageHash=?').get(serial,hash))fail('该券号或二维码已入库',409);
-   db.prepare('INSERT INTO vouchers VALUES(?,?,?,?,?,?,?,?,NULL)').run(randomUUID(),ws,shop,listing,serial,hash,input.png,new Date(end).toISOString());
+   unique(serial,hash);
+   db.prepare('INSERT INTO vouchers VALUES(?,?,?,?,?,?,?,?,NULL)').run(randomUUID(),ws,shop,listing,serial,hash,input.png,expires);
    return {added:true};
   });
  }
@@ -60,11 +76,14 @@ export function openVouchers(path,{request=requestIntegration}={}){
     if(existing.workspace!==ws||existing.listing!==listing||existing.buyer!==buyer||existing.qty!==qty)fail('订单已绑定，买家、商品及数量不可变更',409);
     return {existing:summary(existing.id)};
    }
-   const rows=db.prepare('SELECT id,png FROM vouchers WHERE workspace=? AND shop=? AND listing=? AND delivery IS NULL AND expiry>? ORDER BY expiry,rowid LIMIT ?').all(ws,shop,listing,now(),qty);
+   const rows=db.prepare('SELECT id,png,serial FROM vouchers WHERE workspace=? AND shop=? AND listing=? AND delivery IS NULL AND expiry>? ORDER BY expiry,rowid LIMIT ?').all(ws,shop,listing,now(),qty);
    if(rows.length!==qty)fail('可用券库存不足，本单未分配',409);
    const id=randomUUID();
    db.prepare('INSERT INTO voucher_deliveries VALUES(?,?,?,?,?,?,?,\'pending\',NULL,?,?)').run(id,ws,shop,listing,orderNo,buyer,qty,now(),method);
-   for(const row of rows)db.prepare('UPDATE vouchers SET delivery=? WHERE id=? AND delivery IS NULL').run(id,row.id);
+   for(const row of rows){
+    db.prepare('UPDATE vouchers SET delivery=? WHERE id=? AND delivery IS NULL').run(id,row.id);
+    db.prepare('INSERT INTO voucher_assignments(delivery,voucher,serial,exposed) VALUES(?,?,?,?)').run(id,row.id,row.serial,method==='gateway'?1:0);
+   }
    return {id,rows};
   });
  }
@@ -79,10 +98,58 @@ export function openVouchers(path,{request=requestIntegration}={}){
  }
  function original(ws,i){
   const row=manualRow(ws,i.id);
-  return {order:summary(row.id),images:db.prepare('SELECT id,png FROM vouchers WHERE workspace=? AND delivery=? ORDER BY rowid').all(ws,row.id)};
+  return atomic(()=>{
+   const images=db.prepare("SELECT v.id,v.png FROM vouchers v JOIN voucher_assignments a ON a.voucher=v.id AND a.delivery=v.delivery WHERE v.workspace=? AND v.delivery=? AND a.returnState='active' ORDER BY v.rowid").all(ws,row.id);
+   if(!images.length)fail('本单没有可以交付的原券',409);
+   db.prepare("UPDATE voucher_assignments SET exposed=1 WHERE delivery=? AND returnState='active'").run(row.id);
+   return {order:summary(row.id),images};
+  });
+ }
+ function returns(ws,i){
+  const id=field(i.id,'订单记录');
+  if(!db.prepare('SELECT 1 FROM voucher_deliveries WHERE workspace=? AND id=?').get(ws,id))fail('订单不存在',404);
+  return db.prepare('SELECT voucher,serial,exposed,returnState,refundRef,verification,processed FROM voucher_assignments WHERE delivery=? ORDER BY rowid').all(id);
+ }
+ function refund(ws,i){
+  return atomic(()=>{
+   const a=returns(ws,i).find(row=>row.voucher===i.voucher);
+   if(!a)fail('该券不属于本单',404);
+   // A retry for an old order must never release the next buyer’s assignment.
+   if(!['active','review'].includes(a.returnState))return a;
+   const v=db.prepare('SELECT * FROM vouchers WHERE id=? AND workspace=? AND delivery=?').get(a.voucher,ws,i.id);
+   if(!v)fail('券的当前归属已变化',409);
+   if(i.action==='review'){
+    if(i.refunded!==true)fail('请先核对实际退款成功记录');
+    const ref=field(i.refundRef,'退款凭证');
+    if(a.returnState==='review'&&a.refundRef!==ref)fail('该券已登记其他退款凭证',409);
+    db.prepare("UPDATE voucher_assignments SET returnState='review',refundRef=?,processed=? WHERE delivery=? AND voucher=?").run(ref,now(),i.id,v.id);
+   }else{
+    if(a.returnState!=='review')fail('请先登记退款成功记录',409);
+    const proof=field(i.verification,'供应方核验凭证',400);
+    if(!['release','replace','used','expired'].includes(i.action))fail('处理方式无效');
+    if(i.action==='release'||i.action==='replace'){
+     if(i.unused!==true)fail('请核实该券未核销');
+     if(i.action==='release'){
+      if(v.expiry<=now())fail('原券已过期，不能复售');
+      if(a.exposed&&i.oldBuyerBlocked!==true)fail('请先确认供应方已阻止原买家使用截图核销，或换发新码');
+      db.prepare('UPDATE vouchers SET delivery=NULL WHERE id=?').run(v.id);
+     }else{
+      if(i.oldInvalidated!==true)fail('请核实旧码已作废并已取得替换码');
+      const {serial,hash,expires}=credential(i);
+      unique(serial,hash,v.id);
+      db.prepare('INSERT INTO retired_qr VALUES(?,?)').run(v.imageHash,serial===v.serial?'':v.serial);
+      db.prepare('UPDATE vouchers SET delivery=NULL,serial=?,imageHash=?,png=?,expiry=? WHERE id=?').run(serial,hash,i.png,expires,v.id);
+     }
+    }
+    db.prepare('UPDATE voucher_assignments SET returnState=?,verification=?,processed=? WHERE delivery=? AND voucher=?').run(i.action,proof,now(),i.id,v.id);
+   }
+   return returns(ws,i).find(row=>row.voucher===a.voucher);
+  });
  }
  function confirm(ws,i){
   const row=manualRow(ws,i.id);if(i.buyer!==row.buyer||i.confirmed!==true)fail('请核对原订单买家及发送记录');
+  if(!returns(ws,i).some(a=>a.returnState==='active'))fail('本单无可确认的券',409);
+  db.prepare("UPDATE voucher_assignments SET exposed=1 WHERE delivery=? AND returnState='active'").run(row.id);
   db.prepare("UPDATE voucher_deliveries SET state='sent',receipt='人工核实消息记录',updated=? WHERE id=? AND state!='sent'").run(now(),row.id);
   return summary(row.id);
  }
@@ -119,5 +186,5 @@ export function openVouchers(path,{request=requestIntegration}={}){
   }
   return summary(id);
  }
- return {add,view,manual,original,confirm,deliver,reconcile,close:()=>db.close()};
+ return {add,view,manual,original,returns,refund,confirm,deliver,reconcile,close:()=>db.close()};
 }

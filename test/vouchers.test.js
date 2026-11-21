@@ -48,3 +48,53 @@ test('manual delivery binds QR before reveal, prevents reassignment and allows o
   assert.throws(()=>db.manual('w',{...manual,orderNo:'B',buyer:'buyer-B'}),/库存不足/);
  }finally{db.close();}
 });
+
+const replacementPng='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQIHWP4zwAAAgEBAMbRBrsAAAAASUVORK5CYII=';
+function sale(db,{reveal=false}={}){
+ db.add('w',item);
+ const order=db.manual('w',manual);
+ if(reveal)db.original('w',{id:order.id});
+ const {voucher}=db.returns('w',{id:order.id})[0];
+ return {id:order.id,voucher};
+}
+const refundRecord={action:'review',refunded:true,refundRef:'refund-1'};
+const verified={unused:true,verification:'供应方核验记录 R1'};
+test('refund requires successful refund and unused evidence; reopening an old order never releases the new buyer’s stock',()=>{
+ const db=openVouchers(':memory:');try{
+  const key=sale(db);
+  assert.throws(()=>db.refund('w',{...key,action:'release',...verified}),/先登记/);
+  assert.throws(()=>db.refund('other',{...key,...refundRecord}),/订单不存在/);
+  db.refund('w',{...key,...refundRecord});
+  assert.throws(()=>db.original('w',key),/没有可以交付/);
+  assert.throws(()=>db.refund('w',{...key,action:'release',verification:'凭证'}),/未核销/);
+  db.refund('w',{...key,action:'release',...verified});
+  assert.equal(db.view('w').inventory[0].available,1);
+  const b=db.manual('w',{...manual,orderNo:'B',buyer:'buyer-B'});
+  db.refund('w',{...key,action:'release',...verified});
+  assert.equal(db.view('w').inventory[0].available,0);
+  assert.equal(db.original('w',{id:b.id}).images[0].png,png);
+  assert.throws(()=>db.original('w',key),/没有可以交付/);
+ }finally{db.close();}
+});
+test('exposed static code stays locked until issuer blocks the first buyer or replaces it, even after restart',async()=>{
+ const dir=await mkdtemp('/tmp/voucher-return-'),file=dir+'/stock.sqlite';let db=openVouchers(file);
+ try{
+  const key=sale(db,{reveal:true});db.refund('w',{...key,...refundRecord});db.close();db=openVouchers(file);
+  assert.throws(()=>db.refund('w',{...key,action:'release',...verified}),/截图/);
+  assert.throws(()=>db.refund('w',{...key,action:'replace',...verified,...item,oldInvalidated:true}),/已入库/);
+  db.refund('w',{...key,action:'replace',...verified,...item,png:replacementPng,oldInvalidated:true});
+  assert.equal(db.view('w').inventory[0].available,1);
+  assert.throws(()=>db.add('w',{...item,serial:'stale-copy'}),/退役/);
+  const b=db.manual('w',{...manual,orderNo:'B',buyer:'buyer-B'});
+  assert.equal(db.original('w',{id:b.id}).images[0].png,replacementPng);
+  assert.throws(()=>db.original('w',key),/没有可以交付/);
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+test('partial refund of a two-voucher order: used voucher stays unavailable, second voucher can still be delivered',()=>{
+ const db=openVouchers(':memory:');try{
+  db.add('w',item);db.add('w',{...item,serial:'second',png:replacementPng});
+  const order=db.manual('w',{...manual,qty:2}),[first]=db.returns('w',order),key={id:order.id,voucher:first.voucher};
+  db.refund('w',{...key,...refundRecord});db.refund('w',{...key,action:'used',verification:'已核销 R2'});
+  assert.equal(db.original('w',order).images.length,1);assert.equal(db.view('w').inventory[0].available,0);
+ }finally{db.close();}
+});
