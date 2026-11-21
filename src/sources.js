@@ -24,7 +24,9 @@ export function validateSource(input,old){
  if(endpoint&&new URL(endpoint).search)fail('接口地址不能带查询参数，凭据请放在服务器环境变量');
  const secretEnv=mode==='http'?text(input.secretEnv||'','密钥变量名',80,false):'';
  if(secretEnv&&!/^SOURCE_SECRET_[A-Z0-9_]{1,60}$/.test(secretEnv))fail('请输入 SOURCE_SECRET_ 开头的环境变量名，不要填写密钥值');
- return {id:old?.id||randomUUID(),name,kind,mode,enabled:input.enabled,endpoint,secretEnv,revision:(old?.revision||0)+1,updatedAt:stamp(),lastSync:old?.lastSync||null};
+ const offerPlatform=kind==='supplier'&&mode==='http'?(input.offerPlatform??old?.offerPlatform??''):'';
+ if(offerPlatform&&!/^[a-z0-9_-]{1,50}$/.test(offerPlatform))fail('选品平台标识无效');
+ return {id:old?.id||randomUUID(),name,kind,mode,offerPlatform,enabled:input.enabled,endpoint,secretEnv,revision:(old?.revision||0)+1,updatedAt:stamp(),lastSync:old?.lastSync||null};
 }
 export function validateMaterial(input,source){
  const title=text(input.title,'资料标题',160),sku=text(input.sku||'','SKU',120,false),body=text(input.body||'','资料正文',6000,false);

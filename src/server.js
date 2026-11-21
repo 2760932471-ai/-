@@ -52,6 +52,8 @@ const server = http.createServer(async (req, res) => {
     const workspaceId=req.headers['x-workspace-id']||'default';
     const platform=url.pathname.startsWith('/api/')?await workspaces.get(workspaceId):null;
     if(workspaceId!=='default'&&/^\/api\/(rooms|tasks|plan)(\/|$)/.test(url.pathname))return json(res,404,{error:'旧版演示接口仅属于默认工作空间'});
+    const marketOp=url.pathname.match(/^\/api\/integrations\/market\/(search|prepare|publish)$/);
+    if(marketOp&&req.method==='POST')return json(res,200,await platform.integrations.market[marketOp[1]](await body(req)));
     if(url.pathname==='/api/flows'&&req.method==='GET')return json(res,200,platform.flows.view());
     if(url.pathname==='/api/flows/settings'&&req.method==='PUT')return json(res,200,await platform.flows.saveSettings(await body(req)));
     const flowTemplateMatch=url.pathname.match(/^\/api\/flows\/goals\/([^/]+)\/template$/);if(flowTemplateMatch&&req.method==='POST')return json(res,200,await platform.flows.saveTemplate(flowTemplateMatch[1],await body(req)));

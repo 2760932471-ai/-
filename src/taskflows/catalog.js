@@ -1,6 +1,7 @@
 import {skillDefinitions} from '../workforce/skills.js';
 export const flowCapabilities=[
  {id:'evidence.collect',name:'检索知识与外部线索',description:'自动检索目标知识库，并在搜索服务可用时查询网页。保留来源，不把网页摘要当成已核验事实。'},
+ {id:'market.offers',name:'跨平台选品',description:'检索授权选品网关的商品并核对目标渠道、转售与履约条件。'},
  {id:'analysis.reason',name:'通用分析与方法设计',description:'根据当前问题和来源选择分析方法，输出有依据的判断、假设和缺口；需要可用模型。'},
  {id:'image.main',name:'生成主图',description:'调用配置的图片服务交付真实 PNG；概念图与实拍参考图明确区分。'},
  {id:'image.detail',name:'生成详情图片模块',description:'生成竖版详情图片模块，需要图片服务，不是整张详情长图。'},

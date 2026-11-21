@@ -19,7 +19,8 @@ export function validateFlow(value,{maxNodes=12}={}){
 export function basicFlow(goal){
  const changes=goal.messages?.filter(m=>m.role==='human'&&m.intent==='change')||[];const text=changes.length?changes.at(-1).text:goal.text,images=imageOutputs(text),selected=[];
  const add=(id,title,capability)=>selected.push({id,title,capability,objective:title,acceptance:'交付真实结果，说明事实来源和限制',dependsOn:['evidence']});
- if(/比较|对比|选品|找货|寻找/.test(text))add('compare','比较候选参数与报价','product.compare');
+ if(/跨平台.*(?:选品|铺货)|(?:选品|找货|联盟).*(?:闲鱼|铺货)|美团联盟.*选品/.test(text))add('offers','检索货源并核对销售条件','market.offers');
+ else if(/比较|对比|选品|找货|寻找/.test(text))add('compare','比较候选参数与报价','product.compare');
  if(/利润|盈利|成本/.test(text))add('finance','核算利润与成本','finance.calculate');
  if(/市场|竞品|红海|蓝海|占有|使用情况|分析/.test(text)&&!selected.length)add('analysis','根据证据分析问题','analysis.reason');
  if(/标题/.test(text))add('title','制作商品标题','copy.titles');

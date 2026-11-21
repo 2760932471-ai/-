@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createMarketConnectors} from '../src/market-connectors.js';
+import {basicFlow} from '../src/taskflows/planner.js';
+
+function fixture({lostReceipt=false}={}){
+ const offer={id:'sku-1',title:'双人餐',currency:'CNY',priceFen:9800,rights:'resale',channels:['xianyu'],fulfillment:'商户核销',terms:'指定门店，预约使用',validUntil:'2099-01-01T00:00:00Z'};
+ const source={id:'source',revision:1,enabled:true,kind:'supplier',mode:'http',offerPlatform:'meituan_union'};
+ const target={id:'store',shopId:'S01',revision:2,platform:'xianyu',driver:'gateway',endpoint:'https://test.example/',enabled:true,listingEnabled:true,lastTest:{revision:2,status:'succeeded',scopes:['listing.create']}};
+ const data={sources:[source],stores:[target]},writes=[];
+ const request=async(_,args)=>{
+  if(args.operation==='offer.search')return {value:{schemaVersion:1,items:[offer]}};
+  if(args.operation==='offer.get')return {value:{schemaVersion:1,item:offer}};
+  writes.push(args);if(lostReceipt)throw new Error('timeout');return {value:{schemaVersion:1,shopId:'S01',listingId:'12345',status:'published'}};
+ };
+ const service=createMarketConnectors({getData:()=>data,transaction:async fn=>fn(data),request});
+ return {offer,target,writes,service};
+}
+const params={sourceId:'source',storeId:'store',offerId:'sku-1',priceFen:10900};
+test('route distinguishes promotion and resale; publishing rechecks current offer and scope',async()=>{
+ const {offer,target,writes,service}=fixture();
+ offer.rights='promotion';const result=await service.search({...params,query:'双人餐'});assert.match(result.items[0].blocker,/推广/);
+ await assert.rejects(()=>service.prepare(params),/推广/);offer.rights='resale';
+ const draft=await service.prepare(params),confirm={id:draft.id,revision:draft.revision,confirmed:true};
+ target.lastTest.scopes=[];await assert.rejects(()=>service.publish(confirm),/权限/);target.lastTest.scopes=['listing.create'];
+ offer.channels=[];await assert.rejects(()=>service.publish(confirm),/渠道|平台/);offer.channels=['xianyu'];
+ offer.priceFen++;await assert.rejects(()=>service.publish(confirm),/变化/);offer.priceFen--;
+ assert.equal(writes.length,0);
+ const results=await Promise.allSettled([service.publish(confirm),service.publish(confirm)]);
+ assert.equal(writes.length,1);assert.equal(results.find(r=>r.status==='fulfilled').value.listingId,'12345');
+ assert.equal(writes[0].idempotencyKey,draft.id);
+});
+test('controller routes an alliance sourcing goal to the commerce connector',()=>{
+ assert(basicFlow({text:'从美团联盟选品放到闲鱼卖'}).nodes.some(n=>n.capability==='market.offers'));
+});
+
+test('a missing publication receipt is never replayed as a new listing',async()=>{
+ const {service,writes}=fixture({lostReceipt:true});
+ const draft=await service.prepare(params),input={id:draft.id,revision:draft.revision,confirmed:true};
+ assert.equal((await service.publish(input)).status,'unknown');
+ await assert.rejects(()=>service.publish(input),/状态/);
+ await assert.rejects(()=>service.prepare(params),/发布记录/);
+ assert.equal(writes.length,1);
+});

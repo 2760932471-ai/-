@@ -81,6 +81,16 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   const d=getData(),direct=new Set(n.dependsOn.flatMap(id=>g.flow.nodes.find(x=>x.id===id)?.artifactIds||[]));
   const observations=g.artifacts.filter(a=>a.version===g.version&&direct.has(a.id));
   const input={...inputs(g),observations,question:n.objective,knowledgeRecall:g.flow.nodes.find(x=>x.recall)?.recall};
+  if(n.capability==='market.offers'){
+   const text=g.messages?.filter(m=>m.role==='human'&&m.intent==='change').at(-1)?.text||g.text;
+   const names={meituan_union:'美团联盟',meituan:'美团',xianyu:'闲鱼',taobao:'淘宝',douyin:'抖店','1688':'1688'};
+   const matches=(row,key)=>text.includes(row.name)||text.includes(names[key]||key);
+   const candidates=d.sources.filter(s=>s.enabled&&s.kind==='supplier'&&s.mode==='http'&&s.offerPlatform&&matches(s,s.offerPlatform));
+   const stores=(d.stores||[]).filter(s=>s.enabled&&s.driver==='gateway'&&matches(s,s.platform));
+   if(candidates.length!==1||stores.length!==1)return blocked('请在 AI基础能力配置 → 跨平台连接器中连接并选择一个选品来源和一个目标店铺。');
+   const {items}=await integrations.market.search({sourceId:candidates[0].id,storeId:stores[0].id,query:text.slice(0,160)});
+   return output('跨平台候选商品',items.map(o=>o.title+'（'+o.id+'），来源报价 ¥'+(o.priceFen/100).toFixed(2)+'；'+(o.blocker||'可准备销售草稿：'+o.fulfillment)).join('\n')||'来源未返回候选商品',candidates[0].name+' → '+stores[0].name+'；可在跨平台连接器中选择商品和售价。');
+  }
   if(n.capability==='evidence.collect'){
    const recall=await knowledge.search({...g.knowledge,query:g.text,sku:''});let web=null,notice='';
    if(integrations.view().search.ready){try{web=await integrations.query({query:g.text.slice(0,500),site:/1688/.test(g.text)?'1688.com':''});}catch{notice='外部搜索失败，本次只保留可读取的本地来源。';}}
