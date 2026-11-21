@@ -1,3 +1,4 @@
+import {createVoucherUI} from './vouchers.js';
 import {createCloudBrowser} from './cloud-browser.js';
 import {createStoreUI} from './store-operations.js';
 export function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace,currentWorkspace}){
@@ -31,11 +32,14 @@ export function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWo
  }catch(err){error.textContent=err.message;}finally{b.disabled=false;if(f.id==='search-query-form'&&b.isConnected)b.textContent=data().search.ready?'开始搜索':'测试连接并搜索';}});
  let selection=null,searchSeq=0;
  const listingStatus={draft:'待确认',submitting:'正在提交',unknown:'结果待核对，请查看店铺后台',published:'平台已返回发布回执'};
+ const vouchers=createVoucherUI({api,post,esc,render,toast,state,currentWorkspace});
  const browser=createCloudBrowser({esc,render,currentWorkspace});
- let marketMethod=new URLSearchParams(location.search).get('method')==='browser'?'browser':'api';
+ const requestedMethod=new URLSearchParams(location.search).get('method');
+ let marketMethod=['browser','vouchers'].includes(requestedMethod)?requestedMethod:'api';
  document.addEventListener('click',e=>{const b=e.target.closest('[data-market-method]');if(b){marketMethod=b.dataset.marketMethod;render(true);}});
  function marketPage(){
-  const methods=`<div class="workforce-tabs" role="group" aria-label="平台连接方式">${[['api','授权接口'],['browser','云电脑浏览器']].map(([id,name])=>`<button data-market-method="${id}" class="${marketMethod===id?'active':''}" aria-pressed="${marketMethod===id}">${name}</button>`).join('')}</div>`;
+  const methods=`<div class="workforce-tabs" role="group" aria-label="平台连接方式">${[['api','授权接口'],['browser','云电脑浏览器'],['vouchers','静态券库']].map(([id,name])=>`<button data-market-method="${id}" class="${marketMethod===id?'active':''}" aria-pressed="${marketMethod===id}">${name}</button>`).join('')}</div>`;
+  if(marketMethod==='vouchers')return methods+vouchers.page();
   if(marketMethod==='browser')return methods+browser.page();
   const sources=(state.sources?.sources||[]).filter(s=>s.kind==='supplier'&&s.enabled&&s.mode==='http'&&s.offerPlatform);
   const stores=data().stores.filter(s=>s.driver==='gateway'&&s.enabled&&s.shopId&&s.endpoint);

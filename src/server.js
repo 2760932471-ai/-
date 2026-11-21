@@ -31,6 +31,7 @@ let rooms=[];
 try { rooms=JSON.parse(await readFile(roomsFile,'utf8')); if(!Array.isArray(rooms))throw new Error('群存储格式错误'); } catch(error){if(error.code!=='ENOENT')throw error;}
 let roomSaving=Promise.resolve();
 function saveRooms(){const snapshot=JSON.stringify(rooms,null,2);roomSaving=roomSaving.then(async()=>{await writeFile(roomsFile+'.tmp',snapshot);await rename(roomsFile+'.tmp',roomsFile);});return roomSaving;}
+let voucherDB;
 const workspaces=await createWorkspaceManager(dataDir);
 function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
 async function body(req, maxBytes) {
@@ -52,6 +53,17 @@ const server = http.createServer(async (req, res) => {
     const workspaceId=req.headers['x-workspace-id']||'default';
     const platform=url.pathname.startsWith('/api/')?await workspaces.get(workspaceId):null;
     if(workspaceId!=='default'&&/^\/api\/(rooms|tasks|plan)(\/|$)/.test(url.pathname))return json(res,404,{error:'旧版演示接口仅属于默认工作空间'});
+    const voucherRoute=url.pathname.match(/^\/api\/vouchers(?:\/(add|manual|original|confirm|deliver|reconcile))?$/);
+    if(voucherRoute){
+      const db=await (voucherDB??=import('./vouchers.js').then(m=>m.openVouchers(path.join(dataDir,'vouchers.sqlite'))));
+      const op=voucherRoute[1];
+      if(req.method==='GET'&&!op)return json(res,200,db.view(workspaceId));
+      if(req.method==='POST'&&op){
+        const input=await body(req,op==='add'?2850000:64000);
+        return json(res,200,await db[op](workspaceId,input,()=>platform.integrations.view().stores.find(s=>s.id===input.storeId)));
+      }
+      return json(res,405,{error:'请求方法无效'});
+    }
     const marketOp=url.pathname.match(/^\/api\/integrations\/market\/(search|prepare|publish)$/);
     if(marketOp&&req.method==='POST')return json(res,200,await platform.integrations.market[marketOp[1]](await body(req)));
     if(url.pathname==='/api/flows'&&req.method==='GET')return json(res,200,platform.flows.view());
@@ -138,7 +150,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/cloud-browser.zip':['cloud-browser.zip','application/zip'], '/cloud-browser.js':['cloud-browser.js','text/javascript'], '/product-demo.png':['product-demo.png','image/png'], '/flows.js': ['flows.js','text/javascript'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/vouchers.js':['vouchers.js','text/javascript'], '/cloud-browser.zip':['cloud-browser.zip','application/zip'], '/cloud-browser.js':['cloud-browser.js','text/javascript'], '/product-demo.png':['product-demo.png','image/png'], '/flows.js': ['flows.js','text/javascript'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
