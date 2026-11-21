@@ -3960,8 +3960,68 @@ function createIntegrations({getData,transaction,searchCall=searchTransport,stor
 
 return {normalizeSearchResults,createIntegrations};
 })();
+const previewCloudUI=(()=>{
+
+function createCloudBrowser({esc,render,currentWorkspace}){
+ let connected=false,tabs=[],product=null,message='',source='',target='',pending=false,workspace=currentWorkspace();
+ let draft={title:'',price:'',description:'',confirmed:false};
+ const waits=new Map();
+ document.addEventListener('commerce-cloud-result',e=>{
+  try{const r=JSON.parse(e.detail),wait=waits.get(r.id);if(wait){waits.delete(r.id);r.error?wait.reject(Error(r.error)):wait.resolve(r.value);}}catch{}
+ });
+ function command(op,extra={}){
+  return new Promise((resolve,reject)=>{
+   const id=crypto.randomUUID();
+   const timer=setTimeout(()=>{waits.delete(id);reject(Error('浏览器连接未响应，请打开扩展重新连接当前工作台。'));},5000);
+   waits.set(id,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});
+   document.dispatchEvent(new CustomEvent('commerce-cloud-command',{detail:JSON.stringify({op,id,...extra})}));
+  });
+ }
+ function reset(){connected=false;tabs=[];product=null;source='';target='';draft={title:'',description:'',price:'',confirmed:false};}
+ function page(){
+  if(workspace!==currentWorkspace()){reset();message='';workspace=currentWorkspace();}
+  const options=(role,selected)=>'<option value="">选择已打开的页面</option>'+tabs.filter(t=>t.role===role).map(t=>`<option value="${Number(t.id)}" ${String(t.id)===selected?'selected':''}>${esc(t.title)}</option>`).join('');
+  return `<section class="panel" data-cloud-workspace="${esc(workspace)}"><div class="section-title"><h2>云电脑浏览器</h2><span class="badge">${connected?'当前浏览器已连接':'等待连接'}</span></div>
+  <p>在你控制的云电脑里打开此工作台。在同一 Chrome 窗口登录美团联盟和闲鱼，分别打开一个商品详情页和一个空白发布表单。</p>
+  <details ${connected?'':'open'}><summary>安装并连接浏览器扩展</summary><p><a class="text-button" href="data:application/zip;base64,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" download="云电脑浏览器连接器.zip">下载 Chrome 扩展</a>，解压后在 chrome://extensions 开启开发者模式，选择「加载已解压的扩展程序」。回到本页，点扩展图标里的「连接此工作台」。页面刷新后可重新连接。</p></details>
+  <div class="action-buttons"><button class="secondary" data-cloud="tabs">检测连接与页面</button>${connected?'<button class="text-button" data-cloud="disconnect">断开连接</button>':''}</div>
+  <p role="status" class="field-hint">${esc(message)}</p>
+  ${connected?`<label>美团商品详情页<select id="cloud-source">${options('source',source)}</select></label><button class="secondary" data-cloud="read" ${source?'':'disabled'}>读取这件商品</button>`:''}
+  ${product?`<form id="cloud-draft"><p>来自 ${esc(product.host)} · ${esc(product.title)} · 来源报价 ${esc(product.price||'未识别')}</p>
+  <label>闲鱼发布页<select id="cloud-target" required>${options('target',target)}</select></label>
+  <label>标题<input name="title" required maxlength="160" value="${esc(draft.title)}"></label><label>描述、履约方式与使用条件<textarea name="description" required maxlength="2000">${esc(draft.description)}</textarea></label>
+  <label>闲鱼售价（元）<input type="number" name="price" required step="0.01" min="0.01" max="99999999.99" value="${esc(draft.price)}"></label><label class="confirm-check"><input name="confirmed" type="checkbox" required ${draft.confirmed?'checked':''}>我已核对商品允许在闲鱼转售，并可按上述条件履约</label>
+  <button class="primary" ${pending?'disabled':''}>填写到闲鱼，停在发布前</button></form>`:''}</section>`;
+ }
+ async function act(op){
+  if(pending)return;pending=true;
+  try{
+   if(op==='tabs'){tabs=await command(op);connected=true;if(!tabs.some(t=>String(t.id)===source)){source='';product=null;}
+    if(!tabs.some(t=>String(t.id)===target))target='';
+    message=tabs.length?'请选择要操作的标签页。':'已连接，请打开商品页和发布页后再次检测。';}
+   if(op==='disconnect'){await command(op);reset();message='已断开当前工作台。';}
+   if(op==='read'){
+    const tab=source;product=null;const result=await command(op,{tab:Number(tab)});if(source!==tab)return;product=result;draft={title:product.title,description:product.terms,price:'',confirmed:false};message='已读取商品，请核对履约条件与销售价格。';
+   }
+   if(op==='fill'){await command(op,{tab:Number(target),draft:{...draft}});message='已填入网页的标题、描述和售价。请切换到闲鱼核对类目、图片和其他必填项，发布由你操作。';}
+  }catch(e){message=e.message;if(op==='tabs')reset();}
+  finally{pending=false;render(true);}
+ }
+ document.addEventListener('commerce-cloud-ready',()=>{if(document.querySelector('[data-cloud-workspace]'))act('tabs');});
+ document.addEventListener('click',e=>{const b=e.target.closest('[data-cloud]');if(b)act(b.dataset.cloud);});
+ document.addEventListener('change',e=>{
+  if(e.target.id==='cloud-source'){source=e.target.value;product=null;message='';render(true);}
+  if(e.target.id==='cloud-target')target=e.target.value;
+ });
+ document.addEventListener('input',e=>{if(e.target.closest('#cloud-draft')&&Object.hasOwn(draft,e.target.name))draft[e.target.name]=e.target.type==='checkbox'?e.target.checked:e.target.value;});
+ document.addEventListener('submit',e=>{if(e.target.id==='cloud-draft'){e.preventDefault();act('fill');}});
+ return {page};
+}
+
+return {createCloudBrowser};
+})();
 const previewSetupUI=(()=>{
-const {createStoreUI}=previewStoreUI;
+const {createStoreUI}=previewStoreUI;const {createCloudBrowser}=previewCloudUI;
 function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace,currentWorkspace}){
  const $=s=>document.querySelector(s),post=(route,input={},method='POST')=>api(route,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
  const platforms={taobao:'淘宝 / 天猫',douyin:'抖店','1688':'1688',xianyu:'闲鱼',meituan:'美团',shopify:'Shopify',other:'其他平台'};
@@ -3993,12 +4053,17 @@ function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace
  }catch(err){error.textContent=err.message;}finally{b.disabled=false;if(f.id==='search-query-form'&&b.isConnected)b.textContent=data().search.ready?'开始搜索':'测试连接并搜索';}});
  let selection=null,searchSeq=0;
  const listingStatus={draft:'待确认',submitting:'正在提交',unknown:'结果待核对，请查看店铺后台',published:'平台已返回发布回执'};
+ const browser=createCloudBrowser({esc,render,currentWorkspace});
+ let marketMethod=new URLSearchParams(location.search).get('method')==='browser'?'browser':'api';
+ document.addEventListener('click',e=>{const b=e.target.closest('[data-market-method]');if(b){marketMethod=b.dataset.marketMethod;render(true);}});
  function marketPage(){
+  const methods=`<div class="workforce-tabs" role="group" aria-label="平台连接方式">${[['api','授权接口'],['browser','云电脑浏览器']].map(([id,name])=>`<button data-market-method="${id}" class="${marketMethod===id?'active':''}" aria-pressed="${marketMethod===id}">${name}</button>`).join('')}</div>`;
+  if(marketMethod==='browser')return methods+browser.page();
   const sources=(state.sources?.sources||[]).filter(s=>s.kind==='supplier'&&s.enabled&&s.mode==='http'&&s.offerPlatform);
   const stores=data().stores.filter(s=>s.driver==='gateway'&&s.enabled&&s.shopId&&s.endpoint);
   const selected=selection;
   const options=(list,id)=>list.map(x=>`<option value="${esc(x.id)}" ${id===x.id?'selected':''}>${esc(x.name)}</option>`).join('');
-  return `<section class="section-title"><div><h2>跨平台选品与铺货</h2><p>从授权货源选商品，核对价格和履约条件后发布到销售店铺。</p></div></section>
+  return methods+`<section class="section-title"><div><h2>跨平台选品与铺货</h2><p>从授权货源选商品，核对价格和履约条件后发布到销售店铺。</p></div></section>
   <div class="action-buttons"><button class="secondary" data-view="ai-config/sources">配置选品来源</button><button class="secondary" data-view="ai-config/stores">连接销售店铺</button></div>
   <form id="market-search" class="panel"><div class="data-fields"><label>选品来源<select name="sourceId" required>${options(sources,selected?.sourceId)||'<option value="">请先配置支持选品的供应商网关</option>'}</select></label><label>销售店铺<select name="storeId" required>${options(stores,selected?.storeId)||'<option value="">请先接入目标店铺网关</option>'}</select></label></div><label>搜索商品<input name="query" required maxlength="160" placeholder="商品名称或关键词" value="${esc(selected?.query||'')}"></label><button class="primary" ${sources.length&&stores.length?'':'disabled'}>查找候选商品</button><p class="field-hint">例如从美团联盟选品，铺货到闲鱼。联盟仅授予推广权的商品会显示原因。</p></form>
   <section id="market-results">${selected?selected.items.map((x,i)=>`<form class="panel" data-market-offer="${i}"><h3>${esc(x.title)}</h3><p>来源报价 ¥${(x.priceFen/100).toFixed(2)} · ${esc(x.blocker||x.fulfillment)}</p>${x.blocker?'':`<p>${esc(x.terms)}</p><label>销售价（元）<input type="number" name="price" min="0.01" step="0.01" required></label><button class="secondary">准备发布草稿</button>`}</form>`).join('')||'<p>没有匹配商品。</p>':''}</section>
