@@ -1,9 +1,10 @@
+import {runCodexImage,codexImageStatus} from './codex-image.js';
 import {validateDestination} from './agents/registry.js';
 import {mkdir,writeFile,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 const safe=(message,outcome='failed')=>Object.assign(new Error(message),{imageSafe:true,outcome});
-export function imageCredentialState(c){return !!(c.secretEnv&&process.env[c.secretEnv]);}
+export function imageCredentialState(c){if(c.provider==='codex_local'){const status=codexImageStatus();return status.enabled&&status.installed;}return !!(c.secretEnv&&process.env[c.secretEnv]);}
 export function productUpload(base64){
  if(typeof base64!=='string'||!base64.length||base64.length>6990508||!/^[a-zA-Z0-9+/]+={0,2}$/.test(base64))throw safe('请选择 5 MB 以内的商品图');
  const buffer=Buffer.from(base64,'base64');
@@ -27,7 +28,15 @@ function geminiResult(out){
  if((inline.mimeType||inline.mime_type)!=='image/png')throw safe('Gemini 返回的图片不是当前支持的 PNG 格式','unknown');return inline.data;
 }
 async function referenceImage(url,{request,resolve,signal}){const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw safe('商品参考图地址无效');const check=new URL(u);check.search='';check.hash='';await validateDestination(check.href,resolve);const r=await request(u.href,{redirect:'error',signal});if(!r.ok)throw safe('商品参考图读取失败');const buffer=await bytes(r,10000000,signal),mime=r.headers.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime))throw safe('参考图需为 PNG、JPEG 或 WebP');return {buffer,mime};}
-export async function generateImage(config,input,{fetch:request=fetch,resolve}={}){
+export async function generateImage(config,input,{fetch:request=fetch,resolve,codexCall=runCodexImage}={}){
+ if(config.provider==='codex_local'){
+  const reference=input.upload||(input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,signal:AbortSignal.timeout(30000)}):null);
+  const base64=await codexCall({...input,reference});
+  let dimensions;try{dimensions=validPNG(base64);}catch{throw safe('Codex 未交付有效的 PNG 图片。','unknown');}
+  if(!dimensions.width||!dimensions.height||dimensions.width>8192||dimensions.height>8192)throw safe('Codex 返回的图片尺寸无效。','unknown');
+  if(!Buffer.from(base64,'base64').subarray(-12).equals(Buffer.from('0000000049454e44ae426082','hex')))throw safe('Codex 返回的 PNG 文件不完整。','unknown');
+  return {base64,...dimensions};
+ }
  if(!imageCredentialState(config))throw safe('请在完整后端配置 IMAGE_SECRET_ 生图密钥');const key=process.env[config.secretEnv],provider=imageProvider(config);
  const endpoint=provider==='gemini'?config.endpoint+'/models/'+config.model+':generateContent':config.endpoint.replace(/\/$/,'')+(input.referenceUrl||input.upload?'/images/edits':'/images/generations'),signal=AbortSignal.timeout(180000);let dispatched=false;
  try{
@@ -44,6 +53,7 @@ export async function generateImage(config,input,{fetch:request=fetch,resolve}={
  }catch(e){throw e.imageSafe?e:safe(dispatched?'出图结果未能确认，可能已产生费用。不会自动重新提交':'尚未发起生图，请检查服务域名、参考图域名和网络配置',dispatched?'unknown':'failed');}
 }
 export async function testImageConnection(config,{fetch:request=fetch,resolve}={}){
+ if(config.provider==='codex_local')return runCodexImage();
  if(imageProvider(config)!=='gemini')throw safe('当前只读连接检查适用于 Gemini');if(!imageCredentialState(config))throw safe('请先配置 IMAGE_SECRET_GEMINI 或指定的密钥变量');
  const key=process.env[config.secretEnv],endpoint=config.endpoint+'/models/'+config.model,signal=AbortSignal.timeout(20000);
  try{await validateDestination(endpoint,resolve);const response=await request(endpoint,{headers:{'x-goog-api-key':key},signal,redirect:'error'});if(!response.ok)throw safe('Gemini 连接检查返回 HTTP '+response.status+'；请检查密钥、模型是否可用及项目权限');const raw=(await bytes(response,256000,signal)).toString('utf8');if(raw.includes(key))throw safe('响应包含敏感凭证，已拒绝保存');const value=JSON.parse(raw);if(value.name!=='models/'+config.model||!value.supportedGenerationMethods?.includes('generateContent'))throw safe('Gemini 未返回匹配的可调用模型');return {model:config.model};}catch(e){throw e.imageSafe?e:safe('Gemini 连接检查未完成，请检查网络域名和服务配置');}

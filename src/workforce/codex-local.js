@@ -6,12 +6,15 @@ export function codexEnvironment(){
  try{import.meta.resolve('@openai/codex-sdk');sdkInstalled=true;}catch{}
  return {enabled:process.env.ENABLE_CODEX_LOCAL==='1',sdkInstalled,host:process.env.CODESPACES==='true'?'Codespace':'服务端'};
 }
+export function localCodexOptions(images=false){
+ // The SDK reads its own local login. This application never opens or copies auth files.
+ const env={};for(const key of ['PATH','HOME','USERPROFILE','APPDATA','LOCALAPPDATA','SYSTEMROOT','SystemRoot','TEMP','TMP','TMPDIR','HTTP_PROXY','HTTPS_PROXY','NO_PROXY','SSL_CERT_FILE','NODE_EXTRA_CA_CERTS','CODEX_HOME'])if(process.env[key])env[key]=process.env[key];
+ return {env,config:{forced_login_method:'chatgpt',model_provider:'openai',features:{shell_tool:false,unified_exec:false,js_repl:false,apply_patch_freeform:false,apps:false,browser_use:false,view_image:false,image_generation:images,multi_agent:false,collab:false,hooks:false,codex_hooks:false,plugin_hooks:false,skip_host_skill_discovery:true}},configOverrides:['mcp_servers={}']};
+}
 export async function callLocalCodex(model,messages,tools=[],{CodexClass}={}){
  if(process.env.ENABLE_CODEX_LOCAL!=='1')throw new Error('本机Codex桥接未启用。请在运行工作台的终端停止旧服务，再运行 ENABLE_CODEX_LOCAL=1 npm start。');
  if(!CodexClass){try{({Codex:CodexClass}=await import('@openai/codex-sdk'));}catch{throw new Error('尚未安装官方Codex SDK；请在本地项目执行 npm run setup:codex');}}
- // The SDK reads its own local login. This application never opens or copies auth files.
- const env={};for(const key of ['PATH','HOME','USERPROFILE','APPDATA','LOCALAPPDATA','SYSTEMROOT','SystemRoot','TEMP','TMP','TMPDIR','HTTP_PROXY','HTTPS_PROXY','NO_PROXY','SSL_CERT_FILE','NODE_EXTRA_CA_CERTS','CODEX_HOME'])if(process.env[key])env[key]=process.env[key];
- const codex=new CodexClass({env,config:{forced_login_method:'chatgpt',model_provider:'openai',features:{shell_tool:false,unified_exec:false,js_repl:false,apply_patch_freeform:false,apps:false,browser_use:false,view_image:false,image_generation:false,multi_agent:false,collab:false,hooks:false,codex_hooks:false,plugin_hooks:false,skip_host_skill_discovery:true}},configOverrides:['mcp_servers={}']});
+ const codex=new CodexClass(localCodexOptions());
  const dir=await mkdtemp(path.join(os.tmpdir(),'muyaju-codex-'));
  const names=tools.map(t=>t.function.name),schema={type:'object',properties:{action:{type:'string',enum:['skill','finish']},skill:{type:'string',enum:['',...names]},answer:{type:'string'}},required:['action','skill','answer'],additionalProperties:false};
  try{

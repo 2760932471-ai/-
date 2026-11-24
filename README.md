@@ -1,6 +1,8 @@
-# AI数字员工协作工作台 · V0.22.2
+# AI数字员工协作工作台 · V0.22.3
 
-[下载 V0.22.2 启动包](deliverables/ai-platform-0.22.2.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
+[下载 V0.22.3 启动包](deliverables/ai-platform-0.22.3.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
+
+图片生成支持 Codex 桥接。服务端完成 `npm run setup:codex` 和 `npx --no-install codex login --device-auth` 后，用 `ENABLE_CODEX_LOCAL=1 npm start` 启动。在「AI基础能力配置 → 图片生成」选择「Codex 桥接 · ChatGPT 账户」，启用并保存。「检查 Codex 连接」读取登录状态与账户服务，不生成图片。目标任务通过原生图片工具生成，收到 PNG 后交付；模型或账户没有生图权限时会显示失败。
 
 V0.19.2：任务流页新增“单商品出图体验”，银色水龙头概念样张可直接查看、下载；一键创建主图＋详情图目标。样张为预先生成，不冒充实时结果；完整后端需图片服务。
 
