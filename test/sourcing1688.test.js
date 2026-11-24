@@ -260,3 +260,28 @@ test('detail hydration recognizes the selected offer white background before gal
  const detail=publicOfferDetail('<script>window.__DATA__ = '+JSON.stringify(data)+';</script>','123');
  assert.deepEqual(detail.photos,[hero,gallery]);
 });
+
+test('chat image revisions reuse the selected product and recover the previous misrouted analysis',async t=>{
+ const dir=await mkdtemp('/tmp/flow-image-edit-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ const edit='图有点丑，再改一下呗，底下也别写什么重量：50g了，那根本不重要，可以换成：双十二优惠 买一赠一';
+ const requests=[];let searches=0;
+ const options={offerSearch:async()=>{searches++;return rows;},offerDetail:async sku=>({sku,photo:'https://cbu01.alicdn.com/img/ibank/cat.png',facts:['重量：50g']}),
+  photoDownload:async()=>png,imageReady:()=>true,imageCall:async(_,input)=>{requests.push(input);return {base64:png,width:1,height:1};}};
+ let p=await createPlatform(dir,options);
+ await p.images.save({revision:0,enabled:true,provider:'codex_local'});
+ const g=await p.create({executionMode:'flow',requestId:randomUUID(),text:'在1688选品猫粮，给我淘宝主图和卖点'});
+ const finish=async()=>{for(let i=0;i<12;i++){await p.pump();await p.images.pump();}};
+ await finish();assert.equal(requests.length,1);
+ const before=p.goals()[0],pick=before.flow.nodes.find(n=>n.capability==='sourcing.1688');
+ await p.action(g.id,{kind:'message',text:'为什么要改图？'});await finish();assert.equal(requests.length,1);
+ await p.action(g.id,{kind:'message',text:edit});await finish();
+ assert.equal(requests.length,2);assert.match(requests[1].prompt,/活动名称「双十二优惠 买一赠一」/);
+ assert(!requests[1].prompt.includes('商品特点「重量'));assert.deepEqual(requests[1].upload,requests[0].upload);
+ assert.deepEqual(p.goals()[0].flow.nodes.find(n=>n.id===pick.id).runId,pick.runId);
+ assert.equal(p.goals()[0].stage,'review');assert.equal(searches,1);
+ const file=dir+'/platform.json',data=JSON.parse(await readFile(file)),old=data.goals[0];
+ old.text=edit;old.messages.push({role:'human',intent:'change',text:edit});old.version++;
+ old.flow={...old.flow,version:old.version,status:'blocked',history:[{version:before.version,nodes:before.flow.nodes,plan:before.flow.plan}],nodes:[{id:'analysis',capability:'analysis.reason',status:'needs_input'}]};
+ await writeFile(file,JSON.stringify(data));p=await createPlatform(dir,options);await finish();
+ assert.equal(requests.length,3);assert.equal(searches,1);assert.equal(p.goals()[0].text,g.text);assert.equal(p.goals()[0].stage,'review');
+});

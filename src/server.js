@@ -107,12 +107,13 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(res,200,platform.knowledge.view());
     if(url.pathname==='/api/knowledge/search'&&req.method==='POST')return json(res,200,await platform.knowledge.search(await body(req)));
     if(url.pathname==='/api/knowledge/preview'&&req.method==='POST'){const input=await body(req);return json(res,200,chunkText(input.body,{size:Number(input.size),overlap:Number(input.overlap)}));}
-    const kbMatch=url.pathname.match(/^\/api\/knowledge\/(bases|documents)(?:\/([^/]+))?(?:\/(index|toggle))?$/);
+    const kbMatch=url.pathname.match(/^\/api\/knowledge\/(bases|documents)(?:\/([^/]+))?(?:\/(index|toggle|media))?$/);
     if(kbMatch){const [,type,id,op]=kbMatch;
       if(id&&!op&&req.method==='DELETE')return json(res,200,await platform.knowledge[type==='bases'?'deleteBase':'deleteDocument'](id,await body(req)));
       if(type==='documents'&&id&&!op&&req.method==='GET')return json(res,200,platform.knowledge.document(id));
-      if(type==='documents'&&op&&req.method==='POST')return json(res,200,await platform.knowledge[op](id,await body(req)));
-      if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id))return json(res,200,await platform.knowledge[type==='bases'?'saveBase':'saveDocument'](id,await body(req)));
+      if(type==='documents'&&id&&op==='media'&&req.method==='GET')return json(res,200,await platform.knowledge.media(id));
+      if(type==='documents'&&['index','toggle'].includes(op)&&req.method==='POST')return json(res,200,await platform.knowledge[op](id,await body(req)));
+      if(!op&&(req.method==='PUT'&&id||req.method==='POST'&&!id))return json(res,200,await platform.knowledge[type==='bases'?'saveBase':'saveDocument'](id,await body(req,type==='documents'?45000000:undefined)));
     }
     if(url.pathname==='/api/sources'&&req.method==='GET')return json(res,200,platform.sources.view());
     const sourceMatch=url.pathname.match(/^\/api\/(sources|materials)(?:\/([^/]+))?(?:\/(sync|review))?$/);
@@ -176,7 +177,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
     const files = { '/offer-photos.js':['offer-photos.js','text/javascript'], '/offer-cards.js':['offer-cards.js','text/javascript'], '/sourcing.js':['sourcing.js','text/javascript'], '/pick-browser.js':['pick-browser.js','text/javascript'], '/stock-notices.js':['stock-notices.js','text/javascript'], '/vouchers.js':['vouchers.js','text/javascript'], '/cloud-browser.zip':['cloud-browser.zip','application/zip'], '/cloud-browser.js':['cloud-browser.js','text/javascript'], '/product-demo.png':['product-demo.png','image/png'], '/flows.js': ['flows.js','text/javascript'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
-    res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
+    res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }
 });
 let pushing=false;

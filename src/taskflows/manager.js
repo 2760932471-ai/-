@@ -36,6 +36,59 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  function validateEvidence(g,d=getData()){
   sources.resolve(g,d);for(const n of g.flow.nodes){if(n.recall)knowledge.assertRecall(n.recall,d);if(n.discovery)assertResearch(d,n.discovery);if(n.preparation)assertContentEvidence(d,n.preparation);if(n.imageJobId)images.assertDelivery(n.imageJobId);}
  }
+ function imageTarget(nodes,text){
+  const images=nodes.filter(n=>n.capability.startsWith('image.'));
+  return images.find(n=>n.capability===(/详情/.test(text)?'image.detail':'image.main'))||images[0];
+ }
+ function messageRoute(g,text){
+  if(/(?:暂不|先不|不要|不用)(?:改图|修改|重做|重新生成)|^(?:为什么|怎么会|请解释)|(?:了吗|了没|到哪|怎么样)[？?]?$/.test(text))return 'discussion';
+  if(/换(?:一款|个商品|品类)|重新选品|改选/.test(text))return 'change';
+  const image=imageTarget(g.flow.nodes,text)||g.flow.status?.startsWith('planning')&&imageOutputs(g.text).length;
+  if(image&&/改|换成|换为|去掉|移除|删掉|别写|不要写|加上|加个|加一|添加|重新[做画]|重做|重画|重出|调亮|放大|缩小|不好看|太丑|有点丑/.test(text)&&
+   (/图|画面|颜色|背景|底下|底部|字体|排版|构图|海报|色调|角标/.test(text)||image.status==='succeeded'&&/再改|重做|换成/.test(text)))return 'image';
+  if(/^(?:请|帮我|麻烦)?(?:改为|改成|新增|增加|取消|重新规划|调整目标|目标改|换成)/.test(text))return 'change';
+  return 'discussion';
+ }
+ async function routeMessage(g,input){
+  const text=typeof input.text==='string'?input.text.trim():'';if(!text||text.length>2000||input.intent&&input.intent!=='auto')return input;
+  let route=messageRoute(g,text);
+  const model=currentModel();
+  if(route==='discussion'&&model&&g.stage!=='completed'){
+   try{
+    const result=await modelCall(model,[{role:'system',content:'判断用户是在讨论、要求修改当前图片，还是要求变更任务目标。提问和补充信息归 discussion。只输出 discussion、image 或 change。'},{role:'user',content:JSON.stringify({goal:g.text,tasks:g.flow.nodes.map(n=>n.title),message:text})}],[],{maxOutputTokens:20});
+    const choice=result.message?.content?.trim();
+    if(choice==='change'||choice==='image'&&imageTarget(g.flow.nodes,text))route=choice;
+   }catch{}
+  }
+  return {...input,intent:route,routedVersion:g.version};
+ }
+ function applyImageEdits(g){
+  const edits=g.flow.imageEdits;if(!edits?.length||g.flow.nodes.some(n=>['running','waiting_external'].includes(n.status)))return;
+  const affected=new Set(edits.map(e=>e.nodeId));
+  for(let i=0;i<g.flow.nodes.length;i++)for(const n of g.flow.nodes)if(n.dependsOn.some(id=>affected.has(id)))affected.add(n.id);
+  for(const n of g.flow.nodes.filter(n=>affected.has(n.id))){
+   for(const a of g.artifacts.filter(a=>n.artifactIds.includes(a.id)))a.status='superseded';
+   const notes=edits.filter(e=>e.nodeId===n.id).map(e=>e.text);
+   if(notes.length){n.imageEdits=[...(n.imageEdits||[]),...notes].slice(-5);n.imageRetryId=randomUUID();delete n.imageJobId;}
+   Object.assign(n,{status:'pending',error:null,missing:[],artifactIds:[]});
+  }
+  delete g.flow.imageEdits;g.flow.calls=0;sync(g);
+ }
+ function restoreImageEdit(g){
+  const last=g.messages.filter(m=>m.role==='human').at(-1);
+  if(g.flow.status!=='blocked'||last?.intent!=='change'||last.text!==g.text||!g.flow.nodes.some(n=>n.capability==='analysis.reason'&&n.status==='needs_input'))return;
+  const old=g.flow.history?.at(-1),main=old&&imageTarget(old.nodes,last.text);
+  if(!main||old.nodes.some(n=>['running','waiting_external'].includes(n.status))||messageRoute({flow:old},last.text)!=='image')return;
+  const original=g.messages.find(m=>m.role==='human')?.text;if(!original)return;
+  for(const a of g.artifacts)if(a.version===g.version&&a.status==='draft')a.status='superseded';
+  g.text=original;g.flow.nodes=structuredClone(old.nodes);g.flow.plan=old.plan;
+  for(const n of g.flow.nodes){
+   n.artifactIds=n.artifactIds.flatMap(id=>{const a=g.artifacts.find(a=>a.id===id);if(!a)return [];
+    const copy={...a,id:randomUUID(),status:'draft',version:g.version};g.artifacts.push(copy);return [copy.id];});
+  }
+  g.flow.imageEdits=[{nodeId:main.id,text:last.text}];applyImageEdits(g);
+  event(g,'已找回原商品和制图任务，继续按你的修改意见出图。');
+ }
  async function action(d,g,input){
   const kind=input.kind;
   if(g.paused&&!['message','pause','pauseReplies'].includes(kind))fail('请先恢复目标推进');
@@ -43,8 +96,27 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   if(kind==='message'){
    if(typeof input.text!=='string'||!input.text.trim()||input.text.length>2000)throw new Error('请输入 1–2000 字消息');
    const m={id:randomUUID(),role:'human',author:'你',text:input.text.trim(),intent:input.intent||'discuss',replyTo:input.replyTo||null,at:now()};g.messages.push(m);
-   if(input.intent==='change'){if(g.stage==='completed')fail('已结束的目标请新建下一轮');g.text=m.text;reset(g);event(g,'变更要求已记录，总控会结合最新讨论重新规划。旧版本结果保留，不自动重试旧外部请求。');}
-   else{event(g,'已记录到目标上下文。'+(g.flow.status==='planning'?'将用于本次任务规划。':'当前执行继续使用已保存的计划；若要改变执行方向，请选择消息用途“请求变更”。'));}
+   if(input.routedVersion&&input.routedVersion!==g.version)fail('目标刚刚更新，请重新发送这条消息');
+   const target=imageTarget(g.flow.nodes,m.text);
+   if(m.intent==='image'&&!target&&g.flow.status.startsWith('planning')&&imageOutputs(g.text).length){
+    (g.flow.earlyImageEdits??=[]).push(m.text);event(g,'已把修改要求加入本次制图。');
+   }else if(target&&(m.intent==='image'||m.intent==='change'&&messageRoute(g,m.text)==='image')){
+    if(g.stage==='completed')fail('已结束的目标请新建下一轮');
+    (g.flow.imageEdits??=[]).push({nodeId:target.id,text:m.text});applyImageEdits(g);
+    event(g,'已收到修改要求，将沿用当前商品和参考图，更新「'+target.title+'」。');
+   }else if(input.intent==='change'){if(g.stage==='completed')fail('已结束的目标请新建下一轮');const previousQuery=sourcingIntent(g.text)?.query;
+    const oldPick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.offers?.length);
+    const additive=/新增|增加|追加|同时|另外|也要|再加/.test(m.text);
+    const updated=additive?g.text+'；'+m.text:m.text;
+    if(updated.length>2000)fail('合并后的目标超过 2000 字，请缩短修改说明');
+    g.text=updated;reset(g);
+    if(oldPick&&previousQuery&&sourcingIntent(updated)?.query===previousQuery)g.flow.pickCheckpoint={offers:oldPick.offers,offerSource:oldPick.offerSource,downloadedPhoto:oldPick.downloadedPhoto,discovery:oldPick.discovery};
+    event(g,'变更要求已记录，总控会结合最新讨论重新规划。旧版本结果保留，不自动重试旧外部请求。');}
+   else{
+    const blocked=g.flow.nodes.find(n=>['failed','needs_input','needs_capability'].includes(n.status));
+    const progress=/进度|做到哪|卡在哪|完成了吗|好了吗/.test(m.text);
+    event(g,progress?(blocked?'当前停在「'+blocked.title+'」。'+(blocked.error||''):'当前已完成 '+g.flow.nodes.filter(n=>n.status==='succeeded').length+' / '+g.flow.nodes.length+' 步。'):'已将这条消息记入目标上下文。');
+   }
   }else if(kind==='pause'){if(g.stage==='completed')fail('目标已结束');g.paused=!g.paused;event(g,g.paused?'已暂停后续调度，已发出的请求仍会记录结果。':'已恢复任务流执行。');}
   else if(kind==='pauseReplies')g.repliesPaused=!g.repliesPaused;
   else if(kind==='replan'){if(g.stage==='completed'||g.paused)fail('请在未暂停且未结束的目标中重新规划');
@@ -132,7 +204,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   }else if(kind==='knowledge'){g.knowledge=knowledge.validateScope(input);reset(g);}
   else if(kind==='references'){g.references=sources.select(d,g,input.references);reset(g);}
   else if(kind==='complete'){
-   if(g.stage!=='review'||!g.flow.nodes.length||g.flow.nodes.some(n=>n.status!=='succeeded'))fail('仍有未完成任务，不能验收');validateEvidence(g,d);g.stage='completed';g.flow.status='completed';g.artifacts.filter(a=>a.version===g.version).forEach(a=>a.status='accepted');event(g,'目标已验收，任务流与结果已留存。');
+   if(g.stage!=='review'||!g.flow.nodes.length||g.flow.nodes.some(n=>n.status!=='succeeded'))fail('仍有未完成任务，不能验收');validateEvidence(g,d);g.stage='completed';g.flow.status='completed';g.artifacts.filter(a=>a.version===g.version&&a.status==='draft').forEach(a=>a.status='accepted');event(g,'目标已验收，任务流与结果已留存。');
   }else throw new Error('任务流模式不支持此操作');
   g.updatedAt=now();g.audit.push({id:randomUUID(),action:kind,at:now(),version:g.version});return g;
  }
@@ -150,7 +222,10 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(error){g.flow.status='planning_failed';g.flow.error=error;event(g,'任务流规划未完成：'+error);sync(g);return;}
    g.flow.plan=proposed;g.flow.nodes=proposed.nodes.map(n=>({...n,status:'pending',attempts:0,artifactIds:[]}));const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
    if(pick&&g.flow.pickCheckpoint)Object.assign(pick,g.flow.pickCheckpoint);
-   delete g.flow.pickCheckpoint;g.flow.status='running';g.flow.error=null;
+   for(const text of g.flow.earlyImageEdits||[]){
+    const n=imageTarget(g.flow.nodes,text);if(n)(n.imageEdits??=[]).push(text);
+   }
+   delete g.flow.earlyImageEdits;delete g.flow.pickCheckpoint;g.flow.status='running';g.flow.error=null;
    event(g,(proposed.planner==='model'?'总控模型':'基础组合器')+'已'+(proposed.source==='template'?'选择任务流：':'创建任务流：')+proposed.name+'。'+proposed.rationale+' 独立分支可并行执行；新能力设计保留并先验证。');sync(g);
   });
  }
@@ -195,7 +270,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    return {...output('1688 选品清单 · '+criteria.query,body+'\n按展示价和可见回购率初筛。阶梯报价、规格及起订条件需核对。'+(ranked[0].margin===null?'缺少售价或其他单件成本，利润待算。':'估算采用目标售价 '+criteria.retail+' 元，其他单件成本 '+criteria.expenses+' 元。'),source),offers,offerSource:source,discovery,detailChecked:true};
   }
   if(n.capability==='market.offers'){
-   const text=g.messages?.filter(m=>m.role==='human'&&m.intent==='change').at(-1)?.text||g.text;
+   const text=g.text;
    const names={meituan_union:'美团联盟',meituan:'美团',xianyu:'闲鱼',taobao:'淘宝',douyin:'抖店','1688':'1688'};
    const normalized=text.replaceAll('咸鱼','闲鱼');
    const matches=(row,key)=>text.includes(row.name)||normalized.includes(names[key]||key);
@@ -267,7 +342,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     }
     prep.offerPhoto=saved.url;prep.downloadedPhoto=saved;
    }
-   const j=await images.create({requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+g.text].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
+   const j=await images.create({editNotes:n.imageEdits,requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+g.text].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
    return {status:'waiting_external',summary:'图片请求已提交，等待真实图片结果',imageJobId:j.id,preparation:prep,artifacts:[]};
   }
   if(n.capability==='result.compile'){
@@ -316,6 +391,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  } });}
  async function pump(){if(pumping)return;pumping=true;try{
   if(getData().goals.some(g=>g.mode==='flow'&&g.flow.nodes.some(n=>n.status==='waiting_external')))await pollImages();
+  if(getData().goals.some(g=>g.flow?.imageEdits?.length&&!g.paused))await transaction(d=>{for(const g of d.goals)if(g.flow?.imageEdits?.length&&!g.paused)applyImageEdits(g);});
   const repair=getData().goals.find(g=>g.mode==='flow'&&!g.paused&&g.flow.status==='blocked'&&g.flow.model&&(g.flow.repairAttempts||0)<1&&g.flow.nodes.some(n=>n.status==='needs_capability')&&!g.flow.nodes.some(n=>n.imageJobId||n.status==='running')&&g.flow.calls<g.flow.policy.maxCalls);
   if(repair)await transaction(d=>{const g=find(d,repair.id),old=g.flow;const reasons=old.nodes.filter(n=>n.status==='needs_capability').map(n=>({task:n.objective,proposedCapability:n.capability,reason:n.error}));const calls=old.calls;reset(g);g.flow.calls=calls;g.flow.repairAttempts=1;g.flow.repairContext=reasons;event(g,'新能力尚未验证，总控将保留构想并自动尝试另一条执行路径。本轮最多自动修订一次，调用预算继续累计。');});
   const waiting=getData().goals.find(g=>g.mode==='flow'&&!g.paused&&g.flow.status==='planning');if(waiting)await plan(waiting.id);
@@ -324,5 +400,5 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const ready=g.flow.nodes.filter(n=>runnable(g,n)&&n.dependsOn.every(id=>g.flow.nodes.find(n=>n.id===id)?.status==='succeeded')).slice(0,Math.max(0,g.flow.policy.parallel-running));for(const n of ready)if(jobs.length<settings().parallel)jobs.push([g.id,n.id]);
   }await Promise.allSettled(jobs.map(([id,n])=>execute(id,n)));
  }finally{pumping=false;}}
- return {view,create,action,pump,saveSettings,saveTemplate};
+ return {view,create,action,pump,saveSettings,saveTemplate,routeMessage,restoreImageEdit};
 }

@@ -12,6 +12,7 @@ import {createPlanningManager,assertPlanCurrent} from './workforce/planning.js';
 import {invokeExternal} from './workforce/external-transport.js';
 import {externalDefinitions,externalBlockers,publicExternal} from './workforce/external.js';
 import {skillDefinitions} from './workforce/skills.js';
+import {knowledgeMediaFiles} from './knowledge-media.js';
 import {initialKnowledge,createKnowledgeManager} from './knowledge.js';
 import {initialSources,createSourceManager} from './sources.js';
 import {defaultEmployees} from './workforce/employees.js';
@@ -41,7 +42,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const findGoal=(d,id)=>{const g=d.goals.find(g=>g.id===id);if(!g)throw Object.assign(new Error('目标不存在'),{status:404});return g;};
  const findAgent=(d,id)=>{const a=d.agents.find(a=>a.id===id);if(!a)throw Object.assign(new Error('Agent不存在'),{status:404});return a;};
  const sources=createSourceManager({getData:()=>data,transaction,transport:sourceTransport});
- const knowledge=createKnowledgeManager({getData:()=>data,transaction,embed,configuration:embeddingConfig});
+ const knowledge=createKnowledgeManager({getData:()=>data,transaction,mediaFiles:knowledgeMediaFiles(dataDir),embed,configuration:embeddingConfig});
  const images=createImages({getData:()=>data,transaction,knowledge,files:imageFiles(dataDir),photoDownload,imageCall,imageReady,imageTest});
  const planning=createPlanningManager({getData:()=>data,transaction,inputs,modelCall,event});
  const integrations=createIntegrations({getData:()=>data,transaction,searchCall,storeCall,nativeStoreCall});
@@ -49,7 +50,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const research=createResearchManager({getData:()=>data,transaction,sources,event,integrations});
  const production=createProductionManager({getData:()=>data,transaction,images,event});
  const flows=createTaskflowManager({getData:()=>data,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall:flowSkillCall,offerSearch,offerDetail});
- await transaction(d=>{for(const g of d.goals.filter(g=>g.mode==='flow')){for(const n of g.flow.nodes.filter(n=>n.status==='needs_input'&&!n.missing)){n.missing=d.runs.find(r=>r.id===n.runId)?.result?.missing||[];}if(g.flow.status==='planning_running'){g.flow.status='planning_failed';g.flow.error='服务重启中断规划，请重新规划';}for(const n of g.flow.nodes)if(n.status==='running'){n.status='failed';n.error='服务重启中断执行，请核查后重试';}}});
+ await transaction(d=>{for(const g of d.goals.filter(g=>g.mode==='flow')){flows.restoreImageEdit(g);for(const n of g.flow.nodes.filter(n=>n.status==='needs_input'&&!n.missing)){n.missing=d.runs.find(r=>r.id===n.runId)?.result?.missing||[];}if(g.flow.status==='planning_running'){g.flow.status='planning_failed';g.flow.error='服务重启中断规划，请重新规划';}for(const n of g.flow.nodes)if(n.status==='running'){n.status='failed';n.error='服务重启中断执行，请核查后重试';}}});
  const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources,knowledge,images});
  await transaction(async d=>{await team.syncPending(d);for(const g of d.goals)if(g.mode==='team'&&isResearchGoal(g)&&!g.research){g.research=collectResearch(d,g);if(['plan','draft'].includes(g.stage))g.researchRequest={id:randomUUID(),version:g.version,question:g.text};}});
  function enqueue(d,agentId,input,meta={},override){
@@ -112,7 +113,10 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(isTeam&&(input.startCollaboration||g.teamSelection==='auto')&&!input.contentDraft)await team.kickoff(d,g);
   d.goals.unshift(g);d.requests[input.requestId]={goalId:g.id,signature};return g;
  });}
- async function action(id,input){return transaction(async d=>{
+ async function action(id,input){
+  const goal=findGoal(data,id);
+  if(goal.mode==='flow'&&input.kind==='message')input=await flows.routeMessage(goal,input);
+  return transaction(async d=>{
   const g=findGoal(d,id);const kind=input.kind;if(g.mode==='flow')return flows.action(d,g,input);
   if(g.mode!=='team'&&((kind==='message'&&input.workforceChat===true)||['inviteDiscussion','chatContext'].includes(kind)||(kind==='pauseReplies'&&g.discussionMode==='employees'))){
    if(g.discussionMode!=='employees'&&g.queue.length)throw new Error('旧会话仍有待回复消息，请等回复完成后重试');g.discussionMode='employees';g.participants=discussionMembers(g);return team.action(d,g,input);

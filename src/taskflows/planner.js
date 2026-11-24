@@ -18,7 +18,7 @@ export function validateFlow(value,{maxNodes=12}={}){
  return {name:value.name.trim(),rationale:value.rationale.trim(),nodes};
 }
 export function basicFlow(goal){
- const changes=goal.messages?.filter(m=>m.role==='human'&&m.intent==='change')||[];const text=changes.length?changes.at(-1).text:goal.text,images=imageOutputs(text),selected=[];
+ const text=goal.text,images=imageOutputs(text),selected=[];
  const add=(id,title,capability)=>selected.push({id,title,capability,objective:title,acceptance:'交付真实结果，说明事实来源和限制',dependsOn:['evidence']});
  const sourcing=sourcingIntent(text),platformText=text.replaceAll('咸鱼','闲鱼');
  const crossPlatform=/跨平台.*(?:选品|铺货)|(?:选品|找货|联盟|1688).*(?:铺货|(?:到|去|在|发往|转卖至)闲鱼)|(?:美团联盟|1688).*闲鱼.*(?:卖|销售|发布|上架)/.test(platformText);

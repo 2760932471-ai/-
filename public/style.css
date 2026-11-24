@@ -158,3 +158,6 @@ button,a{-webkit-tap-highlight-color:transparent}
 .delivery-report a{display:inline-block;margin-bottom:12px}
 .report-image{display:block;max-width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:white;text-align:left;color:var(--ink)}
 .report-image span{display:block;padding-top:5px}
+
+.kb-media-preview{display:block;width:100%;max-height:55vh;object-fit:contain;margin:12px 0;background:var(--tint);border-radius:8px}
+#chat-form .composer-bottom>.primary:only-child{margin-inline-start:auto}
