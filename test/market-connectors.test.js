@@ -31,7 +31,8 @@ test('route distinguishes promotion and resale; publishing rechecks current offe
  assert.equal(writes[0].idempotencyKey,draft.id);
 });
 test('controller routes an alliance sourcing goal to the commerce connector',()=>{
- assert(basicFlow({text:'从美团联盟选品放到闲鱼卖'}).nodes.some(n=>n.capability==='market.offers'));
+ for(const text of ['美团联盟选品','在咸鱼找水龙头'])assert(basicFlow({text}).nodes.some(n=>n.capability==='product.compare'));
+ for(const text of ['从美团联盟选品放到闲鱼卖','从美团联盟找餐券，放到咸鱼卖'])assert(basicFlow({text}).nodes.some(n=>n.capability==='market.offers'));
 });
 
 test('a missing publication receipt is never replayed as a new listing',async()=>{

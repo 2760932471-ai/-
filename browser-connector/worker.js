@@ -1,6 +1,14 @@
 import {collectSearch,readSearch,rememberSearch} from './collect-1688.js';
 import {readProduct,fillDraft} from './pages.js';
-const patterns={source:'https://*.meituan.com/*',target:'https://*.goofish.com/*',sourcing:'https://s.1688.com/selloffer/offer_search.htm*'};
+const sites=[
+ {url:'https://*.meituan.com/*',roles:['source']},
+ {url:'https://*.goofish.com/*',roles:['source','target']},
+ {url:'https://detail.1688.com/*',roles:['source']},
+ {url:'https://s.1688.com/selloffer/offer_search.htm*',roles:['sourcing']}
+];
+async function siteTabs(site,windowId){
+ return chrome.tabs.query({url:site.url,windowId});
+}
 function matchesPair(pair,cmd,sender,restored){
  if(!pair||pair.tabId!==sender.tab?.id||pair.workspace!==cmd.workspace)return false;
  if(pair.doc===sender.documentId)return true;
@@ -12,22 +20,28 @@ async function run(cmd,sender,restored=false){
  if(!matchesPair(pair,cmd,sender,restored))throw Error('请从当前工作空间重新连接扩展。');
  if(cmd.op==='disconnect'){await chrome.storage.session.remove('pair');return true;}
  if(cmd.op==='tabs'){
-  const tabs=await Promise.all(Object.entries(patterns).map(async([role,url])=>{
-   const matches=await chrome.tabs.query({url,windowId:sender.tab.windowId});
-   return Promise.all(matches.map(async t=>{
-    let eligible=role==='sourcing';
-    if(!eligible){
-     try{const [probe]=await chrome.scripting.executeScript({target:{tabId:t.id},func:role==='source'?readProduct:fillDraft,args:[role==='source'?true:null]});eligible=probe.result===true;}catch{}
+  const groups=await Promise.all(sites.map(async site=>{
+   const tabs=await siteTabs(site,sender.tab.windowId);
+   const found=[];
+   for(const t of tabs){
+    for(const role of site.roles){
+     if(role!=='sourcing'){
+      try{
+       const [probe]=await chrome.scripting.executeScript({target:{tabId:t.id},func:role==='source'?readProduct:fillDraft,args:[role==='source'?true:null]});
+       if(probe?.result!==true)continue;
+      }catch{continue;}
+     }
+     found.push({role,id:t.id,title:t.title||new URL(t.url).hostname,eligible:true});
     }
-    return {role,id:t.id,title:t.title||new URL(t.url).hostname,eligible};
-   }));
+   }
+   return found;
   }));
-  return tabs.flat();
+  return groups.flat();
  }
  if(!['read','fill'].includes(cmd.op)||!Number.isInteger(cmd.tab))throw Error('无效的浏览器操作。');
- const reading=cmd.op==='read';
- const allowed=await chrome.tabs.query({url:reading?patterns.source:patterns.target,windowId:sender.tab.windowId});
- if(!allowed.some(t=>t.id===cmd.tab))throw Error('请选择当前窗口内对应平台的标签页。');
+ const reading=cmd.op==='read',role=reading?'source':'target';
+ const allowed=await Promise.all(sites.filter(site=>site.roles.includes(role)).map(site=>siteTabs(site,sender.tab.windowId)));
+ if(!allowed.flat().some(t=>t.id===cmd.tab))throw Error('请选择当前窗口内支持此操作的页面。');
  const d=cmd.draft;
  if(!reading&&(!d||d.confirmed!==true||typeof d.title!=='string'||!d.title.trim()||d.title.length>160||typeof d.description!=='string'||!d.description.trim()||d.description.length>2000||!/^\d{1,8}(\.\d{1,2})?$/.test(d.price)||Number(d.price)<=0))throw Error('请核对转售授权、商品资料和售价。');
  const [r]=await chrome.scripting.executeScript({target:{tabId:cmd.tab},func:reading?readProduct:fillDraft,args:reading?[]:[d]});
@@ -51,7 +65,7 @@ chrome.runtime.onMessageExternal?.addListener((cmd,sender,reply)=>{
   (async()=>{
    const {pair}=await chrome.storage.session.get('pair');
    const paired=matchesPair(pair,cmd,sender,true)&&
-    await chrome.permissions.contains({origins:[patterns.source,patterns.target]});
+    await chrome.permissions.contains({origins:['https://*.meituan.com/*','https://*.goofish.com/*']});
    if(cmd.action==='status')return {installed:true,paired};
    if(!paired||!['tabs','disconnect','read','fill'].includes(cmd.action))throw Error('请先在扩展中连接当前工作空间。');
    // A restored tab may have a new document. The external request already

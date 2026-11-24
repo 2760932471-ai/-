@@ -239,10 +239,10 @@ const planningUI=createPlanningUI({state,api,esc,badge,receive,render});
 const businessUI=createBusinessUI({state,api,esc,badge,toast,refresh,render,openCreate,act});
 const imagesUI=createImagesUI({state,api,esc,toast,refresh,render});
 const contentUI=createContentUI({state,api,esc,receive,openGoal,render,act});
-const setupUI=createSetupUI({startPick:()=>{openCreate('在 1688 上找高性价比的露营灯');const goal=$('#goal');goal.setSelectionRange(goal.value.length-3,goal.value.length);},state,api,esc,badge,toast,refresh,render,currentWorkspace:()=>sessionStorage.getItem('workspaceId')||'default',switchWorkspace:async id=>{sessionStorage.setItem('workspaceId',id);sessionStorage.removeItem('selectedGoal');location.reload();}});
+const setupUI=createSetupUI({state,api,esc,badge,toast,refresh,render,currentWorkspace:()=>sessionStorage.getItem('workspaceId')||'default',switchWorkspace:async id=>{sessionStorage.setItem('workspaceId',id);sessionStorage.removeItem('selectedGoal');location.reload();}});
 const workforceUI=createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowledgeUI,sourcesUI,state,api,esc,badge,toast,refresh,render,navigate:go,legacyPage:platformEmployees,openRun:async id=>{runPreviewId=id;$('#run-input').textContent='正在载入…';$('#run-output').textContent='正在载入…';$('#run-diagnosis').textContent='';$('#run-pick-action').hidden=true;delete $('#run-data').dataset.run;$('#run-dialog').showModal();await updateRunPreview();}});
 
 const pickBrowser=createPickBrowser({state,act,esc,render});
-const flowsUI=createFlowsUI({pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal});
+const flowsUI=createFlowsUI({readQuotes:setupUI.readQuotes,pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal});
 const initialRoute=applyRoute(location.hash.slice(1)||'overview');if(location.hash.slice(1)!==initialRoute)history.replaceState(null,'','#'+initialRoute);
 initializeSelects();await refresh();setInterval(refresh,1800);

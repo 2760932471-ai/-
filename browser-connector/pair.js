@@ -1,8 +1,8 @@
 document.querySelector('#pair').onclick=async()=>{
  const status=document.querySelector('#status');
  try{
-  const granted=await chrome.permissions.request({origins:['https://*.meituan.com/*','https://*.goofish.com/*']});
-  if(!granted)throw Error('需要这两个平台的页面权限才能读取商品和填写草稿。');
+  const granted=await chrome.permissions.request({origins:['https://*.meituan.com/*','https://*.goofish.com/*','https://detail.1688.com/*']});
+  if(!granted)throw Error('请允许连接器访问支持的平台页面，再连接工作空间。');
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   const [probe]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>({
    workspace:document.querySelector('[data-cloud-workspace]')?.dataset.cloudWorkspace,

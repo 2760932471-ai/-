@@ -9,8 +9,8 @@ try{
  await page.locator('.goal-tabs [data-tab=tasks]').click();await page.screenshot({path:'/tmp/taskflows-desktop.png'});
  await page.locator('.sidebar [data-view=flows]').click();await page.getByRole('heading',{name:'任务流与总控',exact:true}).waitFor();assert.equal(await page.locator('#flow-settings-form').count(),1);await page.locator('[name=parallel]').fill('2');await page.locator('#flow-settings-form button[type=submit]').click();await page.waitForTimeout(400);assert.equal(await page.locator('[name=parallel]').inputValue(),'2');
  await page.locator('.sidebar-create').click();await page.locator('#goal').fill('找一款划算的水龙头，选品后直接上架');await page.locator('#submit-task').click();await page.locator('#task-dialog').waitFor({state:'hidden'});
- await page.locator('.goal-tabs [data-tab=tasks]').click();await page.getByRole('button',{name:'补入候选报价并继续'}).click();
- const quotes=page.getByRole('dialog',{name:'补入候选报价'});for(let i=0;i<2;i++){const row=quotes.locator('fieldset').nth(i);await row.locator('[name=sku]').fill('龙头-'+i);await row.locator('[name=price]').fill(String(25+i));await row.locator('[name=source]').fill('测试报价单 '+i);}
+ await page.locator('.goal-tabs [data-tab=tasks]').click();await page.getByRole('button',{name:'读取或补入候选报价'}).click();
+ const quotes=page.getByRole('dialog',{name:'比较候选报价'});for(let i=0;i<2;i++){const row=quotes.locator('fieldset').nth(i);await row.locator('[name=sku]').fill('龙头-'+i);await row.locator('[name=price]').fill(String(25+i));await row.locator('[name=source]').fill('测试报价单 '+i);}
  await quotes.getByRole('button',{name:'保存并继续比较'}).click();await quotes.waitFor({state:'hidden'});await page.getByText('3 / 3 步完成',{exact:true}).waitFor();assert.equal(await page.locator('.flow-attention').count(),0);
  await page.locator('.sidebar [data-view=flows]').click();
  await page.setViewportSize({width:375,height:812});await page.screenshot({path:'/tmp/taskflows-mobile.png'});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));

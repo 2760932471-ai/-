@@ -1,16 +1,28 @@
 // These functions run in the isolated world of the selected platform tab.
 export function readProduct(identifyOnly=false){
- if(location.protocol!=='https:'||!/(^|\.)meituan\.com$/.test(location.hostname))throw Error('商品页面已切换，请重新选择。');
+ const url=new URL(location.href);
+ const host=url.hostname,path=url.pathname;
+ const meituan=/(^|\.)meituan\.com$/.test(host);
+ const offer=host==='detail.1688.com'&&/^\/offer\/\d+\.html\/?$/.test(path);
+ const item=/(^|\.)goofish\.com$/.test(host)&&/^\/item(?:\/|$)/.test(path);
+ if(url.protocol!=='https:'||!(meituan||offer||item)){
+  if(identifyOnly)return false;
+  throw Error('页面已切换，请打开受支持的商品详情页。');
+ }
  const visible=el=>el?.getClientRects().length&&getComputedStyle(el).visibility==='visible';
  const value=selector=>{
   const nodes=Array.from(document.querySelectorAll(selector)).filter(visible);
   return nodes.length===1?nodes[0].innerText.trim():'';
  };
- const title=value('[itemprop="name"]')||value('main h1')||value('h1');
- if(identifyOnly)return !!title&&!!(value('[itemprop="price"]')||/\/(?:deal|product|goods|detail)(?:[/.]|$)/i.test(location.pathname));
- if(!title)throw Error('未识别到唯一商品标题。请打开单件商品详情页。');
- return {title:title.slice(0,160),price:value('[itemprop="price"]').slice(0,60),
-  terms:value('[itemprop="description"]').slice(0,1500),host:location.hostname};
+ const meta=name=>document.querySelector('meta[property="'+name+'"]')?.content.trim()||'';
+ const title=value('[itemprop="name"]')||value('main h1')||value('h1')||meta('og:title');
+ const price=value('[itemprop="price"]')||document.querySelector('meta[itemprop="price"]')?.content||meta('product:price:amount');
+ const detail=offer||item||/\/(?:deal|product|goods|detail)(?:[/.]|$)/i.test(path)||!!price;
+ if(identifyOnly)return Boolean(title&&detail);
+ if(!title||!detail)throw Error('未识别到单件商品，请打开商品详情页。');
+ const source=new URL(url.origin+path);
+ for(const key of ['id','itemId','dealId','productId'])if(/^[\w-]{1,80}$/.test(url.searchParams.get(key)||''))source.searchParams.set(key,url.searchParams.get(key));
+ return {title:title.slice(0,160),price:String(price).slice(0,60),terms:(value('[itemprop="description"]')||meta('og:description')).slice(0,1500),host,url:source.href};
 }
 export function fillDraft(draft){
  if(location.protocol!=='https:'||!/(^|\.)goofish\.com$/.test(location.hostname))throw Error('销售页面已切换，请重新选择。');

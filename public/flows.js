@@ -1,4 +1,4 @@
-export function createFlowsUI({pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal}){
+export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal}){
  const labels={planning:'正在规划',planning_running:'模型规划中',planning_failed:'规划未完成',running:'执行中',pending:'等待前置任务',succeeded:'已完成',failed:'执行失败',needs_input:'需要处理',needs_capability:'新能力待验证',waiting_external:'等待图片结果',blocked:'存在阻塞',review:'待验收',completed:'已验收'};
  const label=s=>labels[s]||s;
  function nodeIssue(n){
@@ -12,13 +12,14 @@ export function createFlowsUI({pickBrowser,state,api,esc,badge,act,receive,refre
   if(g.flow.calls>=g.flow.policy?.maxCalls)return '<p>本轮调用次数已用完。核对执行记录后，可在下方重新规划。</p>';
   const id=esc(n.id),goal=esc(g.id);
   const retry='<button class="secondary" data-flow-retry="'+id+'" data-goal="'+goal+'">重试此步</button>';
-  if(n.status==='needs_input'&&n.capability==='product.compare')return '<button class="primary" data-offer-input="'+id+'" data-goal="'+goal+'">补入候选报价并继续</button><button class="text-button" data-view="ai-config/sources">管理供应商来源</button>'+retry;
+  if(n.status==='needs_input'&&n.capability==='product.compare')return '<button class="primary" data-offer-input="'+id+'" data-goal="'+goal+'">读取或补入候选报价</button><button class="text-button" data-view="ai-config/sources">管理供应商来源</button>'+retry;
   if(n.status==='needs_capability')return '<button class="secondary" data-flow-replan="'+goal+'">换一种方法重新规划</button>';
   if(n.capability==='sourcing.1688')return '';
   if(n.imageJobId)return '<button class="secondary" data-view="ai-config/images">查看图片任务</button>';
   if(n.capability==='analysis.reason'&&!g.flow.model)return '<button class="primary" data-view="flows">选择总控模型</button><small>设置完成后，重新规划以使用新模型。</small>';
-  const dest=n.capability==='market.offers'?'ai-config/market':n.capability.startsWith('image.')&&/服务|模型/.test(n.error||'')?'ai-config/images':null;
-  return (dest?'<button class="primary" data-view="'+dest+'" '+(dest==='ai-config/market'?'data-market-method="api"':'')+'>打开连接配置</button>':'<button class="secondary" data-tab="facts">查看与补充资料</button>')+retry;
+  if(n.capability==='market.offers')return '<button class="primary" data-view="ai-config/market" data-market-method="browser">在浏览器中处理</button><button class="text-button" data-view="ai-config/market" data-market-method="api">管理授权接口</button>'+retry;
+  const images=n.capability.startsWith('image.')&&/服务|模型/.test(n.error||'');
+  return (images?'<button class="primary" data-view="ai-config/images">打开连接配置</button>':'<button class="secondary" data-tab="facts">查看与补充资料</button>')+retry;
  }
  function panel(g){
   const f=g.flow,nodes=f.nodes,done=nodes.filter(n=>n.status==='succeeded').length;
@@ -39,12 +40,29 @@ export function createFlowsUI({pickBrowser,state,api,esc,badge,act,receive,refre
  }
  function enterOffers(g,nodeId){
   const dialog=document.createElement('dialog');
-  dialog.setAttribute('aria-label','补入候选报价');
-  dialog.innerHTML=`<form><div class="dialog-head"><h2>补入候选报价</h2><button type="button" class="icon-btn" aria-label="关闭">×</button></div><p>填写两件商品的可核对报价。保存后从比较步骤继续，已完成的收集记录会保留。</p>${['第一个商品','第二个商品'].map(name=>`<fieldset class="offer-fields"><legend>${name}</legend><label>商品编号或型号<input name="sku" required maxlength="160"></label><label>报价（元）<input name="price" type="number" min="0.01" step="0.01" required></label><label>来源链接或报价单名称<input name="source" maxlength="1000" required></label></fieldset>`).join('')}<p class="form-error" role="alert"></p><button class="primary" type="submit">保存并继续比较</button></form>`;
+  dialog.setAttribute('aria-label','比较候选报价');
+  const row=(i,c={})=>`<fieldset class="offer-fields"><legend>候选商品 ${i+1}</legend><label>商品名称或编号<input name="sku" required maxlength="160" value="${esc(c.sku||'')}"></label><label>报价（元）<input name="price" type="number" min="0.01" step="0.01" required value="${esc(String(c.price||''))}"></label><label>来源链接或报价单名称<input name="source" maxlength="1000" required value="${esc(c.source||'')}"></label><button type="button" class="text-button" data-remove-quote>移除</button></fieldset>`;
+  dialog.innerHTML=`<form><div class="dialog-head"><h2>比较候选报价</h2><button type="button" class="icon-btn" aria-label="关闭">×</button></div><p>自动读取同一窗口里已打开商品的名称、单价和来源。保留本次要比较的商品后即可继续。</p><button type="button" class="secondary" data-read-quotes>从浏览器读取</button><div data-quote-rows>${row(0)+row(1)}</div><button type="button" class="text-button" data-add-quote>添加候选</button><p class="form-error" role="alert"></p><button class="primary" type="submit">保存并继续比较</button></form>`;
+  const rows=dialog.querySelector('[data-quote-rows]'),error=dialog.querySelector('[role=alert]');
+  dialog.querySelector('[data-add-quote]').onclick=()=>{if(rows.children.length<50)rows.insertAdjacentHTML('beforeend',row(rows.children.length));};
+  rows.onclick=e=>{if(e.target.closest('[data-remove-quote]'))e.target.closest('fieldset').remove();};
+  dialog.querySelector('[data-read-quotes]').onclick=async e=>{
+   const button=e.currentTarget;button.disabled=true;error.textContent='';
+   try{
+    const quotes=await readQuotes(),existing=new Set([...rows.querySelectorAll('[name=source]')].map(el=>el.value));
+    for(const quote of quotes){
+     if(existing.has(quote.source))continue;
+     const empty=[...rows.children].find(f=>[...f.querySelectorAll('input')].every(el=>!el.value));
+     if(empty){for(const el of empty.querySelectorAll('input'))el.value=quote[el.name];}
+     else if(rows.children.length<50)rows.insertAdjacentHTML('beforeend',row(rows.children.length,quote));
+    }
+   }catch(err){error.textContent=err.message;}finally{button.disabled=false;}
+  };
   document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.querySelector('.icon-btn').onclick=()=>dialog.close();
   dialog.querySelector('form').onsubmit=async e=>{
    e.preventDefault();const b=e.submitter;b.disabled=true;
    try{const candidates=[...dialog.querySelectorAll('fieldset')].map(row=>({sku:row.querySelector('[name=sku]').value,source:row.querySelector('[name=source]').value,price:row.querySelector('[name=price]').valueAsNumber}));
+    if(candidates.length<2)throw Error('至少保留两件不同商品才能比较');
     await act('supplyOffers',{nodeId,candidates,expectedVersion:g.version},g.id);dialog.close();toast('报价已保存，任务将继续比较');
    }catch(error){dialog.querySelector('.form-error').textContent=error.message;}finally{b.disabled=false;}
   };dialog.showModal();

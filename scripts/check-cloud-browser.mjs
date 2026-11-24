@@ -5,7 +5,7 @@ import {mkdtemp,cp,readFile,writeFile,rm} from 'node:fs/promises';
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');
 const simulated=process.argv.includes('--simulate-extension-api');
 const dir=await mkdtemp('/tmp/cloud-check-'),ext=dir+'/extension';
-let ctx,secondTarget;
+let ctx,secondTarget,additionalSources;
 try{
  await cp('browser-connector',ext,{recursive:true});
  const manifest=JSON.parse(await readFile(ext+'/manifest.json'));
@@ -26,10 +26,15 @@ try{
  if(simulated){
   let listener,external,pair={tabId:1,doc:'document',workspace:'default',scope:'http://127.0.0.1/'};
   const pages=new Map([[2,source],[3,target]]);secondTarget=()=>pages.set(4,target);
+  additionalSources=async()=>{
+   for(const [id,url,title,price] of [[5,'https://detail.1688.com/offer/123.html','角阀 A','12'],[6,'https://www.goofish.com/item?id=321&tracking=no','角阀 B','18']]){
+    const tab=await ctx.newPage();await tab.route(url,r=>r.fulfill({contentType:'text/html; charset=utf-8',body:'<h1>'+title+'</h1><meta itemprop="price" content="'+price+'">'}));await tab.goto(url);pages.set(id,tab);
+   }
+  };
   globalThis.chrome={
    runtime:{onMessage:{addListener:fn=>{listener=fn;}},onMessageExternal:{addListener:fn=>{external=fn;}}},permissions:{contains:async()=>true},
    storage:{session:{get:async()=>({pair}),remove:async()=>{pair=null;}}},
-   tabs:{query:async({url})=>[...pages].filter(([,p])=>new URL(p.url()).hostname.endsWith(url.includes('meituan')?'meituan.com':url.includes('goofish')?'goofish.com':'1688.com')).map(([id,p])=>({id,url:p.url()}))},
+   tabs:{query:async({url})=>[...pages].filter(([,p])=>new URL(p.url()).hostname.endsWith(url.includes('meituan')?'meituan.com':url.includes('goofish')?'goofish.com':url.includes('detail.1688')?'detail.1688.com':'s.1688.com')).map(([id,p])=>({id,url:p.url()}))},
    scripting:{executeScript:async({target,func,args})=>[{result:await pages.get(target.tabId).evaluate(func,args[0])}]}
   };
   await import('../browser-connector/worker.js');
@@ -53,7 +58,7 @@ try{
   await page.reload();
   await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
- await page.getByRole('button',{name:'开始 1688 选品'}).click();assert.match(await page.locator('#goal').inputValue(),/1688/);await page.locator('#close-dialog').click();
+ await page.getByRole('button',{name:'提出目标'}).click();assert.equal(await page.locator('#goal').inputValue(),'');await page.locator('#close-dialog').click();
  assert.equal(await page.locator('#cloud-source').count(),0);
  await page.getByText('读取这件商品',{exact:true}).click();
  await page.locator('#cloud-draft').waitFor();assert.equal(await page.locator('#cloud-draft [name=title]').inputValue(),'周末双人餐');
@@ -72,6 +77,19 @@ try{
  await target.locator('textarea').fill('');
  await page.getByRole('button',{name:'填写到闲鱼，停在发布前'}).click();await page.getByText(/已填入网页的标题/).waitFor();
  assert.deepEqual(await target.locator('input,textarea').evaluateAll(els=>els.map(el=>el.value)),['周末双人餐','限周末预约','110.50']);assert.notEqual(await target.title(),'submitted');
- await page.getByText('连接与权限',{exact:true}).click();await page.getByRole('button',{name:'断开美团和闲鱼连接'}).click();await page.getByText('已断开美团和闲鱼，可在扩展里重新连接。',{exact:true}).waitFor();
+ if(simulated){
+  await additionalSources();
+  await page.getByRole('button',{name:'提出目标'}).click();await page.locator('#goal').fill('比较候选商品报价');await page.locator('#submit-task').click();
+  await page.locator('.goal-tabs [data-tab=tasks]').click();await page.getByRole('button',{name:'读取或补入候选报价'}).click();
+  const dialog=page.getByRole('dialog',{name:'比较候选报价'});
+  await dialog.getByRole('button',{name:'从浏览器读取'}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.offer-fields').length===3);
+  const urls=await dialog.locator('[name=source]').evaluateAll(inputs=>inputs.map(i=>i.value).sort());
+  assert.deepEqual(urls,['https://detail.1688.com/offer/123.html','https://example.meituan.com/deal','https://www.goofish.com/item?id=321']);
+  await dialog.getByRole('button',{name:'保存并继续比较'}).click();await dialog.waitFor({state:'hidden'});
+  await page.getByText('3 / 3 步完成',{exact:true}).waitFor();
+  await page.goto('http://127.0.0.1/#ai-config/market');await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
+ }
+ await page.getByText('连接与权限',{exact:true}).click();await page.getByRole('button',{name:'断开工作空间连接'}).click();await page.getByText('已断开工作空间连接。',{exact:true}).waitFor();
  console.log((simulated?'SIMULATED EXTENSION API: ':'')+'PASS bound document, tab discovery, product read, existing draft protection, field fill without submit, disconnect');
 }finally{await ctx?.close();await rm(dir,{recursive:true,force:true});}

@@ -1,10 +1,10 @@
-export function createCloudBrowser({startPick,esc,render,currentWorkspace,post,refresh}){
+export function createCloudBrowser({esc,render,currentWorkspace,post,refresh}){
  let connected=false,tabs=[],product=null,message='',source='',target='',pending=false,workspace=currentWorkspace();
  let draft={title:'',price:'',description:'',confirmed:false};
  const receiptKey=()=> 'cloud-published-draft-'+currentWorkspace();
  function fills(){try{return JSON.parse(localStorage.getItem(receiptKey()))||[];}catch{return [];}}
  function saveFills(rows){localStorage.setItem(receiptKey(),JSON.stringify(rows));}
- let detecting=false,pairedDuringCheck=false;
+ let setupExpanded=false,detecting=false,pairedDuringCheck=false;
  let direct=false,installed=false,nextScan=0,sourcePicked=false,targetPicked=false;
  const extension='mbbgfpiakdofbpceibocmbbnenocfdeb';
  function external(action,extra={}){
@@ -30,10 +30,9 @@ export function createCloudBrowser({startPick,esc,render,currentWorkspace,post,r
    document.dispatchEvent(new CustomEvent('commerce-cloud-command',{detail:JSON.stringify({op,id,...extra})}));
   });
  }
- function reset(){sourcePicked=false;targetPicked=false;direct=false;connected=false;tabs=[];product=null;source='';target='';draft={title:'',description:'',price:'',confirmed:false};}
+ function reset(){setupExpanded=false;sourcePicked=false;targetPicked=false;direct=false;connected=false;tabs=[];product=null;source='';target='';draft={title:'',description:'',price:'',confirmed:false};}
  function candidates(role){
-  const opened=tabs.filter(t=>t.role===role),matched=opened.filter(t=>t.eligible!==false);
-  return !matched.length&&role==='source'?opened:matched;
+  return tabs.filter(t=>t.role===role&&t.eligible!==false);
  }
  function tabChoice(role,current,label,id){
   const list=candidates(role);if(list.length<2)return '';
@@ -42,30 +41,20 @@ export function createCloudBrowser({startPick,esc,render,currentWorkspace,post,r
  function choose(role,current,picked){
   const list=candidates(role);return picked&&list.some(t=>String(t.id)===current)?current:list.length===1?String(list[0].id):'';
  }
- function tabStatus(role,label){
-  if(!connected)return '连接工作空间后自动识别';
-  const list=candidates(role);
-  if(!list.length)return '等待打开'+label;
-  if(list.length===1)return (list[0].eligible===true?'已匹配 · ':list[0].eligible===false?'待核对页面 · ':'已打开 · ')+list[0].title;
-  return '已找到 '+list.length+' 个候选页面';
- }
  function page(){
   if(workspace!==currentWorkspace()){reset();installed=false;nextScan=0;message='';workspace=currentWorkspace();}
-  const receipts=fills(),picks=tabs.filter(t=>t.role==='sourcing').length;
-  const row=(name,description,status,action)=>`<article class="browser-platform"><div><h3>${name}</h3><p>${description}</p><small>${esc(status)}</small></div><div>${action}</div></article>`;
-  return `<section class="panel" data-cloud-workspace="${esc(workspace)}"><div class="section-title"><div><h2>浏览器连接器</h2><p>在同一个 Chrome 窗口中工作，平台页面由连接器识别。</p></div><span class="badge">${connected?'当前浏览器已连接':installed?'已识别扩展':'浏览器连接'}</span></div>
-  <div class="browser-platforms">
-  ${row('1688','从目标打开品类搜索，采集报价并比较商品。',picks?'已发现 '+picks+' 个搜索页':installed?'连接器可用 · 按目标打开搜索':'从目标启动选品','<button class="primary" data-cloud-pick>开始 1688 选品</button>')}
-  ${row('美团联盟','读取商品详情与履约条件。',tabStatus('source','商品详情页'),source?`<button class="secondary" data-cloud="read">${tabs.find(t=>String(t.id)===source)?.eligible===false?'尝试读取此页':'读取这件商品'}</button>`:'<a class="secondary" href="https://union.meituan.com/" target="_blank" rel="noopener noreferrer">打开美团联盟 ↗</a>')}
-  ${tabChoice('source',source,'选择本次要读取的美团商品','cloud-source')}
-  ${row('闲鱼','将核对后的标题、描述和售价填入发布草稿。',tabStatus('target','发布表单'),'<a class="secondary" href="https://www.goofish.com/" target="_blank" rel="noopener noreferrer">打开闲鱼 ↗</a>')}
-  </div>
-  <details class="cloud-setup"><summary>${connected?'连接与权限':'安装扩展或连接工作空间'}</summary><p><a class="text-button" href="/cloud-browser.zip" download="云电脑浏览器连接器.zip">下载 Chrome 扩展</a>，解压后在 chrome://extensions 加载解压后的目录。1688 可从目标直接启动。美团和闲鱼首次使用时，在本页点击扩展图标 →「连接此工作台」，一次授予两个平台权限。</p><p>在支持的工作台地址，同一标签页刷新后会恢复本工作空间的连接。</p>${connected?'<button class="text-button" data-cloud="disconnect">断开美团和闲鱼连接</button>':''}</details>
-  <button class="text-button" data-cloud="tabs" ${pending?'disabled':''}>刷新连接状态</button>
+  const receipts=fills();
+  const sources=candidates('source'),targets=candidates('target');
+  return `<section class="panel browser-connector" data-cloud-workspace="${esc(workspace)}"><div class="section-title"><div><h2>浏览器连接器</h2><p>在目标里说清要找什么、准备在哪里卖。连接器会识别当前窗口里的搜索结果、商品和发布表单。</p></div><span class="badge">${connected?'当前浏览器已连接':installed?'扩展已安装':'等待连接'}</span></div>
+  <div class="browser-goal"><div><h3>从目标开始</h3><p>例如「在 1688 找高性价比的露营灯」</p></div><button class="primary" data-new>提出目标</button></div>
+  <div class="section-title"><h3>当前窗口</h3><button class="text-button" data-cloud="tabs" ${pending?'disabled':''}>刷新连接状态</button></div>
+  ${connected?`<p class="field-hint">${[tabs.filter(t=>t.role==='sourcing').length+' 个搜索页',sources.length+' 个商品页',targets.length+' 个发布表单'].join(' · ')}</p>${tabChoice('source',source,'选择要读取的商品','cloud-source')}${source?`<div class="action-buttons"><button class="secondary" data-cloud="read">读取这件商品</button><small>${esc(tabs.find(t=>String(t.id)===source)?.title||'')}</small></div>`:sources.length?'':'<p>打开商品详情页后，这里会显示可读取的商品。</p>'}`:'<p class="field-hint">连接后可直接读取已打开的商品。</p>'}
+  <details class="cloud-setup" ${!connected||setupExpanded?'open':''}><summary>${connected?'连接与权限':'连接此工作空间'}</summary><p><a class="text-button" href="/cloud-browser.zip" download="云电脑浏览器连接器.zip">下载 Chrome 扩展</a>，解压后在 chrome://extensions 加载目录。在本页点扩展图标，选择「连接此工作台」。同一窗口里的受支持页面会自动识别。</p>${connected?'<button class="text-button" data-cloud="disconnect">断开工作空间连接</button>':''}</details>
   <p role="status" class="field-hint">${esc(message)}</p>
   ${receipts.map(saved=>`<form data-cloud-receipt="${esc(saved.id)}" class="panel"><h3>核实闲鱼上架结果</h3><p>货源：${esc(saved.sourceName)}</p><label>最终商品标题<input name="title" required maxlength="200" value="${esc(saved.title)}"></label><label>实际上架售价（元）<input name="price" required type="number" step="0.01" min="0.01" value="${(saved.priceFen/100).toFixed(2)}"></label><label>闲鱼店铺 ID<input name="shopId" required maxlength="160"></label><label>发布成功的商品编号<input name="listingId" required maxlength="160"></label><label class="confirm-check"><input required type="checkbox">已在闲鱼核实该商品正在出售</label><button class="primary">确认已上架，生成备券提醒</button></form>`).join('')}
   ${product?`<form id="cloud-draft"><p>来自 ${esc(product.host)} · ${esc(product.title)} · 来源报价 ${esc(product.price||'未识别')}</p>
-  ${tabChoice('target',target,'选择本次填写的闲鱼发布页','cloud-target')}
+  ${!targets.length?'<p>要准备销售草稿，请在同一窗口打开<a href="https://www.goofish.com/" target="_blank" rel="noopener noreferrer">闲鱼发布表单 ↗</a>。</p>':''}
+  ${tabChoice('target',target,'选择本次填写的发布页','cloud-target')}
   <label>标题<input name="title" required maxlength="160" value="${esc(draft.title)}"></label><label>描述、履约方式与使用条件<textarea name="description" required maxlength="2000">${esc(draft.description)}</textarea></label>
   <label>闲鱼售价（元）<input type="number" name="price" required step="0.01" min="0.01" max="99999999.99" value="${esc(draft.price)}"></label><label class="confirm-check"><input name="confirmed" type="checkbox" required ${draft.confirmed?'checked':''}>我已核对商品允许在闲鱼转售，并可按上述条件履约</label>
   <button class="primary" ${pending||!target?'disabled':''}>填写到闲鱼，停在发布前</button></form>`:''}</section>`;
@@ -79,7 +68,7 @@ export function createCloudBrowser({startPick,esc,render,currentWorkspace,post,r
     const status=await external('status');
     if(currentWorkspace()!==startWorkspace)return;
     installed=!!status?.installed;direct=!!status?.paired;
-    if(installed&&!direct){reset();message='使用美团或闲鱼时，请在扩展里连接一次此工作空间。';return;}
+    if(installed&&!direct){reset();message='请在扩展中连接此工作空间。';return;}
     const found=await command(op);if(currentWorkspace()!==startWorkspace)return;
     const previousSource=source,previousTarget=target;tabs=found;connected=true;
     source=choose('source',source,sourcePicked);target=choose('target',target,targetPicked);
@@ -87,13 +76,13 @@ export function createCloudBrowser({startPick,esc,render,currentWorkspace,post,r
     if(target!==previousTarget){draft.confirmed=false;targetPicked=false;}
     if(!silent||!beforeConnected)message='';
    }
-   if(op==='disconnect'){await command(op);reset();nextScan=Date.now()+10000;message='已断开美团和闲鱼，可在扩展里重新连接。';}
+   if(op==='disconnect'){await command(op);reset();nextScan=Date.now()+10000;message='已断开工作空间连接。';}
    if(op==='read'){
     const tab=source;product=null;const result=await command(op,{tab:Number(tab)});if(currentWorkspace()!==startWorkspace||source!==tab)return;product=result;draft={title:product.title,description:product.terms,price:'',confirmed:false};message='已读取商品，请核对履约条件与销售价格。';
    }
    if(op==='fill'){const filled={...draft},ref=product;await command(op,{tab:Number(target),draft:filled});
     if(currentWorkspace()!==startWorkspace)return;
-    saveFills([...fills(),{id:crypto.randomUUID(),title:filled.title,priceFen:Math.round(Number(filled.price)*100),sourceName:ref.host+' · '+ref.title}]);
+    if(/(^|\.)meituan\.com$/.test(ref.host))saveFills([...fills(),{id:crypto.randomUUID(),title:filled.title,priceFen:Math.round(Number(filled.price)*100),sourceName:ref.host+' · '+ref.title}]);
     message='已填入网页的标题、描述和售价。请切换到闲鱼核对类目、图片和其他必填项，发布由你操作。';}
   }catch(e){if(currentWorkspace()!==startWorkspace)return;if(!silent||connected||op!=='tabs')message=e.message;if(op==='tabs')reset();}
   finally{pending=false;detecting=false;if(!silent||before!==JSON.stringify([installed,connected,tabs,message,source,target]))render(true);if(pairedDuringCheck){pairedDuringCheck=false;if(!connected&&document.querySelector('[data-cloud-workspace]'))act('tabs');}}
@@ -105,7 +94,10 @@ export function createCloudBrowser({startPick,esc,render,currentWorkspace,post,r
  }
  setInterval(autoScan,1100);window.addEventListener('focus',()=>{nextScan=0;autoScan();});
  document.addEventListener('commerce-cloud-ready',()=>{if(!document.querySelector('[data-cloud-workspace]'))return;if(detecting)pairedDuringCheck=true;else act('tabs');});
- document.addEventListener('click',e=>{if(e.target.closest('[data-cloud-pick]')){startPick();return;}const b=e.target.closest('[data-cloud]');if(b)act(b.dataset.cloud);});
+ document.addEventListener('click',e=>{const b=e.target.closest('[data-cloud]');if(b)act(b.dataset.cloud);});
+ document.addEventListener('toggle',e=>{
+  if(connected&&e.target.isConnected&&e.target.matches('.cloud-setup'))setupExpanded=e.target.open;
+ },true);
  document.addEventListener('change',e=>{
   if(e.target.id==='cloud-source'){source=e.target.value;sourcePicked=!!source;product=null;message='';render(true);}
   if(e.target.id==='cloud-target'){target=e.target.value;targetPicked=!!target;draft.confirmed=false;render(true);}
@@ -118,5 +110,24 @@ export function createCloudBrowser({startPick,esc,render,currentWorkspace,post,r
    saveFills(fills().filter(n=>n.id!==id));message='已登记上架，备券通知已保存';await refresh();render(true);
   }catch(err){message=err.message;render(true);}finally{button.disabled=false;}
  }else if(e.target.id==='cloud-draft'){e.preventDefault();act('fill');}});
- return {page};
+ async function readQuotes(){
+  const scope=currentWorkspace(),status=await external('status');
+  if(status&&!status.paired)throw Error('请在浏览器连接器中连接当前工作空间，然后重新读取。');
+  const request=(op,extra)=>status?.paired?external(op,extra):command(op,extra);
+  const found=await request('tabs');
+  if(!Array.isArray(found))throw Error('浏览器连接器未响应，请检查工作空间连接。');
+  const pages=found.filter(t=>t.role==='source'&&t.eligible===true);
+  const results=await Promise.allSettled(pages.slice(0,50).map(t=>request('read',{tab:t.id})));
+  if(scope!==currentWorkspace())throw Error('工作空间已切换，请重新读取。');
+  const quotes=new Map();
+  for(const entry of results){
+   if(entry.status!=='fulfilled'||!entry.value)continue;
+   const row=entry.value,amount=/^\s*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*元?\s*$/.exec(row.price);
+   if(!amount||Number(amount[1])<=0||!row.url||!row.title)continue;
+   quotes.set(row.url,{sku:row.title,price:Number(amount[1]),source:row.url});
+  }
+  if(!quotes.size)throw Error('尚未读到带明确单价的商品。请在同一窗口打开商品详情，再点「从浏览器读取」。');
+  return [...quotes.values()];
+ }
+ return {page,readQuotes};
 }
