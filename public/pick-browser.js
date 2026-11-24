@@ -3,7 +3,7 @@ import {readOfferCards} from './offer-cards.js';
 
 export function createPickBrowser({state,act,esc,render}){
  const extension='mbbgfpiakdofbpceibocmbbnenocfdeb',jobs=new Map();
- const estimates=new Map();
+ const estimates=new Map(),lifetime=12*60*60*1000;
  const storageKey=g=>'pick1688-'+g.id+'-'+g.version;
  function session(g){try{return JSON.parse(sessionStorage.getItem(storageKey(g)));}catch{return null;}}
  function openSearch(g,tab){
@@ -11,25 +11,29 @@ export function createPickBrowser({state,act,esc,render}){
   const key=crypto.randomUUID(),url=sourcingURL(query)+'#pick-'+key;
   try{sessionStorage.setItem(storageKey(g),JSON.stringify({key,at:Date.now()}));}catch{}
   jobs.delete(storageKey(g));
-  if(tab&&!tab.closed)tab.location.replace(url);else jobs.set(storageKey(g),{last:0,message:'浏览器拦截了新窗口。允许此站点打开弹窗后，点「打开 1688 搜索」。'});
+  if(tab&&!tab.closed)tab.location.replace(url);else jobs.set(storageKey(g),{last:0,phase:'unavailable',message:'浏览器拦截了新窗口。允许此站点打开弹窗后，点「打开 1688 搜索」。'});
   render(true);
  }
  function reserve(){const tab=window.open('about:blank','_blank');if(tab)tab.opener=null;return tab;}
  function scan(g,entry){
   const key=storageKey(g),s=session(g),node=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
-  if(!s||!node||node.status!=='needs_input'||g.paused||!entry||entry.busy||Date.now()-entry.last<2500||Date.now()-s.at>180000)return;
+  if(!s||!node||node.status!=='needs_input'||g.paused||!entry||entry.busy||Date.now()-entry.last<2500||Date.now()-s.at>lifetime)return;
   entry.last=Date.now();entry.busy=true;const query=sourcingIntent(g.text).query;
   const getReply=()=>new Promise((resolve,reject)=>{
-   if(!globalThis.chrome?.runtime?.sendMessage){reject(Error('未检测到选品扩展。可直接复制搜索结果，或安装扩展自动读回。'));return;}
+   if(!globalThis.chrome?.runtime?.sendMessage){resolve({phase:'install',message:'需要浏览器连接器读取已打开的 1688 标签页。安装一次后，后续目标会自动采集。'});return;}
    chrome.runtime.sendMessage(extension,{op:'pick1688',key:s.key,query},res=>{
-    if(chrome.runtime.lastError||!res)reject(Error('未连接选品扩展。可复制搜索结果，或安装新版扩展后刷新工作台。'));else resolve(res);
+    if(chrome.runtime.lastError||!res)resolve({phase:'install',message:'工作台尚未连到选品扩展。请在打开 1688 的同一 Chrome 中安装或启用连接器。'});else resolve(res);
    });
   });
   getReply().then(async res=>{
    if(jobs.get(key)!==entry||!state.goals.some(x=>x.id===g.id&&x.version===g.version)||session(g)?.key!==s.key)return;
+   if(!res.phase&&(res.rows?.length||0)<2){
+    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.2.0 后，工作台会自动向下浏览并读取更多商品。';
+    if(!res.rows?.length)return;
+   }else entry.phase=res.phase||'scanning';
    const rows=res.rows||[];
    if(!rows.length){entry.message=res.message;return;}
-   if(rows.every(r=>node.offers?.some(o=>o.url===r.url&&o.price===r.price))){entry.message='当前页面只读到已保存的商品。向下滚动，让另一件商品的名称和报价显示出来。';return;}
+   if(rows.every(r=>node.offers?.some(o=>o.url===r.url&&o.price===r.price))){entry.message=res.message||'当前报价已保存，继续检测搜索页。';return;}
    await act('browserOffers',{expectedVersion:g.version,query,rows:res.rows},g.id);
    entry.message='已读回商品报价。';
   }).catch(e=>{entry.message=e.message;}).finally(()=>{entry.busy=false;
@@ -45,11 +49,16 @@ export function createPickBrowser({state,act,esc,render}){
   }
   if(n.status!=='needs_input'||g.paused)return '';
   const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});const entry=jobs.get(key);
-  const expired=session(g)&&Date.now()-session(g).at>180000;
-  const count=n.offers?.length||0;
-  return `<section class="pick-import"><h3>等待「${esc(intent.query)}」的商品报价</h3><p><strong>已保存 ${count}/2 件</strong> · 还需 ${2-count} 件不同商品。每件需要商品名、页面报价和 1688 详情链接。</p>${count?`<p>已保存：${n.offers.map(r=>esc(r.title)+' · ¥'+esc(r.price)).join('、')}</p>`:''}<p role="status">${esc(expired?'自动读取已暂停。重新打开搜索即可继续。':entry.message||'公开搜索页暂未提供足够报价。打开搜索后可从当前页面带回商品。')}</p><button class="primary" data-pick-open="${esc(g.id)}">打开 1688 搜索 ↗</button>
-  <label>粘贴选中的商品卡片<textarea data-pick-paste="${esc(g.id)}" rows="2" placeholder="从已打开的 1688 搜索页复制商品卡片，可逐件粘贴。收齐两件后自动比较。"></textarea></label>
-  <details><summary>使用 Chrome 自动读回</summary><p><a href="/cloud-browser.zip" download="工作台浏览器连接器.zip">下载选品扩展</a>，解压，在 chrome://extensions 开启开发者模式并加载解压后的目录。回到工作台刷新，再点「打开 1688 搜索」。支持 Codespaces、项目 GitHub Pages 与本机地址。</p></details></section>`;
+  const attached=session(g),expired=attached&&Date.now()-attached.at>lifetime;
+  const phase=expired?'expired':entry.phase||'scanning',count=n.offers?.length||0;
+  const headline={scanning:'正在自动收集报价',install:'需要连接浏览器',verify:'等待 1688 页面验证',login:'等待 1688 登录',unavailable:'等待搜索页就绪',exhausted:'当前结果中的报价不足',expired:'本次浏览器采集已结束'}[phase]||'正在接收商品报价';
+  const install=phase==='install';
+  return `<section class="pick-import" tabindex="-1"><h3>${esc(headline)} · ${esc(intent.query)}</h3><p><strong>已保存 ${count}/2 件</strong> · 收齐两件不同商品的名称、报价和详情链接后，总控会自动比较。</p>${count?`<p>已保存：${n.offers.map(r=>esc(r.title)+' · ¥'+esc(r.price)).join('、')}</p>`:''}
+  <p role="status">${esc(!attached||expired?'从这个目标打开搜索页，工作台会识别并跟进该标签页。':entry.message||'正在检测搜索页与浏览器连接器。')}</p>
+  ${!attached||expired||phase==='unavailable'?`<button class="primary" data-pick-open="${esc(g.id)}">打开本目标的 1688 搜索 ↗</button>`:''}
+  ${install?`<p><a href="/cloud-browser.zip" download="工作台浏览器连接器.zip">下载 Chrome 连接器</a></p><p>解压后在 chrome://extensions 开启开发者模式，加载解压后的目录，再刷新工作台。保持 1688 搜索页打开，采集会自动继续。</p>`:''}
+  <details><summary>手动补充报价（可选）</summary><label>粘贴选中的商品卡片<textarea data-pick-paste="${esc(g.id)}" rows="2" placeholder="从 1688 搜索结果复制商品卡片，可逐件粘贴。"></textarea></label></details></section>`;
+
  }
  document.addEventListener('click',e=>{const b=e.target.closest('[data-pick-open]');if(b){const g=state.goals.find(g=>g.id===b.dataset.pickOpen);if(g)openSearch(g,reserve());}});
  document.addEventListener('submit',e=>{
@@ -72,6 +81,13 @@ export function createPickBrowser({state,act,esc,render}){
   field.disabled=true;try{await act('browserOffers',{expectedVersion:g.version,query:sourcingIntent(g.text).query,rows},g.id);}
   catch(error){notice.textContent=error.message;}finally{field.disabled=false;}
  });
- setInterval(()=>{const g=state.goals.find(x=>x.id===state.goal);if(g?.mode==='flow')scan(g,jobs.get(storageKey(g)));},3000);
+ function checkGoals(){
+  for(const g of state.goals){
+   if(g.mode!=='flow'||g.paused||!g.flow.nodes.some(n=>n.capability==='sourcing.1688'&&n.status==='needs_input')||!session(g))continue;
+   const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});scan(g,jobs.get(key));
+  }
+ }
+ setInterval(checkGoals,3000);window.addEventListener('focus',checkGoals);
+
  return {reserve,openSearch,panel,hasQuery:g=>!!sourcingIntent(g.text)?.query};
 }

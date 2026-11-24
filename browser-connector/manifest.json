@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "电商工作台 · 云电脑连接器",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "连接当前工作台，读取打开的美团商品并填写闲鱼商品草稿。",
   "permissions": [
     "activeTab",
