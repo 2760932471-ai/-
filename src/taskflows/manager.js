@@ -1,3 +1,5 @@
+import {sourcingIntent,cleanOffers,rankedOffers} from '../../public/sourcing.js';
+import {searchPublicOffers} from './offer-search.js';
 import {randomUUID} from 'node:crypto';
 import {flowDefaults,flowTemplates,flowCapabilities} from './catalog.js';
 import {validateFlow,proposeFlow} from './planner.js';
@@ -9,7 +11,7 @@ const now=()=>new Date().toISOString();
 const fail=message=>{throw Object.assign(new Error(message),{status:409});};
 const output=(title,body,evidence='本次实际执行结果')=>({status:'succeeded',summary:title,missing:[],artifacts:[{title,body,evidence}]});
 const blocked=message=>({status:'needs_input',summary:message,missing:[message],artifacts:[]});
-export function createTaskflowManager({getData,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill}){
+export function createTaskflowManager({getData,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill,offerSearch=searchPublicOffers}){
  let pumping=false;
  const settings=()=>({...flowDefaults(),...getData().flowSettings});
  const find=(d,id)=>d.goals.find(g=>g.id===id&&g.mode==='flow')||fail('任务流目标不存在');
@@ -49,6 +51,16 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(g.flow.status==='planning_failed'){g.flow.status='planning';g.flow.error=null;}
    else for(const n of g.flow.nodes)if(['failed','needs_input'].includes(n.status)&&(!input.nodeId||input.nodeId===n.id)&&!n.imageJobId){n.status='pending';n.error=null;}
    sync(g);
+  }else if(kind==='browserOffers'){
+   const node=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
+   if(!node||node.status!=='needs_input'||g.stage==='completed')fail('选品步骤状态已更新');
+   if(g.flow.calls>=g.flow.policy.maxCalls)fail('已达到调用上限，请重新规划');
+   const query=sourcingIntent(g.text)?.query;
+   if(!query||query!==input.query)fail('品类已经变化，请重新打开搜索页');
+   const rows=cleanOffers(input.rows);
+   if(rows.length<2)throw new Error('至少需要两个不同商品的有效报价和 1688 详情链接');
+   node.offers=rows;node.offerSource='浏览器搜索页';node.status='pending';node.missing=[];node.error=null;
+   event(g,'已从 1688 搜索页读回 '+rows.length+' 个商品，继续比较。');sync(g);
   }else if(kind==='supplyOffers'){
    const node=g.flow.nodes.find(n=>n.id===input.nodeId);
    if(g.stage==='completed'||node?.capability!=='product.compare'||node.status!=='needs_input')fail('此比较步骤已更新，请查看当前进度');
@@ -85,7 +97,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  async function saveTemplate(id,input){return transaction(d=>{const g=find(d,id);if(g.version!==input.expectedVersion)fail('目标版本已变化');if(g.stage!=='completed')fail('验收目标后才可沉淀为复用模板');const plan=validateFlow(g.flow.plan,settings());d.flowTemplates??=[];const existing=d.flowTemplates.find(t=>t.sourceGoal===g.id&&t.sourceVersion===g.version);if(existing)return existing;const t={...plan,id:randomUUID(),description:plan.rationale,sourceGoal:g.id,sourceVersion:g.version,createdAt:now()};d.flowTemplates.push(t);return t;});}
  async function plan(id){
   const snapshot=await transaction(d=>{const g=find(d,id);if(g.paused||g.flow.status!=='planning')return null;g.flow.status='planning_running';g.flow.planningAttempts++;g.flow.policy=structuredClone(settings());g.flow.model=currentModel()?structuredClone(currentModel()):null;sync(g);return g;});if(!snapshot)return;
-  let proposed,error;try{if(settings().modelId&&!snapshot.flow.model)throw new Error('总控模型未就绪，请测试连接或选择基础组合');proposed=await proposeFlow(snapshot,snapshot.flow.policy,snapshot.flow.model,modelCall,getData().flowTemplates||[]);}catch(e){error=String(e.message).slice(0,800);}
+  let proposed,error;try{if(settings().modelId&&!snapshot.flow.model&&!sourcingIntent(snapshot.text))throw new Error('总控模型未就绪，请测试连接或选择基础组合');proposed=await proposeFlow(snapshot,snapshot.flow.policy,snapshot.flow.model,modelCall,getData().flowTemplates||[]);}catch(e){error=String(e.message).slice(0,800);}
   await transaction(d=>{const g=find(d,id);if(g.version!==snapshot.version)return;
    if(error){g.flow.status='planning_failed';g.flow.error=error;event(g,'任务流规划未完成：'+error);sync(g);return;}
    g.flow.plan=proposed;g.flow.nodes=proposed.nodes.map(n=>({...n,status:'pending',attempts:0,artifactIds:[]}));g.flow.status='running';g.flow.error=null;
@@ -96,6 +108,26 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   const d=getData(),direct=new Set(n.dependsOn.flatMap(id=>g.flow.nodes.find(x=>x.id===id)?.artifactIds||[]));
   const observations=g.artifacts.filter(a=>a.version===g.version&&direct.has(a.id));
   const input={...inputs(g),observations,question:n.objective,knowledgeRecall:g.flow.nodes.find(x=>x.recall)?.recall};
+  if(n.capability==='sourcing.1688'){
+   const criteria=sourcingIntent(g.text);
+   if(!criteria?.query)return blocked('请在目标中说明想找的品类，例如水龙头或露营灯');
+   let offers=n.offers,source=n.offerSource||'公开搜索页',reason='';
+   if(!offers?.length){
+    try{offers=cleanOffers(await offerSearch(criteria.query));}
+    catch{reason='服务端未能读取公开搜索页。';}
+   }
+   let discovery;
+   if(!offers||offers.length<2){
+    const local=g.flow.nodes.find(x=>x.discovery)?.discovery;
+    if(local?.candidates?.length){assertResearch(d,local);const localRows=cleanOffers(local.candidates.map(c=>({title:c.name||c.sku,price:c.price,url:c.source.match(/https:\/\/detail\.1688\.com\/offer\/\d+\.html/)?.[0],terms:'已登记的供应商报价'})));
+     if(localRows.length>=2){offers=localRows;source='已登记的 1688 资料';discovery=local;}
+    }
+   }
+   if(!offers||offers.length<2)return blocked(reason+'需要搜索页上至少两件商品的报价。打开 1688，登录或完成页面提示后可用浏览器连接器读回。');
+   const ranked=rankedOffers(offers,criteria);
+   const body=ranked.map((r,i)=>[(i+1)+'. '+r.title,'展示报价 ¥'+r.price,r.terms,r.repurchase!==null?'页面回购率 '+r.repurchase+'%':'回购率未披露',r.margin!==null?'估算单件收益 ¥'+r.margin.toFixed(2):'',r.url].filter(Boolean).join(' · ')).join('\n');
+   return {...output('1688 选品清单 · '+criteria.query,body+'\n按展示价和可见回购率初筛。阶梯报价、规格及起订条件需核对。'+(ranked[0].margin===null?'缺少售价或其他单件成本，利润待算。':'估算采用目标售价 '+criteria.retail+' 元，其他单件成本 '+criteria.expenses+' 元。'),source),offers,offerSource:source,discovery};
+  }
   if(n.capability==='market.offers'){
    const text=g.messages?.filter(m=>m.role==='human'&&m.intent==='change').at(-1)?.text||g.text;
    const names={meituan_union:'美团联盟',meituan:'美团',xianyu:'闲鱼',taobao:'淘宝',douyin:'抖店','1688':'1688'};
@@ -112,7 +144,8 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const discovery=collectResearch(getData(),g),body=[...recall.hits.map(h=>`[${h.id}] ${h.title} v${h.revision}\n${h.text}\n来源：${h.source}`),...(web?.results||[]).map((r,i)=>`[web-${i}] ${r.title}\n${r.snippet}\n${r.url}（未核验网页线索）`),...discovery.candidates.map(c=>`${c.name||c.sku}：${c.price} 元；${c.source}`)].join('\n\n');
    return {...output('证据收集记录',body||'当前没有匹配资料；后续任务必须明确缺口，不能虚构事实。'),recall,discovery,notice,web};
   }
-  const discovery=g.flow.nodes.find(x=>x.discovery)?.discovery;if(discovery?.status==='found'&&!input.candidates)input.candidates=discovery.candidates;
+  const pick=g.flow.nodes.find(x=>x.capability==='sourcing.1688'&&x.status==='succeeded');
+  const discovery=pick?.offers?.length?{status:'found',candidates:rankedOffers(pick.offers,sourcingIntent(g.text)).map(r=>({sku:r.sku,name:r.title,price:r.price,source:r.url}))}:g.flow.nodes.find(x=>x.discovery)?.discovery;if(discovery?.status==='found'&&!input.candidates)input.candidates=discovery.candidates;
   if(n.capability==='analysis.reason'){
    const model=g.flow.model;if(!model)return blocked('通用分析需要连接总控模型；基础组合不假装具备模型推理能力。');
    if(!observations.length&&!input.knowledgeRecall?.hits?.length)return blocked('尚无可分析的来源；请连接知识库、搜索或业务数据。');
@@ -142,7 +175,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   let result,error;try{const live=find(getData(),id);if(live.version!==snapshot.g.version||live.paused)throw new Error('目标暂停或已更新');sources.resolve(live);if(snapshot.g.flow.model){const current=getData().models.find(m=>m.id===snapshot.g.flow.model.id);if(current?.revision!==snapshot.g.flow.model.revision)throw new Error('模型配置已变化，请重新规划');}result=await perform(snapshot.g,snapshot.n);if(!result||!['succeeded','needs_input','needs_capability','waiting_external'].includes(result.status)||!Array.isArray(result.artifacts))throw new Error('能力返回格式不正确');}catch(e){error=String(e.message).slice(0,1000);}
   await transaction(d=>{const g=find(d,id),r=d.runs.find(r=>r.id===snapshot.n.runId);if(g.version!==snapshot.g.version){r.status='discarded';r.error='目标已变更，旧结果不应用';r.finishedAt=now();return;}
    const n=g.flow.nodes.find(n=>n.id===nodeId);n.status=error?'failed':result.status;n.error=error||(['needs_input','needs_capability'].includes(result.status)?result.summary:null);n.finishedAt=now();n.missing=result?.missing||[];
-   if(result)for(const key of ['recall','discovery','preparation','imageJobId'])if(result[key])n[key]=result[key];
+   if(result)for(const key of ['recall','discovery','preparation','imageJobId','offers','offerSource'])if(result[key])n[key]=result[key];
    for(const a of result?.artifacts||[]){const artifact={...a,id:randomUUID(),goalId:id,taskId:nodeId,version:g.version,status:'draft',agent:'taskflow',agentName:n.title,runId:n.runId};g.artifacts.push(artifact);n.artifactIds.push(artifact.id);}
    Object.assign(r,{status:n.status,result:result||null,error:n.error,finishedAt:n.finishedAt});event(g,n.title+'：'+(n.error||result.summary));sync(g);
   });

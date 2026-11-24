@@ -28,7 +28,7 @@ import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
 const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:g.mode==='flow'?'目标总控':'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
-export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall,imageCall,imageReady,imageTest,flowSkillCall}={}){
+export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,storeCall,nativeStoreCall,imageCall,imageReady,imageTest,flowSkillCall,offerSearch}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
  data.externalSkills??=[];data.employees??=defaultEmployees();data.models??=[];data.sources??=initialSources();data.materials??=[];data.knowledge??=initialKnowledge();
@@ -48,7 +48,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const storeOperations=createStoreOperations({getData:()=>data,transaction,nativeStoreCall});
  const research=createResearchManager({getData:()=>data,transaction,sources,event,integrations});
  const production=createProductionManager({getData:()=>data,transaction,images,event});
- const flows=createTaskflowManager({getData:()=>data,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall:flowSkillCall});
+ const flows=createTaskflowManager({getData:()=>data,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall:flowSkillCall,offerSearch});
  await transaction(d=>{for(const g of d.goals.filter(g=>g.mode==='flow')){for(const n of g.flow.nodes.filter(n=>n.status==='needs_input'&&!n.missing)){n.missing=d.runs.find(r=>r.id===n.runId)?.result?.missing||[];}if(g.flow.status==='planning_running'){g.flow.status='planning_failed';g.flow.error='服务重启中断规划，请重新规划';}for(const n of g.flow.nodes)if(n.status==='running'){n.status='failed';n.error='服务重启中断执行，请核查后重试';}}});
  const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources,knowledge,images});
  await transaction(async d=>{await team.syncPending(d);for(const g of d.goals)if(g.mode==='team'&&isResearchGoal(g)&&!g.research){g.research=collectResearch(d,g);if(['plan','draft'].includes(g.stage))g.researchRequest={id:randomUUID(),version:g.version,question:g.text};}});

@@ -1,5 +1,6 @@
 import {skillDefinitions} from '../workforce/skills.js';
 export const flowCapabilities=[
+ {id:'sourcing.1688',name:'1688 商品筛选',description:'读取品类搜索页真实报价，按价格与已披露的回购率筛选；有售价与其他成本时估算单件收益。'},
  {id:'evidence.collect',name:'检索知识与外部线索',description:'自动检索目标知识库，并在搜索服务可用时查询网页。保留来源，不把网页摘要当成已核验事实。'},
  {id:'market.offers',name:'跨平台选品',description:'检索授权选品网关的商品并核对目标渠道、转售与履约条件。'},
  {id:'analysis.reason',name:'通用分析与方法设计',description:'根据当前问题和来源选择分析方法，输出有依据的判断、假设和缺口；需要可用模型。'},

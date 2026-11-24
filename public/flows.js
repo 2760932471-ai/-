@@ -1,4 +1,4 @@
-export function createFlowsUI({state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal}){
+export function createFlowsUI({pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal}){
  const labels={planning:'正在规划',planning_running:'模型规划中',planning_failed:'规划未完成',running:'执行中',pending:'等待前置任务',succeeded:'已完成',failed:'执行失败',needs_input:'需要处理',needs_capability:'新能力待验证',waiting_external:'等待图片结果',blocked:'存在阻塞',review:'待验收',completed:'已验收'};
  const label=s=>labels[s]||s;
  function nodeIssue(n){
@@ -14,6 +14,7 @@ export function createFlowsUI({state,api,esc,badge,act,receive,refresh,render,to
   const retry='<button class="secondary" data-flow-retry="'+id+'" data-goal="'+goal+'">重试此步</button>';
   if(n.status==='needs_input'&&n.capability==='product.compare')return '<button class="primary" data-offer-input="'+id+'" data-goal="'+goal+'">补入候选报价并继续</button><button class="text-button" data-view="ai-config/sources">管理供应商来源</button>'+retry;
   if(n.status==='needs_capability')return '<button class="secondary" data-flow-replan="'+goal+'">换一种方法重新规划</button>';
+  if(n.capability==='sourcing.1688')return '';
   if(n.imageJobId)return '<button class="secondary" data-view="ai-config/images">查看图片任务</button>';
   if(n.capability==='analysis.reason'&&!g.flow.model)return '<button class="primary" data-view="flows">选择总控模型</button><small>设置完成后，重新规划以使用新模型。</small>';
   const dest=n.capability==='market.offers'?'ai-config/market':n.capability.startsWith('image.')&&/服务|模型/.test(n.error||'')?'ai-config/images':null;
@@ -27,7 +28,8 @@ export function createFlowsUI({state,api,esc,badge,act,receive,refresh,render,to
   return `<section class="flow-panel" aria-label="任务流执行"><header class="flow-overview"><div><span class="flow-kicker">任务执行</span><h2>${esc(f.plan?.name||'规划执行步骤')}</h2></div>${badge(status,true)}</header>
    <div class="flow-progress"><progress value="${done}" max="${nodes.length||1}" aria-label="已完成步骤"></progress><span>${done} / ${nodes.length} 步完成</span></div>
    ${f.error?`<div class="flow-attention"><strong>规划未完成</strong><p>${esc(f.error)}</p><button class="secondary" data-view="flows">查看总控设置</button></div>`:''}
-   ${blocked.map(n=>`<div class="flow-attention"><span class="flow-kicker">需要介入 · 第 ${nodes.indexOf(n)+1} 步</span><h3>${esc(n.title)}</h3><p>${esc(nodeIssue(n))}</p><div class="action-buttons">${intervention(g,n)}</div></div>`).join('')}
+   ${blocked.filter(n=>n.capability!=='sourcing.1688'||!pickBrowser.hasQuery(g)||g.paused||n.status!=='needs_input').map(n=>`<div class="flow-attention"><span class="flow-kicker">需要介入 · 第 ${nodes.indexOf(n)+1} 步</span><h3>${esc(n.title)}</h3><p>${esc(nodeIssue(n))}</p><div class="action-buttons">${intervention(g,n)}</div></div>`).join('')}
+   ${pickBrowser.panel(g)}
    <ol class="execution-steps">${nodes.map((n,i)=>{
     const dep=n.dependsOn.map(id=>nodes.find(x=>x.id===id)).filter(Boolean);
     return `<li class="flow-node" data-flow-node="${esc(n.id)}" data-status="${esc(n.status)}"><span class="step-mark" aria-hidden="true">${n.status==='succeeded'?'✓':i+1}</span><div class="step-body"><div class="section-title"><strong>${esc(n.title)}</strong>${badge(label(n.status),active===n)}</div>${n.status==='pending'&&dep.some(x=>x.status!=='succeeded')?`<small>正在等「${dep.filter(x=>x.status!=='succeeded').map(x=>esc(x.title)).join('、')}」完成</small>`:''}<details><summary>执行详情</summary><p>${esc(n.objective)} · ${esc(n.acceptance)}</p><small>${esc(state.flows?.capabilities.find(c=>c.id===n.capability)?.name||n.capability)} · 已执行 ${n.attempts} 次</small>${n.runId?`<button class="text-button" data-run="${esc(n.runId)}">查看本步运行记录</button>`:''}${n.capabilityProposal?`<p>${esc(n.capabilityProposal.description)}</p><pre>${esc(n.capabilityProposal.implementation)}</pre><p>验证要求：${esc(n.capabilityProposal.tests)}</p>`:''}</details></div></li>`;
@@ -56,7 +58,7 @@ export function createFlowsUI({state,api,esc,badge,act,receive,refresh,render,to
   const done=f.nodes.filter(n=>n.status==='succeeded').length;
   return `<aside class="goal-context"><button class="secondary details-toggle details-close" data-details>← 返回协作</button>
    <section class="context-section"><h3>目标执行</h3><p>${badge(g.paused?'已暂停':label(f.status),true)}</p><p>${done} / ${f.nodes.length} 项任务完成</p>
-   ${blocked.length?`<p>待处理 · ${blocked.map(n=>esc(n.title)).join('、')}</p><button class="text-button" data-tab="tasks">查看阻塞与处理方式 →</button>`:''}</section>
+   ${blocked.length?`<p>待处理 · ${blocked.filter(n=>n.capability!=='sourcing.1688'||!pickBrowser.hasQuery(g)||g.paused||n.status!=='needs_input').map(n=>esc(n.title)).join('、')}</p><button class="text-button" data-tab="tasks">查看阻塞与处理方式 →</button>`:''}</section>
    ${/上架|铺货/.test(g.text)?`<section class="context-section"><h3>店铺上架</h3><p>此流程尚未向店铺提交上架。已有商品可在授权店铺中核对并提交。</p><button class="text-button" data-view="ai-config/stores">打开店铺商品管理 →</button></section>`:''}
    ${g.stage!=='completed'?`<button class="secondary" data-action="pause">${g.paused?'恢复执行':'暂停后续执行'}</button>`:''}</aside>`;
  }

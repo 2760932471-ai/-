@@ -1,10 +1,34 @@
 {
   "manifest_version": 3,
   "name": "电商工作台 · 云电脑连接器",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "连接当前工作台，读取打开的美团商品并填写闲鱼商品草稿。",
-  "permissions": ["activeTab", "scripting", "storage"],
-  "optional_host_permissions": ["https://*.meituan.com/*", "https://*.goofish.com/*"],
-  "action": {"default_popup": "pair.html"},
-  "background": {"service_worker": "worker.js", "type": "module"}
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "https://*.meituan.com/*",
+    "https://*.goofish.com/*"
+  ],
+  "action": {
+    "default_popup": "pair.html"
+  },
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqV1XA30J1HIvQXQofmi3Y7DRDKZzhPFxlfJWSXEo/nynEuMpKS5wHC9aq3AqIOqKEoDe7RilSjObQf+lqKb/dyCGrrg/O23kguOtxL8FghX/1Twbmbjya5Iz3/wRAtHrpJBYZBrh/vpfYMfZenhJhKJHH5TyU43zhKL4IZHzpNEV2I4i5IPEUrO6bGpmi1LAToNakxnupinntVAr1WXQcM1sKdfzGfnGn3o6v5fESy/1EKDUXQNr3qhTZqc3RZygrM+F4o8N1tp6uTQC/PG1bcFVNyYQd+ed4r07rcJFrruHrKDFgqBponuEYKPXQTZh7ovh+NWn15ozr3hgAYZJ8wIDAQAB",
+  "host_permissions": [
+    "https://s.1688.com/*"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://*.app.github.dev/*",
+      "https://2760932471-ai.github.io/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*"
+    ]
+  }
 }

@@ -1,3 +1,4 @@
+import {readOfferCards} from "./offer-cards.js";
 import {readProduct,fillDraft} from './pages.js';
 const patterns={source:'https://*.meituan.com/*',target:'https://*.goofish.com/*'};
 async function run(cmd,sender){
@@ -21,4 +22,19 @@ async function run(cmd,sender){
 }
 chrome.runtime.onMessage.addListener((cmd,sender,reply)=>{
  run(cmd,sender).then(value=>reply({value}),err=>reply({error:err.message}));return true;
+});
+
+// The goal opens a search tab with a random fragment. Only return visible offers
+// from that exact search, in the sender's window. No site session data is read.
+chrome.runtime.onMessageExternal?.addListener((cmd,sender,reply)=>{
+ if(!sender.tab||!cmd||cmd.op!=='pick1688'||typeof cmd.key!=='string'||!/^[a-z0-9-]{32,64}$/i.test(cmd.key)||typeof cmd.query!=='string'||!cmd.query||cmd.query.length>60)return;
+ const searchOrigin=new URL(sender.url).origin;
+ if(searchOrigin==='https://2760932471-ai.github.io'&&!new URL(sender.url).pathname.startsWith('/-/'))return;
+ (async()=>{
+  const tabs=await chrome.tabs.query({url:'https://s.1688.com/*',windowId:sender.tab.windowId});
+  const tab=tabs.find(t=>{const u=new URL(t.url);return u.pathname==='/selloffer/offer_search.htm'&&u.searchParams.get('keywords')===cmd.query&&u.hash==='#pick-'+cmd.key;});
+  if(!tab)return {message:'请打开此目标的 1688 搜索页。登录后若页面跳转，请从目标重新打开搜索。'};
+  const [{result}]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readOfferCards});
+  return {rows:result,message:'等待搜索结果。请在 1688 完成登录，并滚动到能看到商品标题和报价的位置。'};
+ })().then(reply,()=>reply({message:'当前页面无法读取，请重新打开此目标的搜索页。'}));return true;
 });
