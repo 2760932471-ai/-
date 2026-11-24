@@ -1,4 +1,4 @@
-import {sourcingIntent,sourcingURL,rankedOffers} from './sourcing.js';
+import {sourcingIntent,sourcingURL,rankedOffers,selectedOffer,offerPhoto} from './sourcing.js';
 import {readOfferCards} from './offer-cards.js';
 
 export function createPickBrowser({state,act,esc,render}){
@@ -17,6 +17,16 @@ export function createPickBrowser({state,act,esc,render}){
   render(true);
  }
  function reserve(){const tab=window.open('about:blank','_blank');if(tab)tab.opener=null;return tab;}
+ async function readSelected(sku){
+  const runtime=globalThis.chrome?.runtime;
+  if(!runtime?.sendMessage)return null;
+  return new Promise(resolve=>{
+   const timer=setTimeout(()=>resolve(null),9000);
+   try{runtime.sendMessage(extension,{op:'workspaceBrowser',action:'offerDetail',workspace:sessionStorage.getItem('workspaceId')||'default',sku},r=>{
+    clearTimeout(timer);resolve(!runtime.lastError&&r?.value?.sku===sku?r.value:null);
+   });}catch{clearTimeout(timer);resolve(null);}
+  });
+ }
  function scan(g,entry){
   const key=storageKey(g),s=session(g),node=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
   if(!s||!node||node.status!=='needs_input'||g.paused||!entry||entry.busy||Date.now()-entry.last<2500||Date.now()-s.at>lifetime)return;
@@ -30,7 +40,7 @@ export function createPickBrowser({state,act,esc,render}){
   getReply().then(async res=>{
    if(jobs.get(key)!==entry||!state.goals.some(x=>x.id===g.id&&x.version===g.version)||session(g)?.key!==s.key)return;
    if(!res.phase&&(res.rows?.length||0)<2){
-    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.5.0 后，工作台会自动向下浏览并读取更多商品。';
+    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.6.0 后，工作台会自动向下浏览并读取更多商品。';
     if(!res.rows?.length)return;
    }else entry.phase=res.phase||'scanning';
    const rows=res.rows||[];
@@ -40,7 +50,15 @@ export function createPickBrowser({state,act,esc,render}){
     return;
    }
    if(rows.every(r=>node.offers?.some(o=>o.url===r.url&&o.price===r.price))){entry.message=res.message||'当前报价已保存，继续检测搜索页。';return;}
-   await act('browserOffers',{expectedVersion:g.version,query,rows:res.rows},g.id);
+   if(rows.length+(node.offers?.length||0)>=2&&g.flow.nodes.some(n=>/^(copy|image)\./.test(n.capability))){
+    const chosen=selectedOffer([...rows,...(node.offers||[])],sourcingIntent(g.text),g.text);
+    if(chosen){
+     entry.message='正在打开所选商品详情，读取属性和参考图。';render(true);
+     const detail=await readSelected(chosen.sku);
+     if(detail)rows.unshift({...chosen,facts:detail.facts,photo:offerPhoto(detail.photo)||chosen.photo});
+    }
+   }
+   await act('browserOffers',{expectedVersion:g.version,query,rows},g.id);
    entry.message='已读回商品报价。';
   }).catch(e=>{entry.message=e.message;}).finally(()=>{entry.busy=false;
    if(jobs.get(key)===entry&&entry.shown!==entry.message){entry.shown=entry.message;render(true);}
@@ -111,13 +129,25 @@ export function createPickBrowser({state,act,esc,render}){
  }
  function checkGoals(){
   for(const g of state.goals){
-   if(g.mode!=='flow'||g.paused||!g.flow.nodes.some(n=>n.capability==='sourcing.1688'&&n.status==='needs_input'))continue;
+   if(g.mode!=='flow'||g.paused)continue;
+   const missing=g.flow.nodes.find(n=>n.status==='needs_input'&&(n.error?.includes('所选商品的参考图')||n.detailDeadline)&&n.preparation?.candidate);
+   if(missing&&g.id===state.goal&&!document.hidden){
+    const sku=missing.preparation.candidate.sku,key=storageKey(g)+'-detail-'+sku;
+    if(jobs.get(key)?.attempt!==missing.attempts||!jobs.has(key)){
+     const request={attempt:missing.attempts,busy:true};jobs.set(key,request);
+     readSelected(sku).then(detail=>{if(detail&&(missing.detailDeadline||offerPhoto(detail.photo)))return act('offerDetail',{detail,expectedVersion:g.version},g.id);}).catch(()=>{}).finally(()=>{request.busy=false;});
+    }
+   }
+   if(!g.flow.nodes.some(n=>n.capability==='sourcing.1688'&&n.status==='needs_input'))continue;
    const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});const entry=jobs.get(key),saved=session(g);
    if(saved&&Date.now()-saved.at<=lifetime)scan(g,entry);
    else if(g.id===state.goal&&!document.hidden){if(saved)sessionStorage.removeItem(key);autoOpen(g,entry);}
   }
  }
- setInterval(checkGoals,3000);window.addEventListener('focus',checkGoals);
+ setInterval(checkGoals,3000);window.addEventListener('focus',()=>{
+  for(const key of jobs.keys())if(key.includes('-detail-')&&!jobs.get(key).busy)jobs.delete(key);
+  checkGoals();
+ });
 
  return {reserve,openSearch,panel,hasQuery:g=>!!sourcingIntent(g.text)?.query};
 }

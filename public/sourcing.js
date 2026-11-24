@@ -16,6 +16,23 @@ export function sourcingURL(query){
  const url=new URL('https://s.1688.com/selloffer/offer_search.htm');
  url.searchParams.set('keywords',query);url.searchParams.set('charset','utf8');return url.href;
 }
+// 1688 offer photography is served from the ibank directories on these CDNs.
+export function offerPhoto(value){
+ try{
+  const u=new URL(value,'https://cbu01.alicdn.com');
+  if(typeof value!=='string'||!/^(?:https:)?\/\//i.test(value)||u.protocol!=='https:'||u.username||u.password||u.port||!['cbu01.alicdn.com','cbu02.alicdn.com','img.alicdn.com'].includes(u.hostname)||!/^\/img\/ibank\/[a-zA-Z0-9_.\/-]+\.(?:png|jpe?g|webp)$/i.test(u.pathname))return '';
+  return u.origin+u.pathname;
+ }catch{return '';}
+}
+export function offerFacts(values){
+ const field=/^(?:镜框材质|镜架材质|镜片材质|镜架颜色|镜片颜色|镜框形状|镜框款式|镜架款式|镜片款式|镜框颜色|框架材质|眼镜结构|镜架结构|材质|颜色|款式|型号|规格|尺寸|风格|镜宽|镜腿长度|镜框宽度|重量|包装|表面工艺|适用人群|形状|光源类型|供电方式|接口|安装方式)[：:]\s*[^<>\n：:]{1,48}$/;
+ return [...new Set((Array.isArray(values)?values:[]).filter(v=>typeof v==='string').map(v=>v.trim()).filter(v=>field.test(v)&&!/(?:待确认|未知|全网最低|100%|顶级|国家级)/.test(v)))].slice(0,8);
+}
+export function selectedOffer(rows,criteria,text){
+ const ranked=rankedOffers(cleanOffers(rows),criteria);
+ if(ranked[0]?.margin!=null&&/利润|毛利|收益|盈利/.test(text))ranked.sort((a,b)=>b.margin-a.margin);
+ return ranked[0];
+}
 export function cleanOffers(rows){
  if(!Array.isArray(rows))return [];
  const seen=new Set(),out=[];
@@ -23,7 +40,7 @@ export function cleanOffers(rows){
   let url;try{url=new URL(row?.url);}catch{continue;}
   const id=url.pathname.match(/^\/offer\/(\d{1,24})\.html\/?$/)?.[1];
   if(url.origin!=='https://detail.1688.com'||!id||url.username||url.password||seen.has(id)||typeof row.title!=='string'||!row.title.trim()||typeof row.price!=='number'||!(row.price>0&&row.price<=1e8))continue;
-  seen.add(id);out.push({sku:id,title:row.title.trim().slice(0,160),price:row.price,url:url.origin+'/offer/'+id+'.html',terms:String(row.terms||'').slice(0,120),repurchase:Number.isFinite(row.repurchase)&&row.repurchase>=0&&row.repurchase<=100?row.repurchase:null});
+  seen.add(id);out.push({...(offerPhoto(row.photo)?{photo:offerPhoto(row.photo)}:{}),...(offerFacts(row.facts).length?{facts:offerFacts(row.facts)}:{}),sku:id,title:row.title.trim().slice(0,160),price:row.price,url:url.origin+'/offer/'+id+'.html',terms:String(row.terms||'').slice(0,120),repurchase:Number.isFinite(row.repurchase)&&row.repurchase>=0&&row.repurchase<=100?row.repurchase:null});
  }
  return out.slice(0,40);
 }
@@ -49,11 +66,15 @@ export function sourcingReport(g){
  const selected=prep?rows.find(r=>r.sku===prep.candidate.sku):rows[0];
  if(!selected)return null;
  const pictures=g.artifacts.filter(a=>a.version===g.version&&a.imageJobId&&imageSteps.some(n=>n.imageJobId===a.imageJobId));
- const facts=(prep?.facts||[]).filter(f=>!/^商品品类/.test(f));
+ const copy=g.flow.nodes.find(n=>n.capability==='copy.selling_points'&&n.preparation?.candidate?.sku===selected.sku)?.preparation;
+ const facts=(copy?.facts||prep?.facts||selected.facts||[]).filter(f=>!/^商品品类/.test(f));
  const terms=['增压','防堵','手持','可调节','旋转','可拆洗','折叠','便携','快充','套装'].filter(term=>selected.title.includes(term)).slice(0,3);
- const pitch=facts.length?facts.slice(0,3).join('；'):terms.length?'供应商标题提到'+terms.map(t=>'「'+t+'」').join('、')+'，建议核对实物后用于详情文案。':'当前报价只列出了商品名称；建议先展示外观，性能卖点待核实。';
+ const copyStep=g.flow.nodes.find(n=>n.capability==='copy.selling_points'&&n.status==='succeeded');
+ const draft=copyStep&&g.artifacts.find(a=>a.version===g.version&&copyStep.artifactIds?.includes(a.id));
+ const tagline=draft?.body.match(/^推荐文案：(.+)$/m)?.[1];
+ const pitch=tagline|| (facts.length?facts.slice(0,3).join('；'):terms.length?'供应商标题提到'+terms.map(t=>'「'+t+'」').join('、')+'，建议核对实物后用于详情文案。':'当前报价只列出了商品名称；建议先展示外观，性能卖点待核实。');
  const lines=['从 '+rows.length+' 款'+criteria.query+'里，我推荐「'+selected.title+'」。','采购页展示价 ¥'+selected.price+'；'+(selected.repurchase===null?'页面未披露回购率。':'页面回购率 '+selected.repurchase+'%。')+(selected.margin===null?'缺少售价或其他成本，暂时无法判断哪款利润最高。':'按售价 ¥'+criteria.retail+'、其他单件成本 ¥'+criteria.expenses+'，估算单件收益 ¥'+selected.margin.toFixed(2)+'。'),'卖点建议：'+pitch];
- const compositions={'白底商品展示':'白底居中，突出完整商品轮廓','卖点特写主图':'右侧展示商品，左侧呈现特点与局部细节','活动价格主图':'上方展示商品，下方信息带突出已确认的促销文案'};
+ const compositions={'白底商品展示':'白底居中，突出完整商品轮廓','卖点特写主图':'右侧展示商品，左侧呈现特点与局部细节','淘宝商品封面':'大幅商品实拍搭配短标题与底部信息栏','活动价格主图':'上方展示商品，下方信息带突出已确认的促销文案'};
  if(pictures.length)lines.push('图片交付：'+pictures.map(a=>a.title+(a.layoutName?' · '+(compositions[a.layoutName]||a.layoutName):'')).join('、')+'。'+(pictures.some(a=>a.title.includes('概念'))?'上架前请核对图中外观、颜色与实际发货配件。':'请核对实物与最终版面后上架。'));
  return {text:lines.join('\n\n'),imageIds:pictures.map(a=>a.id),source:selected.url};
 }

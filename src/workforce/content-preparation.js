@@ -34,7 +34,14 @@ export function prepareContent(d,g,{rankedCandidates,selectionReason}={}){
  const selectedSku=sku||hits.find(h=>h.sku)?.sku||'';hits=hits.filter(h=>!h.sku||h.sku===selectedSku);
  const evidence=[],facts=[];const add=(text,source,origin)=>{text=String(text).trim().slice(0,120);if(!text||placeholderFact(text)||facts.includes(text)||facts.length>=8)return;facts.push(text);evidence.push({text,source,...origin});};
  if(manual?.confirmed&&manual.source&&!placeholderFact(manual.source)){for(const f of manual.facts||[])if(!placeholderFact(f))add(f,manual.source,{kind:'manual'});}
- if(candidate){for(const [k,label]of [['material','材质'],['connector','接口 / 规格']])if(candidate[k]&&!/^(未知|待确认)$/.test(candidate[k]))add(label+'：'+candidate[k],candidate.source,candidate.provenance);}
+ if(candidate){
+  for(const fact of candidate.facts||[])add(fact,candidate.source,{kind:'offer'});
+  if(/眼镜|太阳镜|墨镜|老花镜/.test(candidate.name||'')){
+   for(const token of ['双梁','半框','无框','全框','方框','圆框','飞行员框','渐变镜片','深色镜片']){
+    if(candidate.name.includes(token)&&!new RegExp('非'+token+'|不是'+token).test(candidate.name))add('款式：'+token,candidate.source,{kind:'offer'});
+   }
+  }
+  for(const [k,label]of [['material','材质'],['connector','接口 / 规格']])if(candidate[k]&&!/^(未知|待确认)$/.test(candidate[k]))add(label+'：'+candidate[k],candidate.source,candidate.provenance);}
  for(const h of hits){for(const line of h.text.split('\n')){
   if(/示例|虚构|待补|待确认|未知|通用知识|例如|不得|不能|未提供|不代表|尚未/.test(line))continue;
   const match=line.match(/^\s*(?:[-*#]+\s*)?((?:材质|接口|规格|尺寸|颜色|包装|数量|工艺|适用范围|安装方式|产品特点|商品特点|卖点)\s*[:：].{1,105})$/);
@@ -44,6 +51,6 @@ export function prepareContent(d,g,{rankedCandidates,selectionReason}={}){
  if(!facts.length&&productName)add('商品品类：'+productName,candidate?.source||'用户目标 / 商品名称（仅明确品类，未确认规格）',candidate?.provenance||{kind:candidate?'offer':'goal'});
  const source=[...new Set(evidence.map(e=>e.source))].join('；').slice(0,500)||'尚未找到具体商品资料';
  const images=d.materials.filter(m=>m.type==='image'&&!materialProblem(m,d.sources.find(s=>s.id===m.sourceId))&&selectedSku&&m.sku===selectedSku);
- return {productName,channel:channelFromGoal(g),audience,facts,source,evidence,selectedSku,selectionReason:candidate?(selectionReason||'按已有报价从低到高初筛；未核实质量、库存和运费，不代表综合最优。'):'',candidate: candidate?{name:candidate.name,sku:candidate.sku,source:candidate.source,price:candidate.price}:null,referenceId:images[0]?.id||null,checked:{knowledge:docs.length,materials:materials.length},suggested:true,method:'自动检索与规则提取',duration:manual?.duration||30,confirmed:false,missing:productName?[]:['尚未识别具体商品，请说明品类或商品名称'],boundary:facts.every(f=>f.startsWith('商品品类：'))?'仅明确商品品类，画面按概念示意制作，不添加材质、性能、认证和售后承诺。':'特点来自所列资料；目标人群为建议，图片发布前仍需核对实物。'};
+ return {productName,offerPhoto:candidate?.photo||null,channel:channelFromGoal(g),audience,facts,source,evidence,selectedSku,selectionReason:candidate?(selectionReason||'按已有报价从低到高初筛；未核实质量、库存和运费，不代表综合最优。'):'',candidate: candidate?{name:candidate.name,sku:candidate.sku,source:candidate.source,price:candidate.price}:null,referenceId:images[0]?.id||null,checked:{knowledge:docs.length,materials:materials.length},suggested:true,method:'自动检索与规则提取',duration:manual?.duration||30,confirmed:false,missing:productName?[]:['尚未识别具体商品，请说明品类或商品名称'],boundary:facts.every(f=>f.startsWith('商品品类：'))?'仅明确商品品类，画面按概念示意制作，不添加材质、性能、认证和售后承诺。':'特点来自所列资料；目标人群为建议，图片发布前仍需核对实物。'};
 }
 export function assertContentEvidence(d,p){for(const e of p?.evidence||[]){if(e.kind==='knowledge'){const doc=d.knowledge.documents.find(x=>x.id===e.id);if(!doc?.enabled||doc.revision!==e.revision||!d.knowledge.bases.some(b=>b.id===doc.baseId&&b.enabled))throw new Error('内容来源已变更，请重新整理资料');}if(e.kind==='material'){const m=d.materials.find(x=>x.id===e.id);if(!m||m.revision!==e.revision||materialProblem(m,d.sources.find(s=>s.id===m.sourceId)))throw new Error('内容素材已变更，请重新整理资料');}}}

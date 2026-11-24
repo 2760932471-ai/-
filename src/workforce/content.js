@@ -28,7 +28,20 @@ export function executeContent(id,input){
   const candidates=[`${b.productName}｜${facts[0]}`,`${facts[0]}｜${b.productName}${facts[1]?'｜'+facts[1]:''}`,`${b.productName}｜${facts.join(' / ')}`];
   body=candidates.map((title,i)=>`方案 ${i+1} · ${['商品名称优先','首项特点优先','规格信息完整'][i]}\n${title}\n字符数：${Array.from(title).length}；${Array.from(title).length>60?'较长，发布前请按实际平台限制精简':'仍需按实际平台标题限制核对'}。`).join('\n\n')+'\n\n当前未查询平台词库、搜索量或排名，不保证 SEO 效果。';metrics={...metrics,candidates};
  }else if(id==='copy.selling_points'){
+  if(input.autoContent?.candidate){
+   const points=facts.filter(f=>!f.startsWith('商品品类：'));
+   const short=points.map(f=>f.replace(/^([^：:]+)[：:]\s*(.+)$/,(all,key,value)=>{
+    if(key==='镜框形状')return value+(value.endsWith('框')?'型':'框型');
+    if(key==='款式'||key==='风格')return value+'设计';
+    if(key.endsWith('颜色'))return value+key.replace(/颜色$/,'');
+    if(key.endsWith('材质'))return value+key.replace(/材质$/,'');
+    return all;
+   }));
+   body=points.length?'推荐文案：'+short.slice(0,3).join('，')+'。\n\n'+points.map((f,i)=>'卖点 '+(i+1)+'：'+short[i]+'\n供应商资料：'+f).join('\n\n'):'当前来源只披露了品名。可用标题：'+b.productName+'。功能型卖点待详情属性核实。';
+   body+='\n商品详情：'+input.autoContent.candidate.source;
+  }else{
   body=facts.map((f,i)=>`卖点 ${i+1}\n短文案：${f}\n说明：选购 ${b.productName} 时可核对这一项：${f}。\n依据：输入事实 [${i+1}]；来源：${b.source}`).join('\n\n')+'\n\n应用收益、适用场景和性能优势如无资料支持，暂不补写。';
+  }
  }else if(id==='copy.detail'){
   body=`01 首屏\n${b.productName}\n${facts[0]}\n画面：经核验的商品实拍，避免改变结构。\n\n02 参数一览\n${numbered}\n\n03 细节展示\n${facts.map((f,i)=>`模块 ${i+1}：${f}\n配图需求：能证明事实 [${i+1}] 的实拍或规格标注。`).join('\n')}\n\n04 选购前核对\n请对照上述参数与实际需求；尺寸、安装条件和兼容性未提供时，先咨询客服并核对供应商资料。\n\n05 售后说明\n待补：适用店铺的退换、质保和安装政策。不得直接承诺免费安装或无条件退换。\n\n设计交接清单\n商品实拍、规格图、事实依据、已确认售后政策。当前交付为文字稿。`;
  }else if(id==='copy.video'){

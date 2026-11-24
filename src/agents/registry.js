@@ -19,8 +19,8 @@ export function validateConfig(input,previous){
 }
 export function publicConfig(c){return {...c,credentialConfigured:!!(c.secretEnv&&process.env[c.secretEnv]),sampleAvailable:!!builtins[c.id],color:'neutral'};}
 function publicAddress(address){if(isIP(address)===4){const [a,b]=address.split('.').map(Number);return !(a===0||a===10||a===127||a>=224||a===169&&b===254||a===172&&b>=16&&b<=31||a===192&&b===168||a===100&&b>=64&&b<=127||a===198&&(b===18||b===19));}const s=address.toLowerCase();return isIP(address)===6&&s!=='::1'&&s!=='::'&&!s.startsWith('fc')&&!s.startsWith('fd')&&!s.startsWith('fe8')&&!s.startsWith('fe9')&&!s.startsWith('fea')&&!s.startsWith('feb')&&!s.startsWith('::ffff:');}
-export async function validateDestination(endpoint,resolve=lookup){
- const url=new URL(endpoint);const allowed=(process.env.AGENT_ALLOWED_HOSTS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+export async function validateDestination(endpoint,resolve=lookup,hosts){
+ const url=new URL(endpoint);const allowed=hosts||(process.env.AGENT_ALLOWED_HOSTS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||isIP(url.hostname)||!allowed.includes(url.hostname.toLowerCase()))throw new Error('该Agent域名未在服务端AGENT_ALLOWED_HOSTS中授权');
  const records=await resolve(url.hostname,{all:true});if(!records.length||records.some(r=>!publicAddress(r.address)))throw new Error('Agent地址不能指向本机、内网或保留网络');
  return url;

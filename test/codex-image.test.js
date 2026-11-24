@@ -45,3 +45,16 @@ test('Codex login probe and native PNG job use distinct requests and preserve re
  assert.equal(job.calls.find(r=>r.method==='turn/start').params.input[1].url,'data:image/png;base64,'+png);
  await assert.rejects(runCodexImage(input,protocol({sendImage:false})),/没有原生图片/);
 });
+
+test('Codex receives the supplier photo bytes from the selected offer',async()=>{
+ const url='https://cbu01.alicdn.com/img/ibank/123.png';
+ const input={referenceUrl:url,offerPhoto:true,prompt:'基于白底图制作淘宝主图',size:'1024x1024'};
+ let ref;
+ const options={resolve:async()=>[{address:'8.8.8.8'}],fetch:async(address,request)=>{
+  assert.equal(address,url);assert.equal(request.redirect,'error');
+  return new Response(Buffer.from(png,'base64'),{headers:{'content-type':'image/png'}});
+ },codexCall:async i=>{ref=i.reference;return png;}};
+ await generateImage({provider:'codex_local'},input,options);
+ assert.equal(ref.mime,'image/png');assert.equal(ref.buffer.toString('base64'),png);
+ await assert.rejects(generateImage({provider:'codex_local'},{...input,referenceUrl:'https://wrong.invalid/123.png'},options));
+});

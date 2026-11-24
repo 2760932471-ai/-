@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "电商工作台 · 云电脑连接器",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "连接工作台，自动收集 1688 搜索报价、识别美团商品与闲鱼发布表单。",
   "permissions": [
     "activeTab",

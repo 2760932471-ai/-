@@ -1,5 +1,5 @@
-import {sourcingReport,sourcingIntent,cleanOffers,rankedOffers} from '../../public/sourcing.js';
-import {searchPublicOffers} from './offer-search.js';
+import {selectedOffer,offerFacts,offerPhoto,sourcingReport,sourcingIntent,cleanOffers,rankedOffers} from '../../public/sourcing.js';
+import {searchPublicOffers,fetchOfferDetail} from './offer-search.js';
 import {randomUUID} from 'node:crypto';
 import {flowDefaults,flowTemplates,flowCapabilities} from './catalog.js';
 import {validateFlow,proposeFlow} from './planner.js';
@@ -12,7 +12,7 @@ const fail=message=>{throw Object.assign(new Error(message),{status:409});};
 const output=(title,body,evidence='本次实际执行结果')=>({status:'succeeded',summary:title,missing:[],artifacts:[{title,body,evidence}]});
 const quoteWait=count=>'已保存 '+count+'/2 件不同商品的有效报价，还需 '+(2-count)+' 件。每件须包含商品名称、页面报价和 1688 商品详情链接。';
 const blocked=message=>({status:'needs_input',summary:message,missing:[message],artifacts:[]});
-export function createTaskflowManager({getData,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill,offerSearch=searchPublicOffers}){
+export function createTaskflowManager({getData,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill,offerSearch=searchPublicOffers,offerDetail=fetchOfferDetail}){
  let pumping=false;
  const settings=()=>({...flowDefaults(),...getData().flowSettings});
  const find=(d,id)=>d.goals.find(g=>g.id===id&&g.mode==='flow')||fail('任务流目标不存在');
@@ -50,6 +50,19 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.offers?.length);
    const checkpoint=pick?{offers:pick.offers,offerSource:pick.offerSource,discovery:pick.discovery}:g.flow.pickCheckpoint;
    reset(g);if(checkpoint)g.flow.pickCheckpoint=checkpoint;event(g,'正在重新选择或创建任务流；已完成的历史成果保留。');}
+  else if(kind==='remakeMain'){
+   const main=g.flow.nodes.find(n=>n.capability==='image.main'&&n.status==='succeeded'&&n.imageJobId===input.previousImageJob);
+   const job=main&&d.imageJobs?.find(j=>j.id===main.imageJobId);
+   if(g.stage==='completed'||job?.mode!=='concept'||!g.flow.nodes.some(n=>n.capability==='sourcing.1688'&&n.offers?.length))fail('当前没有待替换的选品概念主图');
+   const downstream=g.flow.nodes.filter(n=>n.dependsOn.includes(main.id));
+   if(downstream.some(n=>n.capability!=='result.compile'||n.status==='running'))fail('当前下游任务仍在使用这张图');
+   for(const n of [main,...downstream]){
+    for(const a of g.artifacts.filter(a=>n.artifactIds.includes(a.id)))a.status='superseded';
+    n.status='pending';n.error=null;n.missing=[];n.artifactIds=[];
+   }
+   delete main.imageJobId;main.imageRetryId=randomUUID();main.requireReference=true;
+   event(g,'已保留选品结果，正在按所选商品的参考图重做淘宝主图。');sync(g);
+  }
   else if(kind==='retry'){
    if(g.paused||g.stage==='completed')fail('请先恢复未结束的目标');
    if(g.flow.status==='planning_failed'){g.flow.status='planning';g.flow.error=null;}
@@ -78,6 +91,18 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(merged.length<2){node.error=quoteWait(merged.length);node.missing=[node.error];}
    else{node.status='pending';node.missing=[];node.error=null;}
    event(g,merged.length<2?node.error:'已收齐 '+merged.length+' 件不同商品的报价，继续比较。');sync(g);
+  }else if(kind==='offerDetail'){
+   const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='succeeded');
+   const waiting=g.flow.nodes.filter(n=>n.status==='needs_input'&&n.preparation?.candidate?.sku===input.detail?.sku&&(n.detailDeadline||n.capability.startsWith('image.')&&!n.imageJobId&&n.error?.includes('所选商品的参考图')));
+   if(!waiting.length||!pick)fail('商品详情请求已变更');
+   const product=selectedOffer(pick.offers,sourcingIntent(g.text),g.text);
+   if(product?.sku!==input.detail.sku)fail('商品已变更');
+   const updated=mergeDetail(product,input.detail);
+   pick.offers=pick.offers.map(o=>o.sku===product.sku?updated:o);
+   for(const n of waiting){
+    if(n.detailDeadline||updated.photo){n.status='pending';n.error=null;n.missing=[];}
+   }
+   sync(g);
   }else if(kind==='supplyOffers'){
    const node=g.flow.nodes.find(n=>n.id===input.nodeId);
    if(g.stage==='completed'||node?.capability!=='product.compare'||node.status!=='needs_input')fail('此比较步骤已更新，请查看当前进度');
@@ -123,6 +148,16 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    event(g,(proposed.planner==='model'?'总控模型':'基础组合器')+'已'+(proposed.source==='template'?'选择任务流：':'创建任务流：')+proposed.name+'。'+proposed.rationale+' 独立分支可并行执行；新能力设计保留并先验证。');sync(g);
   });
  }
+ async function enrich(offer){
+  if(offer.photo&&offer.facts?.length)return offer;
+  let detail;
+  try{detail=await offerDetail(offer.sku);}catch{}
+  return mergeDetail(offer,detail);
+ }
+ function mergeDetail(offer,detail){
+  if(!detail||detail.sku!==offer.sku)return offer;
+  return cleanOffers([{...offer,photo:offerPhoto(detail.photo)||offer.photo,facts:offerFacts([...(Array.isArray(detail.facts)?detail.facts:[]),...(offer.facts||[])])}])[0];
+ }
  async function perform(g,n){
   const d=getData(),direct=new Set(n.dependsOn.flatMap(id=>g.flow.nodes.find(x=>x.id===id)?.artifactIds||[]));
   const observations=g.artifacts.filter(a=>a.version===g.version&&direct.has(a.id));
@@ -144,9 +179,14 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     }
    }
    if(!offers||offers.length<2)return {...blocked(reason+quoteWait(offers?.length||0)),offers:offers||[],offerSource:source,discovery};
+   if(g.flow.nodes.some(n=>n.capability.startsWith('copy.')||n.capability.startsWith('image.'))){
+    const selected=selectedOffer(offers,criteria,g.text);
+    const detail=await enrich(selected);
+    offers=offers.map(o=>o.sku===detail.sku?detail:o);
+   }
    const ranked=rankedOffers(offers,criteria);
    const body=ranked.map((r,i)=>[(i+1)+'. '+r.title,'展示报价 ¥'+r.price,r.terms,r.repurchase!==null?'页面回购率 '+r.repurchase+'%':'回购率未披露',r.margin!==null?'估算单件收益 ¥'+r.margin.toFixed(2):'',r.url].filter(Boolean).join(' · ')).join('\n');
-   return {...output('1688 选品清单 · '+criteria.query,body+'\n按展示价和可见回购率初筛。阶梯报价、规格及起订条件需核对。'+(ranked[0].margin===null?'缺少售价或其他单件成本，利润待算。':'估算采用目标售价 '+criteria.retail+' 元，其他单件成本 '+criteria.expenses+' 元。'),source),offers,offerSource:source,discovery};
+   return {...output('1688 选品清单 · '+criteria.query,body+'\n按展示价和可见回购率初筛。阶梯报价、规格及起订条件需核对。'+(ranked[0].margin===null?'缺少售价或其他单件成本，利润待算。':'估算采用目标售价 '+criteria.retail+' 元，其他单件成本 '+criteria.expenses+' 元。'),source),offers,offerSource:source,discovery,detailChecked:true};
   }
   if(n.capability==='market.offers'){
    const text=g.messages?.filter(m=>m.role==='human'&&m.intent==='change').at(-1)?.text||g.text;
@@ -170,7 +210,8 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   const ranked=pick&&criteria?rankedOffers(cleanOffers(pick.offers),criteria):[];
   const byProfit=ranked.length>0&&ranked[0].margin!==null&&/利润|毛利|收益|盈利/.test(g.text);
   if(byProfit)ranked.sort((a,b)=>b.margin-a.margin);
-  const rankedCandidates=ranked.map(r=>({sku:r.sku,name:r.title,price:r.price,source:r.url}));
+  if((n.capability.startsWith('copy.')||n.capability.startsWith('image.'))&&pick&&!pick.detailChecked&&ranked.length)ranked[0]=await enrich(ranked[0]);
+  const rankedCandidates=ranked.map(r=>({sku:r.sku,name:r.title,price:r.price,source:r.url,facts:r.facts,photo:r.photo}));
   const discovery=rankedCandidates.length?{status:'found',candidates:rankedCandidates}:g.flow.nodes.find(x=>x.discovery)?.discovery;
   if(discovery?.status==='found'&&!input.candidates)input.candidates=discovery.candidates;
   if(n.capability==='analysis.reason'){
@@ -180,13 +221,23 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(answer.message?.tool_calls?.length||typeof answer.message?.content!=='string'||!answer.message.content.trim())throw new Error('分析未返回有效交付');
    return output(n.title+'（模型分析，待核验）',answer.message.content.slice(0,20000),'本次来源与数据；模型判断不等于事实核验');
   }
+  if(n.capability.startsWith('copy.')&&ranked.length){
+   const prep=prepareContent(d,{...g,research:discovery},{rankedCandidates});
+   if(!n.detailDeadline&&n.capability==='copy.selling_points'&&prep.facts.every(f=>f.startsWith('商品品类：'))){
+    return {...blocked('正在读取所选商品的 1688 详情属性。读取完毕后自动整理卖点。'),preparation:prep,detailDeadline:Date.now()+15000};
+   }
+   const result=await skillCall(n.capability,{...input,autoContent:{...prep,productName:prep.productName.slice(0,80),audience:prep.audience.slice(0,120)}});
+   return {...result,preparation:prep};
+  }
   if(n.capability.startsWith('image.')){
    const kind=n.capability.split('.')[1];if(!imageOutputs(g.text).includes(kind))return blocked('本目标未要求这类图片；请明确画面交付后再执行。');
    const selectionReason=byProfit?'按目标售价和其他单件成本估算，优先选取预计单件收益最高的候选。':'按 1688 展示报价和可见回购率优先选款。'+(ranked[0]?.margin===null?'售价或其他单件成本缺失，实际利润待核算。':'');
    const prep=prepareContent(d,{...g,research:discovery},ranked.length?{rankedCandidates,selectionReason}:undefined);if(prep.missing.length)return blocked(prep.missing.join('；'));
    if(/找|搜|选品/.test(g.text)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
    const config=images.view().config;if(!config.enabled||!config.credentialConfigured)return {...blocked('图片服务未就绪，请在 AI基础能力配置连接图片模型。'),preparation:prep};
-   const j=await images.create({requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+g.text].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
+   const listing=ranked.length&&/上架|淘宝|天猫/.test(g.text)&&!/概念图|概念稿/.test(g.text);
+   if((listing||n.requireReference)&&!prep.referenceId&&!prep.offerPhoto)return {...blocked('正在等所选商品的参考图。工作台会读取 1688 商品详情图；也可在讨论中上传这款商品的白底图。'),preparation:prep};
+   const j=await images.create({requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+g.text].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
    return {status:'waiting_external',summary:'图片请求已提交，等待真实图片结果',imageJobId:j.id,preparation:prep,artifacts:[]};
   }
   if(n.capability==='result.compile'){
@@ -204,6 +255,8 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  }
  function runnable(g,n){
   if(n.status==='pending')return true;
+  if(n.status==='needs_input'&&n.detailDeadline&&n.error?.includes('正在读取所选商品')&&Date.now()>=n.detailDeadline)return true;
+  if(n.status==='needs_input'&&n.capability.startsWith('copy.')&&!n.preparation&&n.missing?.some(msg=>msg.includes('商品名称'))&&g.flow.nodes.some(p=>p.capability==='sourcing.1688'&&p.status==='succeeded'&&p.offers?.length))return true;
   // Resume only the legacy placeholder-SKU failure before an image job existed.
   return n.status==='needs_input'&&n.capability.startsWith('image.')&&!n.imageJobId&&
    g.scope?.sku==='目标范围'&&['尚未找到有来源的候选商品记录，不能虚构在售商品图片。','尚未识别具体商品，请说明品类或商品名称'].includes(n.error)&&
@@ -216,7 +269,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   let result,error;try{const live=find(getData(),id);if(live.version!==snapshot.g.version||live.paused)throw new Error('目标暂停或已更新');sources.resolve(live);if(snapshot.g.flow.model){const current=getData().models.find(m=>m.id===snapshot.g.flow.model.id);if(current?.revision!==snapshot.g.flow.model.revision)throw new Error('模型配置已变化，请重新规划');}result=await perform(snapshot.g,snapshot.n);if(!result||!['succeeded','needs_input','needs_capability','waiting_external'].includes(result.status)||!Array.isArray(result.artifacts))throw new Error('能力返回格式不正确');}catch(e){error=String(e.message).slice(0,1000);}
   await transaction(d=>{const g=find(d,id),r=d.runs.find(r=>r.id===snapshot.n.runId);if(g.version!==snapshot.g.version){r.status='discarded';r.error='目标已变更，旧结果不应用';r.finishedAt=now();return;}
    const n=g.flow.nodes.find(n=>n.id===nodeId);n.status=error?'failed':result.status;n.error=error||(['needs_input','needs_capability'].includes(result.status)?result.summary:null);n.finishedAt=now();n.missing=result?.missing||[];
-   if(result)for(const key of ['recall','discovery','preparation','imageJobId','offers','offerSource'])if(result[key])n[key]=result[key];
+   if(result)for(const key of ['recall','discovery','preparation','imageJobId','offers','offerSource','detailChecked','detailDeadline'])if(result[key])n[key]=result[key];
    for(const a of result?.artifacts||[]){const artifact={...a,id:randomUUID(),goalId:id,taskId:nodeId,version:g.version,status:'draft',agent:'taskflow',agentName:n.title,runId:n.runId};g.artifacts.push(artifact);n.artifactIds.push(artifact.id);}
    Object.assign(r,{status:n.status,result:result||null,error:n.error,finishedAt:n.finishedAt});if(result?.report)g.messages.push({id:randomUUID(),role:'coordinator',author:'目标总控',at:now(),text:result.report.text,artifactIds:result.report.imageIds,links:result.report.source?[{title:'查看所选商品',url:result.report.source,snippet:''}]:[],reportVersion:g.version});
    else event(g,n.title+'：'+(n.error||result.summary));sync(g);

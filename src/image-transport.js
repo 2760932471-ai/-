@@ -1,3 +1,4 @@
+import {offerPhoto} from '../public/sourcing.js';
 import {runCodexImage,codexImageStatus} from './codex-image.js';
 import {validateDestination} from './agents/registry.js';
 import {mkdir,writeFile,readFile,rename} from 'node:fs/promises';
@@ -27,10 +28,10 @@ function geminiResult(out){
  if(!inline)throw safe('Gemini 只返回了文字或空结果，没有生成图片。请确认选择的是支持图片输出的模型');
  if((inline.mimeType||inline.mime_type)!=='image/png')throw safe('Gemini 返回的图片不是当前支持的 PNG 格式','unknown');return inline.data;
 }
-async function referenceImage(url,{request,resolve,signal}){const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw safe('商品参考图地址无效');const check=new URL(u);check.search='';check.hash='';await validateDestination(check.href,resolve);const r=await request(u.href,{redirect:'error',signal});if(!r.ok)throw safe('商品参考图读取失败');const buffer=await bytes(r,10000000,signal),mime=r.headers.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime))throw safe('参考图需为 PNG、JPEG 或 WebP');return {buffer,mime};}
+async function referenceImage(url,{request,resolve,signal,supplierPhoto}){const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw safe('商品参考图地址无效');const check=new URL(u);check.search='';check.hash='';await validateDestination(check.href,resolve,supplierPhoto&&offerPhoto(url)===url?[u.hostname]:undefined);const r=await request(u.href,{redirect:'error',signal});if(!r.ok)throw safe('商品参考图读取失败');const buffer=await bytes(r,10000000,signal),mime=r.headers.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime))throw safe('参考图需为 PNG、JPEG 或 WebP');return {buffer,mime};}
 export async function generateImage(config,input,{fetch:request=fetch,resolve,codexCall=runCodexImage}={}){
  if(config.provider==='codex_local'){
-  const reference=input.upload||(input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,signal:AbortSignal.timeout(30000)}):null);
+  const reference=input.upload||(input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,supplierPhoto:input.offerPhoto,signal:AbortSignal.timeout(30000)}):null);
   const base64=await codexCall({...input,reference});
   let dimensions;try{dimensions=validPNG(base64);}catch{throw safe('Codex 未交付有效的 PNG 图片。','unknown');}
   if(!dimensions.width||!dimensions.height||dimensions.width>8192||dimensions.height>8192)throw safe('Codex 返回的图片尺寸无效。','unknown');
@@ -40,7 +41,7 @@ export async function generateImage(config,input,{fetch:request=fetch,resolve,co
  if(!imageCredentialState(config))throw safe('请在完整后端配置 IMAGE_SECRET_ 生图密钥');const key=process.env[config.secretEnv],provider=imageProvider(config);
  const endpoint=provider==='gemini'?config.endpoint+'/models/'+config.model+':generateContent':config.endpoint.replace(/\/$/,'')+(input.referenceUrl||input.upload?'/images/edits':'/images/generations'),signal=AbortSignal.timeout(180000);let dispatched=false;
  try{
-  await validateDestination(endpoint,resolve);let body,headers;const ref=input.upload|| (input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,signal}):null);
+  await validateDestination(endpoint,resolve);let body,headers;const ref=input.upload|| (input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,supplierPhoto:input.offerPhoto,signal}):null);
   if(provider==='gemini'){
    const aspectRatio={'1024x1024':'1:1','1024x1536':'2:3','1536x1024':'3:2'}[input.size];if(!aspectRatio)throw safe('请选择支持的图片比例');
    headers={'Content-Type':'application/json','x-goog-api-key':key};body=JSON.stringify({contents:[{role:'user',parts:[{text:input.prompt},...(ref?[{inlineData:{mimeType:ref.mime,data:ref.buffer.toString('base64')}}]:[])]}],generationConfig:{responseModalities:['TEXT','IMAGE'],imageConfig:{aspectRatio}}});

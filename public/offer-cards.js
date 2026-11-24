@@ -26,7 +26,8 @@ export function readOfferCards(root=document){
    const price=Number(quote[1].replaceAll(',',''));if(!Number.isFinite(price)||price<=0)continue;
    const rate=body.match(/(?:回购率|回头率)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*%/);
    const terms=body.match(/(?:\d+\s*(?:件|个|套|箱|只)\s*起(?:批|订)|(?:起批量|起订量)\s*[:：]?\s*\d+\s*(?:件|个|套|箱|只))/)?.[0]||'起订量待核对';
-   rows.push({url,title:title.slice(0,160),price,repurchase:rate?Number(rate[1]):null,terms});seen.add(url);break;
+   const img=card.querySelector('img'),photo=img?.getAttribute('data-src')||img?.getAttribute('data-lazy-src')||img?.currentSrc||img?.getAttribute('src');
+   rows.push({...(photo?{photo}:{}),url,title:title.slice(0,160),price,repurchase:rate?Number(rate[1]):null,terms});seen.add(url);break;
   }
   if(rows.length>=40)break;
  }

@@ -1,3 +1,4 @@
+import {openOfferDetail} from './offer-detail.js';
 import {collectSearch,readSearch,rememberSearch} from './collect-1688.js';
 import {readProduct,fillDraft} from './pages.js';
 const sites=[
@@ -38,6 +39,7 @@ async function run(cmd,sender,restored=false){
   }));
   return groups.flat();
  }
+ if(cmd.op==='offerDetail')return openOfferDetail(cmd.sku,sender.tab.windowId);
  if(cmd.op==='openSearch'){
   if(typeof cmd.query!=='string'||!cmd.query.trim()||cmd.query.length>60||!/^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.test(cmd.key))throw Error('目标搜索参数无效');
   const url=new URL('https://s.1688.com/selloffer/offer_search.htm');
@@ -75,7 +77,7 @@ chrome.runtime.onMessageExternal?.addListener((cmd,sender,reply)=>{
    const paired=matchesPair(pair,cmd,sender,true)&&
     await chrome.permissions.contains({origins:['https://*.meituan.com/*','https://*.goofish.com/*']});
    if(cmd.action==='status')return {installed:true,paired};
-   if(!paired||!['tabs','disconnect','read','fill','openSearch'].includes(cmd.action))throw Error('请先在扩展中连接当前工作空间。');
+   if(!paired||!['tabs','disconnect','read','fill','openSearch','offerDetail'].includes(cmd.action))throw Error('请先在扩展中连接当前工作空间。');
    // A restored tab may have a new document. The external request already
    // proved its approved tab, exact workbench URL and workspace above.
    return run({...cmd,op:cmd.action},sender,true);

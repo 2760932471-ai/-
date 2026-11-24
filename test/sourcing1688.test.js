@@ -38,7 +38,7 @@ const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCA
 for(const legacy of [false,true])test('selected 1688 product reaches the image provider '+(legacy?'after restoring the blocked goal':'after browser collection'),async t=>{
  const dir=await mkdtemp('/tmp/pick-image-');t.after(()=>rm(dir,{recursive:true,force:true}));
  let searches=0;const calls=[];
- const options={offerSearch:async()=>{searches++;return [];},imageReady:()=>true,imageCall:async(config,input)=>{calls.push(input);return {base64:png,width:1,height:1};}};
+ const options={offerDetail:async()=>null,offerSearch:async()=>{searches++;return [];},imageReady:()=>true,imageCall:async(config,input)=>{calls.push(input);return {base64:png,width:1,height:1};}};
  let p=await createPlatform(dir,options);
  const offers=[{...rows[0],repurchase:null},{...rows[1],repurchase:30}];
  const goalText=legacy?'在1688选品露营灯，选完直接作图':text+'，选一个预计利润最高的产品做淘宝主图和详情图';
@@ -76,7 +76,7 @@ for(const legacy of [false,true])test('selected 1688 product reaches the image p
 test('restart after a failed image resumes the same plan and reports the delivered image',async t=>{
  const dir=await mkdtemp('/tmp/pick-resume-');t.after(()=>rm(dir,{recursive:true,force:true}));
  let searches=0,images=0;
- const options={offerSearch:async()=>{searches++;return rows;},imageReady:()=>true,imageCall:async()=>{
+ const options={offerDetail:async sku=>({sku,facts:['颜色：白色'],photo:'https://cbu01.alicdn.com/img/ibank/lamp.jpg'}),offerSearch:async()=>{searches++;return rows;},imageReady:()=>true,imageCall:async()=>{
   if(++images===1)throw new Error('provider failed');
   return {base64:png,width:1,height:1};
  }};
@@ -111,7 +111,7 @@ test('main image templates use only confirmed promotional copy',async()=>{
 
 test('replanning an unchanged blocked goal reuses saved sourcing evidence',async t=>{
  const dir=await mkdtemp('/tmp/pick-checkpoint-');t.after(()=>rm(dir,{recursive:true,force:true}));
- let calls=0;const p=await createPlatform(dir,{offerSearch:async()=>{calls++;return rows;}});
+ let calls=0;const p=await createPlatform(dir,{offerDetail:async()=>null,offerSearch:async()=>{calls++;return rows;}});
  const goal=await p.create({executionMode:'flow',requestId:randomUUID(),text:text+'，做主图'});
  for(let i=0;i<5;i++)await p.pump();
  await p.action(goal.id,{kind:'replan',expectedVersion:1});
@@ -141,4 +141,75 @@ test('a restored visible 1688 goal opens its search and receives offers without 
  assert.deepEqual(commands.map(cmd=>cmd.action||cmd.op),['openSearch','pick1688']);
  assert.equal(commands[0].key,commands[1].key);assert.equal(commands[0].query,'露营灯');
  assert.deepEqual(writes,[['browserOffers',{expectedVersion:3,query:'露营灯',rows},goal.id]]);
+});
+
+test('selected 1688 eyewear details feed both the listing image and selling copy',async t=>{
+ const dir=await mkdtemp('/tmp/eyewear-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ const photo='https://cbu01.alicdn.com/img/ibank/glasses.jpg',requests=[],details=[];
+ const offers=rows.map((r,i)=>({...r,title:'飞行员太阳镜'+String(i).repeat(85)}));
+ const p=await createPlatform(dir,{offerSearch:async()=>offers,offerDetail:async sku=>{
+  details.push(sku);return {sku,photo,facts:['镜架颜色：黑色','镜框形状：飞行员框','赠送：免费退']};
+ },imageReady:()=>true,imageCall:async(config,input)=>{requests.push(input);return {base64:png,width:1,height:1};}});
+ await p.images.save({revision:0,enabled:true,provider:'codex_local'});
+ const g=await p.create({executionMode:'flow',requestId:randomUUID(),text:'在1688选品太阳镜，选一款做上架淘宝的主图，给我卖点文案'});
+ for(let i=0;i<6;i++){await p.pump();await p.images.pump();}
+ const goal=p.goals().find(x=>x.id===g.id);
+ assert.deepEqual(details,['123']);assert.equal(goal.stage,'review');
+ assert.equal(requests.length,1);assert.equal(requests[0].referenceUrl,photo);
+ assert.match(requests[0].prompt,/基于所附白底图/);assert.match(requests[0].prompt,/黑色/);
+ const copy=goal.artifacts.find(a=>a.taskId==='selling');assert.match(copy.body,/黑色镜架/);assert.match(copy.body,/offer\/123.html/);assert.doesNotMatch(copy.body,/免费退/);
+ assert.match(goal.artifacts.find(a=>a.imageJobId).evidence,/1688 商品原图/);
+ assert.match(goal.messages.at(-1).text,/黑色/);
+});
+
+test('missing listing photo never submits a concept; a later detail read resumes without reselection',async t=>{
+ const dir=await mkdtemp('/tmp/eyewear-resume-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ let calls=0;const p=await createPlatform(dir,{offerSearch:async()=>rows,offerDetail:async()=>null,imageReady:()=>true,imageCall:async()=>{calls++;return {base64:png,width:1,height:1};}});
+ await p.images.save({provider:'codex_local',enabled:true,revision:0});
+ const g=await p.create({executionMode:'flow',requestId:randomUUID(),text:'在1688找露营灯，做淘宝主图和卖点文案'});
+ for(let i=0;i<5;i++){await p.pump();await p.images.pump();}
+ const goal=()=>p.goals().find(x=>x.id===g.id);
+ assert.equal(calls,0);const pick=goal().flow.nodes.find(n=>n.id==='pick1688').runId;
+ await assert.rejects(()=>p.action(g.id,{kind:'offerDetail',expectedVersion:1,detail:{sku:'456',photo:'https://cbu01.alicdn.com/img/ibank/wrong.jpg'}}));
+ await p.action(g.id,{kind:'offerDetail',expectedVersion:1,detail:{sku:'123',facts:['颜色：白色'],photo:'https://cbu01.alicdn.com/img/ibank/123.jpg'}});
+ for(let i=0;i<5;i++){await p.pump();await p.images.pump();}
+ assert.equal(goal().stage,'review');assert.equal(calls,1);assert.equal(goal().flow.nodes.find(n=>n.id==='pick1688').runId,pick);
+});
+
+test('old selling-point blocker repairs itself without resubmitting a delivered main image',async t=>{
+ const dir=await mkdtemp('/tmp/offer-copy-restore-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ let imageCount=0;const options={offerSearch:async()=>rows,offerDetail:async sku=>({sku,photo:'https://cbu01.alicdn.com/img/ibank/item.jpg',facts:['颜色：白色']}),imageReady:()=>true,imageCall:async()=>{imageCount++;return {base64:png,width:1,height:1};}};
+ let p=await createPlatform(dir,options);await p.images.save({enabled:true,provider:'codex_local',revision:0});
+ const g=await p.create({requestId:randomUUID(),executionMode:'flow',text:'在1688找露营灯，做淘宝主图，给我卖点'});
+ for(let i=0;i<6;i++){await p.pump();await p.images.pump();}
+ const data=JSON.parse(await readFile(dir+'/platform.json','utf8')),goal=data.goals.find(v=>v.id===g.id);
+ const node=goal.flow.nodes.find(n=>n.id==='selling'),summary=goal.flow.nodes.at(-1);
+ goal.flow.status='blocked';goal.stage='draft';
+ Object.assign(node,{status:'needs_input',error:'内容草稿尚未生成。',missing:['商品名称必填，最多 80 字'],artifactIds:[]});delete node.preparation;
+ Object.assign(summary,{status:'pending',artifactIds:[]});
+ const pick=goal.flow.nodes.find(n=>n.id==='pick1688');delete pick.detailChecked;for(const o of pick.offers){delete o.facts;delete o.photo;}
+ goal.artifacts=goal.artifacts.filter(a=>a.taskId!=='selling'&&a.taskId!==summary.id);goal.messages=goal.messages.filter(m=>!m.reportVersion);
+ await writeFile(dir+'/platform.json',JSON.stringify(data));p=await createPlatform(dir,options);
+ for(let i=0;i<4;i++){await p.pump();await p.images.pump();}
+ const restored=p.goals().find(v=>v.id===g.id);
+ assert.equal(restored.stage,'review');assert.equal(restored.version,1);assert.equal(imageCount,1);
+ assert.match(restored.artifacts.find(a=>a.taskId==='selling').body,/白色/);assert.equal(restored.flow.nodes.find(n=>n.id==='pick1688').runId,pick.runId);
+});
+
+test('replace a delivered concept with a reference main image in the same plan',async t=>{
+ const dir=await mkdtemp('/tmp/replace-concept-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ let searches=0;const images=[];
+ const p=await createPlatform(dir,{offerSearch:async()=>{searches++;return rows;},offerDetail:async()=>null,imageReady:()=>true,imageCall:async(c,i)=>{images.push(i);return {base64:png,width:1,height:1};}});
+ await p.images.save({provider:'codex_local',enabled:true,revision:0});
+ const g=await p.create({executionMode:'flow',requestId:randomUUID(),text:'在1688找露营灯，做一张主图'});
+ const goal=()=>p.goals().find(x=>x.id===g.id);
+ async function pump(){for(let i=0;i<5;i++){await p.pump();await p.images.pump();}}
+ await pump();
+ const first=goal().flow.nodes.find(n=>n.id==='main').imageJobId;
+ await p.action(g.id,{kind:'remakeMain',previousImageJob:first,expectedVersion:1});
+ await pump();assert.equal(images.length,1);assert.equal(goal().flow.nodes.find(n=>n.id==='main').status,'needs_input');
+ await p.action(g.id,{kind:'offerDetail',expectedVersion:1,detail:{sku:'123',photo:'https://cbu01.alicdn.com/img/ibank/light.jpg',facts:['颜色：白色']}});
+ await pump();assert.equal(images.length,2);assert.equal(searches,1);assert.equal(goal().stage,'review');
+ assert.equal(goal().artifacts.find(a=>a.imageJobId===first).status,'superseded');assert.equal(images[1].referenceUrl,'https://cbu01.alicdn.com/img/ibank/light.jpg');
+ assert.deepEqual(goal().messages.at(-1).artifactIds,goal().flow.nodes.find(n=>n.id==='main').artifactIds);
 });
