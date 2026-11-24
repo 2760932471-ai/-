@@ -45,11 +45,14 @@ export function createCloudBrowser({esc,render,currentWorkspace,post,refresh}){
   if(workspace!==currentWorkspace()){reset();installed=false;nextScan=0;message='';workspace=currentWorkspace();}
   const receipts=fills();
   const sources=candidates('source'),targets=candidates('target');
-  return `<section class="panel browser-connector" data-cloud-workspace="${esc(workspace)}"><div class="section-title"><div><h2>浏览器连接器</h2><p>在目标里说清要找什么、准备在哪里卖。连接器会识别当前窗口里的搜索结果、商品和发布表单。</p></div><span class="badge">${connected?'当前浏览器已连接':installed?'扩展已安装':'等待连接'}</span></div>
-  <div class="browser-goal"><div><h3>从目标开始</h3><p>例如「在 1688 找高性价比的露营灯」</p></div><button class="primary" data-new>提出目标</button></div>
+  return `<section class="panel browser-connector" data-cloud-workspace="${esc(workspace)}"><div class="section-title"><div><h2>浏览器连接器</h2><p>连接当前 Chrome 窗口，识别已打开的搜索结果、商品详情和发布表单。</p></div><span class="badge">${connected?'当前浏览器已连接':installed?'扩展已安装':'等待连接'}</span></div>
+  <a class="secondary browser-download" href="/cloud-browser.zip" download="cloud-browser.zip">下载 Chrome 扩展 v1.4.0</a>
   <div class="section-title"><h3>当前窗口</h3><button class="text-button" data-cloud="tabs" ${pending?'disabled':''}>刷新连接状态</button></div>
   ${connected?`<p class="field-hint">${[tabs.filter(t=>t.role==='sourcing').length+' 个搜索页',sources.length+' 个商品页',targets.length+' 个发布表单'].join(' · ')}</p>${tabChoice('source',source,'选择要读取的商品','cloud-source')}${source?`<div class="action-buttons"><button class="secondary" data-cloud="read">读取这件商品</button><small>${esc(tabs.find(t=>String(t.id)===source)?.title||'')}</small></div>`:sources.length?'':'<p>打开商品详情页后，这里会显示可读取的商品。</p>'}`:'<p class="field-hint">连接后可直接读取已打开的商品。</p>'}
-  <details class="cloud-setup" ${!connected||setupExpanded?'open':''}><summary>${connected?'连接与权限':'连接此工作空间'}</summary><p><a class="text-button" href="/cloud-browser.zip" download="云电脑浏览器连接器.zip">下载 Chrome 扩展</a>，解压后在 chrome://extensions 加载目录。在本页点扩展图标，选择「连接此工作台」。同一窗口里的受支持页面会自动识别。</p>${connected?'<button class="text-button" data-cloud="disconnect">断开工作空间连接</button>':''}</details>
+  <details class="cloud-setup" ${!connected||setupExpanded?'open':''}><summary>安装、更新与连接</summary>
+  <p><strong>更新已有扩展</strong>　解压下载包，把里面的文件复制到上次加载的扩展文件夹，替换同名文件。在 Chrome 地址栏输入 <code>chrome://extensions</code>，找到「电商工作台 · 云电脑连接器」，点击卡片上的重新加载按钮（↻），核对版本为 1.4.0。</p>
+  <p><strong>首次安装</strong>　在同一扩展管理页打开「开发者模式」，点击「加载已解压的扩展程序」，选择包含 <code>manifest.json</code> 的文件夹。</p>
+  <p>安装或更新后，刷新此工作台页面，点 Chrome 工具栏中的连接器图标，选择「连接此工作台」。</p>${connected?'<button class="text-button" data-cloud="disconnect">断开工作空间连接</button>':''}</details>
   <p role="status" class="field-hint">${esc(message)}</p>
   ${receipts.map(saved=>`<form data-cloud-receipt="${esc(saved.id)}" class="panel"><h3>核实闲鱼上架结果</h3><p>货源：${esc(saved.sourceName)}</p><label>最终商品标题<input name="title" required maxlength="200" value="${esc(saved.title)}"></label><label>实际上架售价（元）<input name="price" required type="number" step="0.01" min="0.01" value="${(saved.priceFen/100).toFixed(2)}"></label><label>闲鱼店铺 ID<input name="shopId" required maxlength="160"></label><label>发布成功的商品编号<input name="listingId" required maxlength="160"></label><label class="confirm-check"><input required type="checkbox">已在闲鱼核实该商品正在出售</label><button class="primary">确认已上架，生成备券提醒</button></form>`).join('')}
   ${product?`<form id="cloud-draft"><p>来自 ${esc(product.host)} · ${esc(product.title)} · 来源报价 ${esc(product.price||'未识别')}</p>

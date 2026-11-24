@@ -20,7 +20,7 @@ try{
  await source.goto('https://example.meituan.com/deal');await target.goto('https://example.goofish.com/sell');
  await target.evaluate(()=>document.addEventListener('submit',e=>{e.preventDefault();document.title='submitted';}));
  await page.goto('http://127.0.0.1/#ai-config/market');await page.getByRole('button',{name:'云电脑浏览器',exact:true}).click();
- assert.match(await page.getByText('下载 Chrome 扩展').getAttribute('href'),/^data:application\/zip/);
+ assert.match(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.4.0'}).getAttribute('href'),/^data:application\/zip/);
  await page.bringToFront();
  // Same document-bound binding used after the user grants activeTab in the extension popup.
  if(simulated){
@@ -58,7 +58,9 @@ try{
   await page.reload();
   await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
- await page.getByRole('button',{name:'提出目标'}).click();assert.equal(await page.locator('#goal').inputValue(),'');await page.locator('#close-dialog').click();
+ assert.equal(await page.locator('[data-cloud-workspace] [data-new]').count(),0);
+ assert(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.4.0'}).isVisible());
+ await page.locator('.sidebar-create').click();assert.equal(await page.locator('#goal').inputValue(),'');await page.locator('#close-dialog').click();
  assert.equal(await page.locator('#cloud-source').count(),0);
  await page.getByText('读取这件商品',{exact:true}).click();
  await page.locator('#cloud-draft').waitFor();assert.equal(await page.locator('#cloud-draft [name=title]').inputValue(),'周末双人餐');
@@ -79,7 +81,7 @@ try{
  assert.deepEqual(await target.locator('input,textarea').evaluateAll(els=>els.map(el=>el.value)),['周末双人餐','限周末预约','110.50']);assert.notEqual(await target.title(),'submitted');
  if(simulated){
   await additionalSources();
-  await page.getByRole('button',{name:'提出目标'}).click();await page.locator('#goal').fill('比较候选商品报价');await page.locator('#submit-task').click();
+  await page.locator('.sidebar-create').click();await page.locator('#goal').fill('比较候选商品报价');await page.locator('#submit-task').click();
   await page.locator('.goal-tabs [data-tab=tasks]').click();await page.getByRole('button',{name:'读取或补入候选报价'}).click();
   const dialog=page.getByRole('dialog',{name:'比较候选报价'});
   await dialog.getByRole('button',{name:'从浏览器读取'}).click();
@@ -90,6 +92,6 @@ try{
   await page.getByText('3 / 3 步完成',{exact:true}).waitFor();
   await page.goto('http://127.0.0.1/#ai-config/market');await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
- await page.getByText('连接与权限',{exact:true}).click();await page.getByRole('button',{name:'断开工作空间连接'}).click();await page.getByText('已断开工作空间连接。',{exact:true}).waitFor();
+ await page.getByText('安装、更新与连接',{exact:true}).click();await page.getByRole('button',{name:'断开工作空间连接'}).click();await page.getByText('已断开工作空间连接。',{exact:true}).waitFor();
  console.log((simulated?'SIMULATED EXTENSION API: ':'')+'PASS bound document, tab discovery, product read, existing draft protection, field fill without submit, disconnect');
 }finally{await ctx?.close();await rm(dir,{recursive:true,force:true});}
