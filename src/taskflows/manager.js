@@ -152,7 +152,13 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    return {...output('证据收集记录',body||'当前没有匹配资料；后续任务必须明确缺口，不能虚构事实。'),recall,discovery,notice,web};
   }
   const pick=g.flow.nodes.find(x=>x.capability==='sourcing.1688'&&x.status==='succeeded');
-  const discovery=pick?.offers?.length?{status:'found',candidates:rankedOffers(pick.offers,sourcingIntent(g.text)).map(r=>({sku:r.sku,name:r.title,price:r.price,source:r.url}))}:g.flow.nodes.find(x=>x.discovery)?.discovery;if(discovery?.status==='found'&&!input.candidates)input.candidates=discovery.candidates;
+  const criteria=sourcingIntent(g.text);
+  const ranked=pick&&criteria?rankedOffers(cleanOffers(pick.offers),criteria):[];
+  const byProfit=ranked.length>0&&ranked[0].margin!==null&&/利润|毛利|收益|盈利/.test(g.text);
+  if(byProfit)ranked.sort((a,b)=>b.margin-a.margin);
+  const rankedCandidates=ranked.map(r=>({sku:r.sku,name:r.title,price:r.price,source:r.url}));
+  const discovery=rankedCandidates.length?{status:'found',candidates:rankedCandidates}:g.flow.nodes.find(x=>x.discovery)?.discovery;
+  if(discovery?.status==='found'&&!input.candidates)input.candidates=discovery.candidates;
   if(n.capability==='analysis.reason'){
    const model=g.flow.model;if(!model)return blocked('通用分析需要连接总控模型；基础组合不假装具备模型推理能力。');
    if(!observations.length&&!input.knowledgeRecall?.hits?.length)return blocked('尚无可分析的来源；请连接知识库、搜索或业务数据。');
@@ -162,10 +168,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   }
   if(n.capability.startsWith('image.')){
    const kind=n.capability.split('.')[1];if(!imageOutputs(g.text).includes(kind))return blocked('本目标未要求这类图片；请明确画面交付后再执行。');
-   const prep=prepareContent(d,{...g,research:discovery});if(prep.missing.length)return blocked(prep.missing.join('；'));
+   const selectionReason=byProfit?'按目标售价和其他单件成本估算，优先选取预计单件收益最高的候选。':'按 1688 展示报价和可见回购率优先选款。'+(ranked[0]?.margin===null?'售价或其他单件成本缺失，实际利润待核算。':'');
+   const prep=prepareContent(d,{...g,research:discovery},ranked.length?{rankedCandidates,selectionReason}:undefined);if(prep.missing.length)return blocked(prep.missing.join('；'));
    if(/找|搜|选品/.test(g.text)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
-   const config=images.view().config;if(!config.enabled||!config.credentialConfigured)return blocked('图片服务未就绪，请在 AI基础能力配置连接图片模型。');
-   const j=await images.create({requestId:'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'用户画面要求：'+g.text,'商品：'+prep.productName,'渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary].join('\n'),mode:prep.referenceId?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
+   const config=images.view().config;if(!config.enabled||!config.credentialConfigured)return {...blocked('图片服务未就绪，请在 AI基础能力配置连接图片模型。'),preparation:prep};
+   const j=await images.create({requestId:'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+g.text].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
    return {status:'waiting_external',summary:'图片请求已提交，等待真实图片结果',imageJobId:j.id,preparation:prep,artifacts:[]};
   }
   if(n.capability==='result.compile'){
@@ -175,8 +182,15 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   if(n.capabilityProposal){return {status:'needs_capability',summary:'新能力已提出，尚未完成隔离实现与验证；不会直接运行模型生成的代码。',artifacts:[{title:'新能力设计：'+n.capability,body:[n.capabilityProposal.description,n.capabilityProposal.implementation,'验证要求：'+n.capabilityProposal.tests].join('\n\n'),evidence:'总控提出的能力设计，尚未实现或执行'}]};}
   return skillCall(n.capability,n.candidates?{...input,candidates:n.candidates}:input);
  }
+ function runnable(g,n){
+  if(n.status==='pending')return true;
+  // Resume only the legacy placeholder-SKU failure before an image job existed.
+  return n.status==='needs_input'&&n.capability.startsWith('image.')&&!n.imageJobId&&
+   g.scope?.sku==='目标范围'&&['尚未找到有来源的候选商品记录，不能虚构在售商品图片。','尚未识别具体商品，请说明品类或商品名称'].includes(n.error)&&
+   sourcingIntent(g.text)&&g.flow.nodes.some(p=>p.capability==='sourcing.1688'&&p.status==='succeeded'&&cleanOffers(p.offers).length>0);
+ }
  async function execute(id,nodeId){
-  const snapshot=await transaction(d=>{const g=find(d,id),n=g.flow.nodes.find(n=>n.id===nodeId);if(g.paused||!n||n.status!=='pending'||n.dependsOn.some(id=>g.flow.nodes.find(n=>n.id===id)?.status!=='succeeded'))return null;
+  const snapshot=await transaction(d=>{const g=find(d,id),n=g.flow.nodes.find(n=>n.id===nodeId);if(g.paused||!n||!runnable(g,n)||n.dependsOn.some(id=>g.flow.nodes.find(n=>n.id===id)?.status!=='succeeded'))return null;
    if(g.flow.calls>=g.flow.policy.maxCalls){n.status='needs_input';n.error='已达到本轮调用上限，请检查运行记录后重新规划';sync(g);return null;}
    n.status='running';n.attempts++;n.startedAt=now();n.runId=randomUUID();g.flow.calls++;d.runs.unshift({id:n.runId,agentId:'taskflow',agentName:n.title,purpose:'taskflow',goalId:g.id,goalVersion:g.version,flowNodeId:n.id,status:'running',createdAt:now(),startedAt:now(),input:{objective:n.objective,capability:n.capability,dependsOn:n.dependsOn}});sync(g);return {g,n};});if(!snapshot)return;
   let result,error;try{const live=find(getData(),id);if(live.version!==snapshot.g.version||live.paused)throw new Error('目标暂停或已更新');sources.resolve(live);if(snapshot.g.flow.model){const current=getData().models.find(m=>m.id===snapshot.g.flow.model.id);if(current?.revision!==snapshot.g.flow.model.revision)throw new Error('模型配置已变化，请重新规划');}result=await perform(snapshot.g,snapshot.n);if(!result||!['succeeded','needs_input','needs_capability','waiting_external'].includes(result.status)||!Array.isArray(result.artifacts))throw new Error('能力返回格式不正确');}catch(e){error=String(e.message).slice(0,1000);}
@@ -198,7 +212,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   const waiting=getData().goals.find(g=>g.mode==='flow'&&!g.paused&&g.flow.status==='planning');if(waiting)await plan(waiting.id);
   const jobs=[];for(const g of getData().goals.filter(g=>g.mode==='flow'&&!g.paused&&g.stage==='draft')){
    const running=g.flow.nodes.filter(n=>['running','waiting_external'].includes(n.status)).length;
-   const ready=g.flow.nodes.filter(n=>n.status==='pending'&&n.dependsOn.every(id=>g.flow.nodes.find(n=>n.id===id)?.status==='succeeded')).slice(0,Math.max(0,g.flow.policy.parallel-running));for(const n of ready)if(jobs.length<settings().parallel)jobs.push([g.id,n.id]);
+   const ready=g.flow.nodes.filter(n=>runnable(g,n)&&n.dependsOn.every(id=>g.flow.nodes.find(n=>n.id===id)?.status==='succeeded')).slice(0,Math.max(0,g.flow.policy.parallel-running));for(const n of ready)if(jobs.length<settings().parallel)jobs.push([g.id,n.id]);
   }await Promise.allSettled(jobs.map(([id,n])=>execute(id,n)));
  }finally{pumping=false;}}
  return {view,create,action,pump,saveSettings,saveTemplate};

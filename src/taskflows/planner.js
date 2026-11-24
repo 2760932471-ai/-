@@ -51,6 +51,21 @@ export async function proposeFlow(goal,settings,model,modelCall,templates=[]){
   for(const n of raw.nodes)if(Array.isArray(n?.dependsOn)&&!n.dependsOn.length)n.dependsOn=[id];
   raw.nodes.unshift(pickNode);
  }
+ if(pick&&Array.isArray(raw?.nodes)){
+  const source=raw.nodes.find(n=>n?.capability==='sourcing.1688');
+  const summary=raw.nodes.find(n=>n?.capability==='result.compile');
+  for(const kind of imageOutputs(goal.text)){
+   const capability='image.'+kind;
+   const steps=raw.nodes.filter(n=>n?.capability===capability);
+   if(!steps.length&&source&&Array.isArray(summary?.dependsOn)){
+    let id=kind;while(raw.nodes.some(n=>n?.id===id))id+='_';
+    const title=kind==='main'?'生成商品主图':'生成详情图片模块';
+    raw.nodes.push({id,title,objective:title,capability,dependsOn:[source.id],acceptance:'交付所选商品的图片'});
+    summary.dependsOn.push(id);
+   }
+   for(const step of steps)if(source&&Array.isArray(step.dependsOn)&&!step.dependsOn.includes(source.id))step.dependsOn.push(source.id);
+  }
+ }
  const checked=validateFlow(raw,settings),template=[...flowTemplates,...templates].find(t=>t.id===raw.templateId);
  // A template label cannot hide model-modified steps: only an exact structure is a reuse.
  const exact=template&&JSON.stringify(validateFlow({name:template.name,rationale:'复用模板',nodes:template.nodes},settings).nodes)===JSON.stringify(checked.nodes);
