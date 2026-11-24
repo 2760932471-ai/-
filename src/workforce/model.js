@@ -1,4 +1,4 @@
-import {callLocalCodex} from './codex-local.js';
+import {callLocalCodex,codexEnvironment} from './codex-local.js';
 import {validateDestination} from '../agents/registry.js';
 export function validateModel(input,previous){
  const name=String(input.name||'').trim(),model=String(input.model||'').trim(),endpoint=String(input.endpoint||'').trim(),secretEnv=String(input.secretEnv||'').trim();
@@ -12,7 +12,7 @@ export function validateModel(input,previous){
  const timeoutMs=Number(input.timeoutMs||30000);if(!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>60000)throw new Error('超时需在1000–60000毫秒之间');
  return {id:previous?.id,provider,name,model,endpoint,secretEnv,timeoutMs,revision:(previous?.revision||0)+1,lastTest:null};
 }
-export function publicModel(model){return {...model,credentialConfigured:model.provider==='codex-local'?process.env.ENABLE_CODEX_LOCAL==='1':!!process.env[model.secretEnv]};}
+export function publicModel(model){return {...model,...(model.provider==='codex-local'?{bridge:codexEnvironment()}:{}),credentialConfigured:model.provider==='codex-local'?process.env.ENABLE_CODEX_LOCAL==='1':!!process.env[model.secretEnv]};}
 export async function callModel(model,messages,tools=[],options={}){
  if(model.provider==='codex-local')return callLocalCodex(model,messages,tools,options);
  const key=process.env[model.secretEnv];if(!key)throw new Error('模型密钥尚未配置：'+model.secretEnv);

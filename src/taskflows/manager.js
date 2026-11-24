@@ -13,7 +13,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  let pumping=false;
  const settings=()=>({...flowDefaults(),...getData().flowSettings});
  const find=(d,id)=>d.goals.find(g=>g.id===id&&g.mode==='flow')||fail('任务流目标不存在');
- const currentModel=()=>{const id=settings().modelId,m=getData().models.find(m=>m.id===id);return m&&m.provider==='api'&&publicModel(m).credentialConfigured&&m.lastTest?.status==='succeeded'&&m.lastTest.revision===m.revision?m:null;};
+ const currentModel=()=>{const id=settings().modelId,m=getData().models.find(m=>m.id===id);return m&&publicModel(m).credentialConfigured&&m.lastTest?.status==='succeeded'&&m.lastTest.revision===m.revision?m:null;};
  const view=()=>({settings:settings(),modelReady:!!currentModel(),templates:[...flowTemplates,...(getData().flowTemplates||[])],capabilities:flowCapabilities,limits:{codeExecution:'新能力设计可保存；任意生成代码的隔离执行器尚未接通',externalWrites:'任务流当前不直接写入店铺；请使用已授权的店铺操作入口'}});
  function create(d,input){
   if(typeof input.text!=='string'||!input.text.trim()||input.text.length>2000)throw new Error('请填写 1–2000 字目标');
@@ -49,6 +49,21 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(g.flow.status==='planning_failed'){g.flow.status='planning';g.flow.error=null;}
    else for(const n of g.flow.nodes)if(['failed','needs_input'].includes(n.status)&&(!input.nodeId||input.nodeId===n.id)&&!n.imageJobId){n.status='pending';n.error=null;}
    sync(g);
+  }else if(kind==='supplyOffers'){
+   const node=g.flow.nodes.find(n=>n.id===input.nodeId);
+   if(g.stage==='completed'||node?.capability!=='product.compare'||node.status!=='needs_input')fail('此比较步骤已更新，请查看当前进度');
+   if(g.flow.calls>=g.flow.policy.maxCalls)fail('已达到调用上限，请重新规划');
+   const rows=input.candidates;
+   if(!Array.isArray(rows)||rows.length<2||rows.length>50)throw new Error('请提供 2–50 个候选商品');
+   const candidates=rows.map(row=>{
+    if(!row||typeof row.sku!=='string'||!row.sku.trim()||row.sku.length>160||
+       typeof row.source!=='string'||!row.source.trim()||row.source.length>1000||
+       !Number.isFinite(row.price)||row.price<=0)throw new Error('请为每个商品填写编号、有效报价和资料来源');
+    return {sku:row.sku.trim(),price:row.price,source:row.source.trim()};
+   });
+   if(new Set(candidates.map(c=>c.sku)).size!==candidates.length)throw new Error('请填写不同的商品编号');
+   node.candidates=candidates;node.status='pending';node.error=null;node.missing=[];
+   event(g,'已为「'+node.title+'」补入 '+candidates.length+' 条报价，继续当前步骤。');sync(g);
   }else if(kind==='inputs'){
    if(g.paused||g.stage==='completed')fail('当前不能更新业务资料');
    if(!input.data||typeof input.data!=='object'||Array.isArray(input.data)||JSON.stringify(input.data).length>100000)throw new Error('资料需为不超过 100KB 的 JSON 对象');
@@ -63,7 +78,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  }
  async function saveSettings(input){return transaction(d=>{
   const old={...flowDefaults(),...d.flowSettings};if(input.revision!==old.revision)fail('总控设置已更新');
-  if(input.modelId&&!d.models.some(m=>m.id===input.modelId&&m.provider==='api'))throw new Error('请选择 API 模型连接；本机 Codex 固定协议暂不支持任务流规划');
+  if(input.modelId&&!d.models.some(m=>m.id===input.modelId))throw new Error('所选模型连接不存在，请刷新后重新选择');
   for(const [key,min,max]of [['parallel',1,4],['maxNodes',2,16],['maxCalls',4,40]])if(!Number.isInteger(input[key])||input[key]<min||input[key]>max)throw new Error(key+' 配置超出允许范围');
   d.flowSettings={revision:old.revision+1,modelId:input.modelId||null,parallel:input.parallel,maxNodes:input.maxNodes,maxCalls:input.maxCalls};return d.flowSettings;
  });}
@@ -118,7 +133,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    return output('目标交付汇总',`目标：${g.text}\n\n`+observations.map(a=>`## ${a.title}\n${a.body}\n来源：${a.evidence}`).join('\n\n')+'\n\n核验范围：任务已实际执行且必需分支完成；业务结论仍需审核，未执行店铺发布。');
   }
   if(n.capabilityProposal){return {status:'needs_capability',summary:'新能力已提出，尚未完成隔离实现与验证；不会直接运行模型生成的代码。',artifacts:[{title:'新能力设计：'+n.capability,body:[n.capabilityProposal.description,n.capabilityProposal.implementation,'验证要求：'+n.capabilityProposal.tests].join('\n\n'),evidence:'总控提出的能力设计，尚未实现或执行'}]};}
-  return skillCall(n.capability,input);
+  return skillCall(n.capability,n.candidates?{...input,candidates:n.candidates}:input);
  }
  async function execute(id,nodeId){
   const snapshot=await transaction(d=>{const g=find(d,id),n=g.flow.nodes.find(n=>n.id===nodeId);if(g.paused||!n||n.status!=='pending'||n.dependsOn.some(id=>g.flow.nodes.find(n=>n.id===id)?.status!=='succeeded'))return null;
@@ -126,7 +141,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    n.status='running';n.attempts++;n.startedAt=now();n.runId=randomUUID();g.flow.calls++;d.runs.unshift({id:n.runId,agentId:'taskflow',agentName:n.title,purpose:'taskflow',goalId:g.id,goalVersion:g.version,flowNodeId:n.id,status:'running',createdAt:now(),startedAt:now(),input:{objective:n.objective,capability:n.capability,dependsOn:n.dependsOn}});sync(g);return {g,n};});if(!snapshot)return;
   let result,error;try{const live=find(getData(),id);if(live.version!==snapshot.g.version||live.paused)throw new Error('目标暂停或已更新');sources.resolve(live);if(snapshot.g.flow.model){const current=getData().models.find(m=>m.id===snapshot.g.flow.model.id);if(current?.revision!==snapshot.g.flow.model.revision)throw new Error('模型配置已变化，请重新规划');}result=await perform(snapshot.g,snapshot.n);if(!result||!['succeeded','needs_input','needs_capability','waiting_external'].includes(result.status)||!Array.isArray(result.artifacts))throw new Error('能力返回格式不正确');}catch(e){error=String(e.message).slice(0,1000);}
   await transaction(d=>{const g=find(d,id),r=d.runs.find(r=>r.id===snapshot.n.runId);if(g.version!==snapshot.g.version){r.status='discarded';r.error='目标已变更，旧结果不应用';r.finishedAt=now();return;}
-   const n=g.flow.nodes.find(n=>n.id===nodeId);n.status=error?'failed':result.status;n.error=error||(['needs_input','needs_capability'].includes(result.status)?result.summary:null);n.finishedAt=now();
+   const n=g.flow.nodes.find(n=>n.id===nodeId);n.status=error?'failed':result.status;n.error=error||(['needs_input','needs_capability'].includes(result.status)?result.summary:null);n.finishedAt=now();n.missing=result?.missing||[];
    if(result)for(const key of ['recall','discovery','preparation','imageJobId'])if(result[key])n[key]=result[key];
    for(const a of result?.artifacts||[]){const artifact={...a,id:randomUUID(),goalId:id,taskId:nodeId,version:g.version,status:'draft',agent:'taskflow',agentName:n.title,runId:n.runId};g.artifacts.push(artifact);n.artifactIds.push(artifact.id);}
    Object.assign(r,{status:n.status,result:result||null,error:n.error,finishedAt:n.finishedAt});event(g,n.title+'：'+(n.error||result.summary));sync(g);

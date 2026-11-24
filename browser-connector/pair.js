@@ -6,9 +6,10 @@ document.querySelector('#pair').onclick=async()=>{
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   const [probe]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>({
    workspace:document.querySelector('[data-cloud-workspace]')?.dataset.cloudWorkspace,
-   secure:isSecureContext,route:location.hash
+   secure:isSecureContext
   })});
-  if(!probe.result.secure||probe.result.route!=='#ai-config/market'||!probe.result.workspace)throw Error('请在云电脑浏览器配置页面点击连接。');
+  if(!probe.result.secure)throw Error('请通过 HTTPS 或 localhost 打开工作台后配对。');
+  if(!probe.result.workspace)throw Error('请切换到工作台标签，打开 AI基础能力配置 → 跨平台连接器 → 云电脑浏览器，再点击扩展配对。');
   await chrome.storage.session.set({pair:{tabId:tab.id,doc:probe.documentId,workspace:probe.result.workspace}});
   await chrome.scripting.executeScript({target:{tabId:tab.id,documentIds:[probe.documentId]},files:['bridge.js']});
   status.textContent='已连接。请回工作台选择已打开的商品页面。';

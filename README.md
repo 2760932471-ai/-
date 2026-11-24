@@ -1,6 +1,6 @@
-# AI数字员工协作工作台 · V0.20.0
+# AI数字员工协作工作台 · V0.20.1
 
-[下载 V0.20.0 启动包](deliverables/ai-platform-0.20.0.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
+[下载 V0.20.1 启动包](deliverables/ai-platform-0.20.1.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
 
 V0.19.2：任务流页新增“单商品出图体验”，银色水龙头概念样张可直接查看、下载；一键创建主图＋详情图目标。样张为预先生成，不冒充实时结果；完整后端需图片服务。
 
@@ -147,3 +147,7 @@ npm run deploy:preview
 `demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.19.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
 
 `src/workforce/`包含能力目录、Skill、员工配置、模型/API/Codex适配、执行循环与团队任务。`public/workforce.js`为员工和能力中心界面。旧版规则与模拟发布保留兼容，V0.2说明及PRD中未实现条款不能当作本版已交付能力。
+
+### 在私有 Codespaces 中连接 Codex
+
+在运行工作台的 Codespace 项目目录执行 `npm run setup:codex`。用 `npx --no-install codex login status` 检查该终端使用的账号；需要登录时执行 `npx --no-install codex login --device-auth` 并按提示完成授权。停止原来的 Node 服务，在 Bash 中执行 `ENABLE_CODEX_LOCAL=1 npm start`，将转发的 3000 端口设为 Private。进入「AI基础能力配置 → 模型连接」测试，再到「任务流 → 总控执行设置」选择该连接。已有目标可通过「重新规划」采用新配置。

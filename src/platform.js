@@ -49,7 +49,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const research=createResearchManager({getData:()=>data,transaction,sources,event,integrations});
  const production=createProductionManager({getData:()=>data,transaction,images,event});
  const flows=createTaskflowManager({getData:()=>data,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall:flowSkillCall});
- await transaction(d=>{for(const g of d.goals.filter(g=>g.mode==='flow')){if(g.flow.status==='planning_running'){g.flow.status='planning_failed';g.flow.error='服务重启中断规划，请重新规划';}for(const n of g.flow.nodes)if(n.status==='running'){n.status='failed';n.error='服务重启中断执行，请核查后重试';}}});
+ await transaction(d=>{for(const g of d.goals.filter(g=>g.mode==='flow')){for(const n of g.flow.nodes.filter(n=>n.status==='needs_input'&&!n.missing)){n.missing=d.runs.find(r=>r.id===n.runId)?.result?.missing||[];}if(g.flow.status==='planning_running'){g.flow.status='planning_failed';g.flow.error='服务重启中断规划，请重新规划';}for(const n of g.flow.nodes)if(n.status==='running'){n.status='failed';n.error='服务重启中断执行，请核查后重试';}}});
  const team=createTeamManager({getData:()=>data,transaction,enqueue,inputs,event,sources,knowledge,images});
  await transaction(async d=>{await team.syncPending(d);for(const g of d.goals)if(g.mode==='team'&&isResearchGoal(g)&&!g.research){g.research=collectResearch(d,g);if(['plan','draft'].includes(g.stage))g.researchRequest={id:randomUUID(),version:g.version,question:g.text};}});
  function enqueue(d,agentId,input,meta={},override){

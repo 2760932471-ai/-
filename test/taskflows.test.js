@@ -52,3 +52,15 @@ test('image task waits for actual image delivery rather than accepting a brief',
 test('call budget blocks excess work and settings revisions reject lost updates',async t=>{
  const {p}=await make(t,{flowSkillCall:async id=>result(id)});const cfg=p.flows.view().settings;await p.flows.saveSettings({...cfg,maxCalls:4});await assert.rejects(()=>p.flows.saveSettings(cfg),/已更新/);const g=await create(p,'为水龙头制作标题、卖点和视频脚本');for(let i=0;i<4;i++)await p.pump();assert.equal(get(p,g).flow.calls,4);assert.match(get(p,g).flow.nodes.at(-1).error,/调用上限/);await assert.rejects(()=>act(p,g,'complete'),/未完成/);
 });
+test('blocked comparison exposes missing inputs and resumes in place with operator quotes',async t=>{
+ const {p}=await make(t),g=await create(p,'选品，比较两款水龙头的报价');
+ await p.pump();await p.pump();
+ const compare=get(p,g).flow.nodes.find(n=>n.capability==='product.compare');
+ assert.equal(compare.status,'needs_input');assert.match(compare.missing.join(''),/候选商品/);
+ const evidenceRun=get(p,g).flow.nodes[0].runId;
+ const data={nodeId:compare.id,candidates:[{sku:'A',price:10,source:'报价单 A'},{sku:'B',price:12,source:'报价单 B'}]};
+ await assert.rejects(()=>act(p,g,'supplyOffers',{...data,candidates:[data.candidates[0]]}),/候选商品/);
+ await act(p,g,'supplyOffers',data);await assert.rejects(()=>act(p,g,'supplyOffers',data),/已更新/);
+ await p.pump();await p.pump();const updated=get(p,g);assert.equal(updated.stage,'review');assert.equal(updated.version,1);
+ assert.equal(updated.flow.nodes[0].runId,evidenceRun);assert(updated.artifacts.some(a=>a.body.includes('报价单 B')));
+});

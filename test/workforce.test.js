@@ -104,3 +104,15 @@ test('personal Codex bridge is opt-in, uses SDK ChatGPT auth and returns decisio
   assert.equal(result.message.tool_calls[0].function.name,'product_validate');assert.equal(captured.config.forced_login_method,'chatgpt');assert.equal(captured.config.features.shell_tool,false);assert.equal(captured.env.PLATFORM_TOKEN,undefined);assert.equal(captured.env.MODEL_SECRET_PRIVATE,undefined);assert.deepEqual(captured.configOverrides,['mcp_servers={}']);
  }finally{for(const k of vars)if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];}
 });
+test('Codex without tools preserves the planner JSON for normal taskflow validation',async t=>{
+ const {callLocalCodex}=await import('../src/workforce/codex-local.js');
+ const original=process.env.ENABLE_CODEX_LOCAL;process.env.ENABLE_CODEX_LOCAL='1';
+ t.after(()=>original===undefined?delete process.env.ENABLE_CODEX_LOCAL:process.env.ENABLE_CODEX_LOCAL=original);
+ const answer='{"name":"选品","nodes":[]}';
+ class FakeCodex {startThread(){return {run:async(prompt,{outputSchema})=>{
+  assert(prompt.includes('只返回任务流 JSON'));assert.deepEqual(outputSchema.required,['answer']);
+  return {finalResponse:JSON.stringify({answer})};
+ }};}}
+ const r=await callLocalCodex({timeoutMs:1000},[{role:'system',content:'只返回任务流 JSON'}],[],{CodexClass:FakeCodex});
+ assert.equal(r.message.content,answer);
+});
