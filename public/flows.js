@@ -18,7 +18,7 @@ export function createFlowsUI({pickBrowser,state,api,esc,badge,act,receive,refre
   if(n.imageJobId)return '<button class="secondary" data-view="ai-config/images">查看图片任务</button>';
   if(n.capability==='analysis.reason'&&!g.flow.model)return '<button class="primary" data-view="flows">选择总控模型</button><small>设置完成后，重新规划以使用新模型。</small>';
   const dest=n.capability==='market.offers'?'ai-config/market':n.capability.startsWith('image.')&&/服务|模型/.test(n.error||'')?'ai-config/images':null;
-  return (dest?'<button class="primary" data-view="'+dest+'">打开连接配置</button>':'<button class="secondary" data-tab="facts">查看与补充资料</button>')+retry;
+  return (dest?'<button class="primary" data-view="'+dest+'" '+(dest==='ai-config/market'?'data-market-method="api"':'')+'>打开连接配置</button>':'<button class="secondary" data-tab="facts">查看与补充资料</button>')+retry;
  }
  function panel(g){
   const f=g.flow,nodes=f.nodes,done=nodes.filter(n=>n.status==='succeeded').length;

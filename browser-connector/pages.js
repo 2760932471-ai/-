@@ -1,5 +1,5 @@
 // These functions run in the isolated world of the selected platform tab.
-export function readProduct(){
+export function readProduct(identifyOnly=false){
  if(location.protocol!=='https:'||!/(^|\.)meituan\.com$/.test(location.hostname))throw Error('商品页面已切换，请重新选择。');
  const visible=el=>el?.getClientRects().length&&getComputedStyle(el).visibility==='visible';
  const value=selector=>{
@@ -7,6 +7,7 @@ export function readProduct(){
   return nodes.length===1?nodes[0].innerText.trim():'';
  };
  const title=value('[itemprop="name"]')||value('main h1')||value('h1');
+ if(identifyOnly)return !!title&&!!(value('[itemprop="price"]')||/\/(?:deal|product|goods|detail)(?:[/.]|$)/i.test(location.pathname));
  if(!title)throw Error('未识别到唯一商品标题。请打开单件商品详情页。');
  return {title:title.slice(0,160),price:value('[itemprop="price"]').slice(0,60),
   terms:value('[itemprop="description"]').slice(0,1500),host:location.hostname};
@@ -27,6 +28,7 @@ export function fillDraft(draft){
   return [key,matches[0]];
  });
  if(new Set(mapped.map(([,el])=>el)).size!==3)throw Error('字段有歧义，请人工核对。');
+ if(draft===null)return true;
  for(const [key,el] of mapped){
   if(el.value.trim()&&el.value!==draft[key])throw Error('表单已有不同内容，请先核对已有草稿。');
   if(el.maxLength>=0&&draft[key].length>el.maxLength)throw Error('草稿超出网页字段长度，请缩短后再试。');

@@ -2,7 +2,7 @@ import {createStockNotices} from './stock-notices.js';
 import {createVoucherUI} from './vouchers.js';
 import {createCloudBrowser} from './cloud-browser.js';
 import {createStoreUI} from './store-operations.js';
-export function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWorkspace,currentWorkspace}){
+export function createSetupUI({startPick,state,api,esc,badge,toast,refresh,render,switchWorkspace,currentWorkspace}){
  const $=s=>document.querySelector(s),post=(route,input={},method='POST')=>api(route,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
  const platforms={taobao:'淘宝 / 天猫',douyin:'抖店','1688':'1688',xianyu:'闲鱼',meituan:'美团',shopify:'Shopify',other:'其他平台'};
  const data=()=>state.integrations||{search:{revision:0,provider:'tavily',endpoint:'https://api.tavily.com/search',secretEnv:'SEARCH_SECRET_PRIMARY'},stores:[],history:[]};
@@ -35,12 +35,12 @@ export function createSetupUI({state,api,esc,badge,toast,refresh,render,switchWo
  let selection=null,searchSeq=0;
  const listingStatus={draft:'待确认',submitting:'正在提交',unknown:'结果待核对，请查看店铺后台',published:'平台已返回发布回执'};
  const vouchers=createVoucherUI({api,post,esc,render,toast,state,currentWorkspace});
- const browser=createCloudBrowser({esc,render,currentWorkspace,post,refresh});
+ const browser=createCloudBrowser({startPick,esc,render,currentWorkspace,post,refresh});
  const requestedMethod=new URLSearchParams(location.search).get('method');
- let marketMethod=['browser','vouchers'].includes(requestedMethod)?requestedMethod:'api';
+ let marketMethod=['api','vouchers'].includes(requestedMethod)?requestedMethod:'browser';
  document.addEventListener('click',e=>{const b=e.target.closest('[data-market-method]');if(b){marketMethod=b.dataset.marketMethod;render(true);}});
  function marketPage(){
-  const methods=`<div class="workforce-tabs" role="group" aria-label="平台连接方式">${[['api','授权接口'],['browser','云电脑浏览器'],['vouchers','静态券库']].map(([id,name])=>`<button data-market-method="${id}" class="${marketMethod===id?'active':''}" aria-pressed="${marketMethod===id}">${name}</button>`).join('')}</div>`;
+  const methods=`<div class="workforce-tabs" role="group" aria-label="平台连接方式">${[['browser','云电脑浏览器'],['api','授权接口'],['vouchers','静态券库']].map(([id,name])=>`<button data-market-method="${id}" class="${marketMethod===id?'active':''}" aria-pressed="${marketMethod===id}">${name}</button>`).join('')}</div>`;
   if(marketMethod==='vouchers')return methods+vouchers.page();
   if(marketMethod==='browser')return methods+browser.page();
   const sources=(state.sources?.sources||[]).filter(s=>s.kind==='supplier'&&s.enabled&&s.mode==='http'&&s.offerPlatform);
