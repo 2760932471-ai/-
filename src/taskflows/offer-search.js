@@ -1,3 +1,4 @@
+import {offerPhotos,embeddedOfferCandidates} from '../../public/offer-photos.js';
 import {sourcingURL,cleanOffers} from '../../public/sourcing.js';
 
 // Read only published Product offers on the official search page. Pages rendered
@@ -46,7 +47,7 @@ export async function searchPublicOffers(query){
 }
 
 export function publicOfferDetail(html,sku){
- const facts=[];let photo='';
+ const facts=[],schemaImages=[];
  for(const match of html.matchAll(/<script\b[^>]*\btype=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){
   try{
    const data=JSON.parse(match[1]);
@@ -54,12 +55,17 @@ export function publicOfferDetail(html,sku){
     if(item?.['@type']!=='Product'||item.url&&new URL(item.url,'https://detail.1688.com').pathname!=='/offer/'+sku+'.html')continue;
     for(const p of [item.additionalProperty||[]].flat())facts.push(p.name+'：'+p.value);
     for(const [key,label]of [['material','材质'],['color','颜色'],['size','尺寸']])if(typeof item[key]==='string')facts.push(label+'：'+item[key]);
-    const image=[item.image].flat()[0];photo||=typeof image==='string'?image:image?.url;
+    for(const image of [item.image].flat())schemaImages.push(typeof image==='string'?image:image?.url);
    }
   }catch{}
  }
- photo||=html.match(/<meta\b[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)?.[1]||'';
- return {sku,photo,facts};
+ const meta=[];
+ for(const [tag] of html.matchAll(/<meta\b[^>]*>/gi)){
+  if(/(?:property|name)\s*=\s*["'](?:og:image|twitter:image)["']/i.test(tag))meta.push(tag.match(/content\s*=\s*["']([^"']+)["']/i)?.[1]);
+ }
+ const scripts=Array.from(html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi),m=>m[1]);
+ const photos=offerPhotos(embeddedOfferCandidates(sku,scripts),schemaImages,meta);
+ return {sku,photo:photos[0]||'',photos,facts};
 }
 
 export async function fetchOfferDetail(sku){

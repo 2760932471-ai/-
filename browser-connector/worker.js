@@ -1,4 +1,5 @@
-import {openOfferDetail} from './offer-detail.js';
+import {readOfferCards} from './offer-cards.js';
+import {openOfferDetail,downloadSelectedPhoto} from './offer-detail.js';
 import {collectSearch,readSearch,rememberSearch} from './collect-1688.js';
 import {readProduct,fillDraft} from './pages.js';
 const sites=[
@@ -39,7 +40,21 @@ async function run(cmd,sender,restored=false){
   }));
   return groups.flat();
  }
- if(cmd.op==='offerDetail')return openOfferDetail(cmd.sku,sender.tab.windowId);
+ if(cmd.op==='offerDetail'){
+  const windowId=sender.tab.windowId;
+  const detail=await openOfferDetail(cmd.sku,windowId);
+  if(!cmd.download)return detail;
+  const url='https://detail.1688.com/offer/'+cmd.sku+'.html',cardImages=[];
+  // A search result can still have the photograph when a detail page is gated.
+  const tabs=await chrome.tabs.query({windowId,url:'https://s.1688.com/selloffer/offer_search.htm*'});
+  for(const t of tabs.slice(0,8)){
+   try{
+    const [scan]=await chrome.scripting.executeScript({target:{tabId:t.id},func:readOfferCards,args:[]});
+    const row=scan.result?.find(r=>r.url===url);if(row)cardImages.push(row.photo,...(row.photos||[]));
+   }catch{}
+  }
+  return downloadSelectedPhoto(detail,cardImages);
+ }
  if(cmd.op==='openSearch'){
   if(typeof cmd.query!=='string'||!cmd.query.trim()||cmd.query.length>60||!/^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.test(cmd.key))throw Error('目标搜索参数无效');
   const url=new URL('https://s.1688.com/selloffer/offer_search.htm');
@@ -75,7 +90,7 @@ chrome.runtime.onMessageExternal?.addListener((cmd,sender,reply)=>{
   (async()=>{
    const {pair}=await chrome.storage.session.get('pair');
    const paired=matchesPair(pair,cmd,sender,true)&&
-    await chrome.permissions.contains({origins:['https://*.meituan.com/*','https://*.goofish.com/*']});
+    await chrome.permissions.contains({origins:cmd.action==='offerDetail'?['https://detail.1688.com/*']:['https://*.meituan.com/*','https://*.goofish.com/*']});
    if(cmd.action==='status')return {installed:true,paired};
    if(!paired||!['tabs','disconnect','read','fill','openSearch','offerDetail'].includes(cmd.action))throw Error('请先在扩展中连接当前工作空间。');
    // A restored tab may have a new document. The external request already
@@ -84,5 +99,21 @@ chrome.runtime.onMessageExternal?.addListener((cmd,sender,reply)=>{
   })().then(value=>reply({value}),e=>reply({error:e.message}));return true;
  }
  if(cmd.op!=='pick1688'||typeof cmd.key!=='string'||!/^[a-z0-9-]{32,64}$/i.test(cmd.key)||typeof cmd.query!=='string'||!cmd.query||cmd.query.length>60)return;
+ if(cmd.photoSku){
+  if(!/^\d{1,24}$/.test(cmd.photoSku))return;
+  (async()=>{
+   const {rows}=await readSearch(cmd,sender),url='https://detail.1688.com/offer/'+cmd.photoSku+'.html';
+   const selected=rows?.find(r=>r.url===url);
+   if(!selected)return {sku:cmd.photoSku,reason:'原搜索窗口没有这款商品的记录'};
+   let photos=selected.photos||[];
+   const tabs=await chrome.tabs.query({windowId:sender.tab.windowId,url:'https://s.1688.com/selloffer/offer_search.htm*'});
+   const tab=tabs.find(t=>new URL(t.url).hash==='#pick-'+cmd.key&&new URL(t.url).searchParams.get('keywords')===cmd.query);
+   if(tab){
+    const [scan]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readOfferCards,args:[]});
+    const card=scan.result?.find(r=>r.url===url);if(card)photos=[card.photo,...(card.photos||[]),...photos];
+   }
+   return downloadSelectedPhoto({sku:cmd.photoSku,facts:[],photo:selected.photo},photos);
+  })().then(reply,()=>reply({sku:cmd.photoSku,reason:'原搜索页暂时无法读取商品图'}));return true;
+ }
  readSearch(cmd,sender).then(({rows,phase,message})=>reply({rows,phase,message}),()=>reply({phase:'unavailable',message:'搜索页已变化，请返回原搜索结果，工作台将再次读取。'}));return true;
 });

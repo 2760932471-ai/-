@@ -1,4 +1,5 @@
-import {selectedOffer,offerFacts,offerPhoto,sourcingReport,sourcingIntent,cleanOffers,rankedOffers} from '../../public/sourcing.js';
+import {offerPhoto,offerPhotos} from '../../public/offer-photos.js';
+import {selectedOffer,offerFacts,sourcingReport,sourcingIntent,cleanOffers,rankedOffers} from '../../public/sourcing.js';
 import {searchPublicOffers,fetchOfferDetail} from './offer-search.js';
 import {randomUUID} from 'node:crypto';
 import {flowDefaults,flowTemplates,flowCapabilities} from './catalog.js';
@@ -95,9 +96,14 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='succeeded');
    const waiting=g.flow.nodes.filter(n=>n.status==='needs_input'&&n.preparation?.candidate?.sku===input.detail?.sku&&(n.detailDeadline||n.capability.startsWith('image.')&&!n.imageJobId&&n.error?.includes('所选商品的参考图')));
    if(!waiting.length||!pick)fail('商品详情请求已变更');
-   const product=selectedOffer(pick.offers,sourcingIntent(g.text),g.text);
-   if(product?.sku!==input.detail.sku)fail('商品已变更');
+   const product=pick.offers.find(o=>o.sku===input.detail.sku);
+   if(!product)fail('商品已变更');
    const updated=mergeDetail(product,input.detail);
+   if(input.detail.base64){
+    const url=offerPhoto(input.detail.photo);
+    if(!url||updated.photo!==url)fail('图片来源与所选商品不一致');
+    pick.downloadedPhoto=await images.storeOfferPhoto(url,product.sku,input.detail.base64);
+   }
    pick.offers=pick.offers.map(o=>o.sku===product.sku?updated:o);
    for(const n of waiting){
     if(n.detailDeadline||updated.photo){n.status='pending';n.error=null;n.missing=[];}
@@ -148,15 +154,15 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    event(g,(proposed.planner==='model'?'总控模型':'基础组合器')+'已'+(proposed.source==='template'?'选择任务流：':'创建任务流：')+proposed.name+'。'+proposed.rationale+' 独立分支可并行执行；新能力设计保留并先验证。');sync(g);
   });
  }
- async function enrich(offer){
-  if(offer.photo&&offer.facts?.length)return offer;
+ async function enrich(offer,refresh=false){
+  if(!refresh&&offer.photo&&offer.facts?.length)return offer;
   let detail;
   try{detail=await offerDetail(offer.sku);}catch{}
   return mergeDetail(offer,detail);
  }
  function mergeDetail(offer,detail){
   if(!detail||detail.sku!==offer.sku)return offer;
-  return cleanOffers([{...offer,photo:offerPhoto(detail.photo)||offer.photo,facts:offerFacts([...(Array.isArray(detail.facts)?detail.facts:[]),...(offer.facts||[])])}])[0];
+  return cleanOffers([{...offer,photo:offerPhoto(detail.photo)||offer.photo,photos:offerPhotos(detail.photos,offer.photos),facts:offerFacts([...(Array.isArray(detail.facts)?detail.facts:[]),...(offer.facts||[])])}])[0];
  }
  async function perform(g,n){
   const d=getData(),direct=new Set(n.dependsOn.flatMap(id=>g.flow.nodes.find(x=>x.id===id)?.artifactIds||[]));
@@ -236,7 +242,31 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(/找|搜|选品/.test(g.text)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
    const config=images.view().config;if(!config.enabled||!config.credentialConfigured)return {...blocked('图片服务未就绪，请在 AI基础能力配置连接图片模型。'),preparation:prep};
    const listing=ranked.length&&/上架|淘宝|天猫/.test(g.text)&&!/概念图|概念稿/.test(g.text);
-   if((listing||n.requireReference)&&!prep.referenceId&&!prep.offerPhoto)return {...blocked('正在等所选商品的参考图。工作台会读取 1688 商品详情图；也可在讨论中上传这款商品的白底图。'),preparation:prep};
+   if(pick&&!prep.referenceId&&(listing||n.requireReference||prep.offerPhoto)){
+    const sku=prep.candidate?.sku;
+    let saved=[pick.downloadedPhoto,n.preparation?.downloadedPhoto].find(file=>file&&file.sku===sku);
+    const chosen=ranked.find(row=>row.sku===sku);
+    const tried=new Set();
+    async function tryPhotos(candidates){
+     for(const url of candidates){
+      if(saved||tried.size>=5)break;
+      if(tried.has(url))continue;
+      tried.add(url);
+      try{saved=await images.storeOfferPhoto(url,sku);}catch{}
+     }
+    }
+    await tryPhotos(offerPhotos(prep.offerPhoto,chosen?.photos).slice(0,3));
+    if(!saved&&chosen){
+     const refreshed=await enrich(chosen,true);
+     await tryPhotos(offerPhotos(refreshed.photo,refreshed.photos));
+    }
+    if(!saved){
+     const tries=(n.photoAttempts||0)+1;
+     const reason=tried.size?'商品页提供的图片暂时无法下载。':'公开详情页暂未返回可用的商品图。';
+     return {...blocked('正在获取所选商品的参考图。'+reason+'工作台将从 1688 浏览器页面继续取图。'),preparation:prep,photoAttempts:tries,nextPhotoTry:Date.now()+30000*tries};
+    }
+    prep.offerPhoto=saved.url;prep.downloadedPhoto=saved;
+   }
    const j=await images.create({requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+g.text].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
    return {status:'waiting_external',summary:'图片请求已提交，等待真实图片结果',imageJobId:j.id,preparation:prep,artifacts:[]};
   }
@@ -255,6 +285,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  }
  function runnable(g,n){
   if(n.status==='pending')return true;
+  if(n.status==='needs_input'&&n.capability.startsWith('image.')&&!n.imageJobId&&n.error?.includes('所选商品的参考图')&&(n.photoAttempts||0)<3&&Date.now()>=(n.nextPhotoTry||0))return true;
   if(n.status==='needs_input'&&n.detailDeadline&&n.error?.includes('正在读取所选商品')&&Date.now()>=n.detailDeadline)return true;
   if(n.status==='needs_input'&&n.capability.startsWith('copy.')&&!n.preparation&&n.missing?.some(msg=>msg.includes('商品名称'))&&g.flow.nodes.some(p=>p.capability==='sourcing.1688'&&p.status==='succeeded'&&p.offers?.length))return true;
   // Resume only the legacy placeholder-SKU failure before an image job existed.
@@ -269,7 +300,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   let result,error;try{const live=find(getData(),id);if(live.version!==snapshot.g.version||live.paused)throw new Error('目标暂停或已更新');sources.resolve(live);if(snapshot.g.flow.model){const current=getData().models.find(m=>m.id===snapshot.g.flow.model.id);if(current?.revision!==snapshot.g.flow.model.revision)throw new Error('模型配置已变化，请重新规划');}result=await perform(snapshot.g,snapshot.n);if(!result||!['succeeded','needs_input','needs_capability','waiting_external'].includes(result.status)||!Array.isArray(result.artifacts))throw new Error('能力返回格式不正确');}catch(e){error=String(e.message).slice(0,1000);}
   await transaction(d=>{const g=find(d,id),r=d.runs.find(r=>r.id===snapshot.n.runId);if(g.version!==snapshot.g.version){r.status='discarded';r.error='目标已变更，旧结果不应用';r.finishedAt=now();return;}
    const n=g.flow.nodes.find(n=>n.id===nodeId);n.status=error?'failed':result.status;n.error=error||(['needs_input','needs_capability'].includes(result.status)?result.summary:null);n.finishedAt=now();n.missing=result?.missing||[];
-   if(result)for(const key of ['recall','discovery','preparation','imageJobId','offers','offerSource','detailChecked','detailDeadline'])if(result[key])n[key]=result[key];
+   if(result)for(const key of ['recall','discovery','preparation','imageJobId','offers','offerSource','detailChecked','detailDeadline','photoAttempts','nextPhotoTry'])if(result[key])n[key]=result[key];
    for(const a of result?.artifacts||[]){const artifact={...a,id:randomUUID(),goalId:id,taskId:nodeId,version:g.version,status:'draft',agent:'taskflow',agentName:n.title,runId:n.runId};g.artifacts.push(artifact);n.artifactIds.push(artifact.id);}
    Object.assign(r,{status:n.status,result:result||null,error:n.error,finishedAt:n.finishedAt});if(result?.report)g.messages.push({id:randomUUID(),role:'coordinator',author:'目标总控',at:now(),text:result.report.text,artifactIds:result.report.imageIds,links:result.report.source?[{title:'查看所选商品',url:result.report.source,snippet:''}]:[],reportVersion:g.version});
    else event(g,n.title+'：'+(n.error||result.summary));sync(g);

@@ -1,4 +1,5 @@
-import {sourcingIntent,sourcingURL,rankedOffers,selectedOffer,offerPhoto} from './sourcing.js';
+import {offerPhoto,offerPhotos} from './offer-photos.js';
+import {sourcingIntent,sourcingURL,rankedOffers,selectedOffer} from './sourcing.js';
 import {readOfferCards} from './offer-cards.js';
 
 export function createPickBrowser({state,act,esc,render}){
@@ -17,15 +18,23 @@ export function createPickBrowser({state,act,esc,render}){
   render(true);
  }
  function reserve(){const tab=window.open('about:blank','_blank');if(tab)tab.opener=null;return tab;}
- async function readSelected(sku){
+ async function readSelected(sku,download=false,g){
   const runtime=globalThis.chrome?.runtime;
-  if(!runtime?.sendMessage)return null;
-  return new Promise(resolve=>{
-   const timer=setTimeout(()=>resolve(null),9000);
-   try{runtime.sendMessage(extension,{op:'workspaceBrowser',action:'offerDetail',workspace:sessionStorage.getItem('workspaceId')||'default',sku},r=>{
-    clearTimeout(timer);resolve(!runtime.lastError&&r?.value?.sku===sku?r.value:null);
+  if(!runtime?.sendMessage)return {sku,reason:'当前浏览器没有可用的 1688 连接器'};
+  const send=(message,timeout)=>new Promise(resolve=>{
+   const timer=setTimeout(()=>resolve(null),timeout);
+   try{runtime.sendMessage(extension,message,r=>{
+    clearTimeout(timer);resolve(runtime.lastError?null:r);
    });}catch{clearTimeout(timer);resolve(null);}
   });
+  const response=await send({op:'workspaceBrowser',action:'offerDetail',workspace:sessionStorage.getItem('workspaceId')||'default',sku,download},download?44000:9000);
+  const detail=response?.value?.sku===sku?response.value:null;
+  const saved=g&&session(g);
+  if(download&&!detail?.base64&&saved){
+   const card=await send({op:'pick1688',key:saved.key,query:sourcingIntent(g.text)?.query,photoSku:sku},35000);
+   if(card?.sku===sku&&card.base64)return {...card,facts:detail?.facts||[]};
+  }
+  return detail||{sku,reason:response?.error||'请在当前窗口连接新版 1688 浏览器扩展'};
  }
  function scan(g,entry){
   const key=storageKey(g),s=session(g),node=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
@@ -40,7 +49,7 @@ export function createPickBrowser({state,act,esc,render}){
   getReply().then(async res=>{
    if(jobs.get(key)!==entry||!state.goals.some(x=>x.id===g.id&&x.version===g.version)||session(g)?.key!==s.key)return;
    if(!res.phase&&(res.rows?.length||0)<2){
-    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.6.0 后，工作台会自动向下浏览并读取更多商品。';
+    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.7.0 后，工作台会自动向下浏览并读取更多商品。';
     if(!res.rows?.length)return;
    }else entry.phase=res.phase||'scanning';
    const rows=res.rows||[];
@@ -55,7 +64,7 @@ export function createPickBrowser({state,act,esc,render}){
     if(chosen){
      entry.message='正在打开所选商品详情，读取属性和参考图。';render(true);
      const detail=await readSelected(chosen.sku);
-     if(detail)rows.unshift({...chosen,facts:detail.facts,photo:offerPhoto(detail.photo)||chosen.photo});
+     if(detail)rows.unshift({...chosen,facts:detail.facts,photo:offerPhoto(detail.photo)||chosen.photo,photos:offerPhotos(detail.photos,chosen.photos)});
     }
    }
    await act('browserOffers',{expectedVersion:g.version,query,rows},g.id);
@@ -131,11 +140,22 @@ export function createPickBrowser({state,act,esc,render}){
   for(const g of state.goals){
    if(g.mode!=='flow'||g.paused)continue;
    const missing=g.flow.nodes.find(n=>n.status==='needs_input'&&(n.error?.includes('所选商品的参考图')||n.detailDeadline)&&n.preparation?.candidate);
-   if(missing&&g.id===state.goal&&!document.hidden){
+   if(missing&&(g.id===state.goal||session(g))){
     const sku=missing.preparation.candidate.sku,key=storageKey(g)+'-detail-'+sku;
-    if(jobs.get(key)?.attempt!==missing.attempts||!jobs.has(key)){
-     const request={attempt:missing.attempts,busy:true};jobs.set(key,request);
-     readSelected(sku).then(detail=>{if(detail&&(missing.detailDeadline||offerPhoto(detail.photo)))return act('offerDetail',{detail,expectedVersion:g.version},g.id);}).catch(()=>{}).finally(()=>{request.busy=false;});
+    const previous=jobs.get(key);
+    if(!previous?.busy&&(!previous||previous.attempt!==missing.attempts||Date.now()>=previous.next)){
+     const request={attempt:missing.attempts,busy:true,failures:previous?.failures||0};jobs.set(key,request);
+     const download=g.flow.nodes.some(n=>n.capability.startsWith('image.')&&n.status==='needs_input'&&n.preparation?.candidate?.sku===sku&&n.error?.includes('所选商品的参考图'));
+     readSelected(sku,download,g).then(async detail=>{
+      const row=g.flow.nodes.find(n=>n.capability==='sourcing.1688')?.offers?.find(o=>o.sku===sku);
+      const known=offerPhotos(row?.photo,row?.photos);
+      const fresh=offerPhotos(detail?.photo,detail?.photos).some(url=>!known.includes(url));
+      if(detail&&(detail.base64||missing.detailDeadline||fresh))await act('offerDetail',{detail,expectedVersion:g.version},g.id);
+      else request.message=detail?.reason||'连接器暂未读到商品图，请检查是否已更新扩展。';
+     }).catch(e=>{request.message=e.message;}).finally(()=>{
+      request.busy=false;request.next=Date.now()+Math.min(120000,15000*2**Math.min(request.failures++,3));
+      if(request.message)render(true);
+     });
     }
    }
    if(!g.flow.nodes.some(n=>n.capability==='sourcing.1688'&&n.status==='needs_input'))continue;
@@ -149,5 +169,6 @@ export function createPickBrowser({state,act,esc,render}){
   checkGoals();
  });
 
- return {reserve,openSearch,panel,hasQuery:g=>!!sourcingIntent(g.text)?.query};
+ function photoStatus(g,n){return jobs.get(storageKey(g)+'-detail-'+n.preparation?.candidate?.sku)?.message||'';}
+ return {reserve,openSearch,panel,photoStatus,hasQuery:g=>!!sourcingIntent(g.text)?.query};
 }

@@ -1,4 +1,4 @@
-import {offerPhoto} from '../public/sourcing.js';
+import {offerPhoto} from '../public/offer-photos.js';
 import {runCodexImage,codexImageStatus} from './codex-image.js';
 import {validateDestination} from './agents/registry.js';
 import {mkdir,writeFile,readFile,rename} from 'node:fs/promises';
@@ -29,6 +29,11 @@ function geminiResult(out){
  if((inline.mimeType||inline.mime_type)!=='image/png')throw safe('Gemini 返回的图片不是当前支持的 PNG 格式','unknown');return inline.data;
 }
 async function referenceImage(url,{request,resolve,signal,supplierPhoto}){const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw safe('商品参考图地址无效');const check=new URL(u);check.search='';check.hash='';await validateDestination(check.href,resolve,supplierPhoto&&offerPhoto(url)===url?[u.hostname]:undefined);const r=await request(u.href,{redirect:'error',signal});if(!r.ok)throw safe('商品参考图读取失败');const buffer=await bytes(r,10000000,signal),mime=r.headers.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime))throw safe('参考图需为 PNG、JPEG 或 WebP');return {buffer,mime};}
+export async function downloadOfferPhoto(url,{fetch:request=fetch,resolve}={}){
+ if(!offerPhoto(url)||offerPhoto(url)!==url)throw safe('商品原图链接无效');
+ const source=await referenceImage(url,{request,resolve,signal:AbortSignal.timeout(7000),supplierPhoto:true});
+ return source.buffer.toString('base64');
+}
 export async function generateImage(config,input,{fetch:request=fetch,resolve,codexCall=runCodexImage}={}){
  if(config.provider==='codex_local'){
   const reference=input.upload||(input.referenceUrl?await referenceImage(input.referenceUrl,{request,resolve,supplierPhoto:input.offerPhoto,signal:AbortSignal.timeout(30000)}):null);

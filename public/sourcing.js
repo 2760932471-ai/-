@@ -1,3 +1,4 @@
+import {offerPhoto as normalizeOfferPhoto,offerPhotos} from './offer-photos.js';
 // Shared by goal creation and the task runner so that both search the same category.
 export function sourcingIntent(text){
  if(typeof text!=='string'||!/1688|阿里巴巴/.test(text)||!/选品|筛选|找|搜|挑|选购|推荐|比价|挑选|选一|选几/.test(text))return null;
@@ -17,13 +18,7 @@ export function sourcingURL(query){
  url.searchParams.set('keywords',query);url.searchParams.set('charset','utf8');return url.href;
 }
 // 1688 offer photography is served from the ibank directories on these CDNs.
-export function offerPhoto(value){
- try{
-  const u=new URL(value,'https://cbu01.alicdn.com');
-  if(typeof value!=='string'||!/^(?:https:)?\/\//i.test(value)||u.protocol!=='https:'||u.username||u.password||u.port||!['cbu01.alicdn.com','cbu02.alicdn.com','img.alicdn.com'].includes(u.hostname)||!/^\/img\/ibank\/[a-zA-Z0-9_.\/-]+\.(?:png|jpe?g|webp)$/i.test(u.pathname))return '';
-  return u.origin+u.pathname;
- }catch{return '';}
-}
+export function offerPhoto(value){return normalizeOfferPhoto(value);}
 export function offerFacts(values){
  const field=/^(?:镜框材质|镜架材质|镜片材质|镜架颜色|镜片颜色|镜框形状|镜框款式|镜架款式|镜片款式|镜框颜色|框架材质|眼镜结构|镜架结构|材质|颜色|款式|型号|规格|尺寸|风格|镜宽|镜腿长度|镜框宽度|重量|包装|表面工艺|适用人群|形状|光源类型|供电方式|接口|安装方式)[：:]\s*[^<>\n：:]{1,48}$/;
  return [...new Set((Array.isArray(values)?values:[]).filter(v=>typeof v==='string').map(v=>v.trim()).filter(v=>field.test(v)&&!/(?:待确认|未知|全网最低|100%|顶级|国家级)/.test(v)))].slice(0,8);
@@ -40,7 +35,8 @@ export function cleanOffers(rows){
   let url;try{url=new URL(row?.url);}catch{continue;}
   const id=url.pathname.match(/^\/offer\/(\d{1,24})\.html\/?$/)?.[1];
   if(url.origin!=='https://detail.1688.com'||!id||url.username||url.password||seen.has(id)||typeof row.title!=='string'||!row.title.trim()||typeof row.price!=='number'||!(row.price>0&&row.price<=1e8))continue;
-  seen.add(id);out.push({...(offerPhoto(row.photo)?{photo:offerPhoto(row.photo)}:{}),...(offerFacts(row.facts).length?{facts:offerFacts(row.facts)}:{}),sku:id,title:row.title.trim().slice(0,160),price:row.price,url:url.origin+'/offer/'+id+'.html',terms:String(row.terms||'').slice(0,120),repurchase:Number.isFinite(row.repurchase)&&row.repurchase>=0&&row.repurchase<=100?row.repurchase:null});
+  const photos=offerPhotos(row.photo,row.photos);
+  seen.add(id);out.push({...(photos.length?{photo:photos[0],photos}:{}),...(offerFacts(row.facts).length?{facts:offerFacts(row.facts)}:{}),sku:id,title:row.title.trim().slice(0,160),price:row.price,url:url.origin+'/offer/'+id+'.html',terms:String(row.terms||'').slice(0,120),repurchase:Number.isFinite(row.repurchase)&&row.repurchase>=0&&row.repurchase<=100?row.repurchase:null});
  }
  return out.slice(0,40);
 }

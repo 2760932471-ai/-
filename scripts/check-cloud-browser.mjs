@@ -20,7 +20,7 @@ try{
  await source.goto('https://example.meituan.com/deal');await target.goto('https://example.goofish.com/sell');
  await target.evaluate(()=>document.addEventListener('submit',e=>{e.preventDefault();document.title='submitted';}));
  await page.goto('http://127.0.0.1/#ai-config/market');await page.getByRole('button',{name:'云电脑浏览器',exact:true}).click();
- assert.match(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.6.0'}).getAttribute('href'),/^data:application\/zip/);
+ assert.match(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.0'}).getAttribute('href'),/^data:application\/zip/);
  await page.bringToFront();
  // Same document-bound binding used after the user grants activeTab in the extension popup.
  if(simulated){
@@ -65,7 +65,7 @@ try{
   await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
  assert.equal(await page.locator('[data-cloud-workspace] [data-new]').count(),0);
- assert(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.6.0'}).isVisible());
+ assert(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.0'}).isVisible());
  await page.locator('.sidebar-create').click();assert.equal(await page.locator('#goal').inputValue(),'');await page.locator('#close-dialog').click();
  assert.equal(await page.locator('#cloud-source').count(),0);
  await page.getByText('读取这件商品',{exact:true}).click();
@@ -90,6 +90,15 @@ try{
   const detail=await page.evaluate(()=>window.externalMessage({op:'workspaceBrowser',action:'offerDetail',workspace:'default',sku:'123'}));
   assert.equal(detail.value.sku,'123');assert(detail.value.facts.includes('镜片颜色：灰色'));assert.equal(detail.value.photo,'https://cbu01.alicdn.com/img/ibank/sample.jpg');
 
+  const fixture=await readFile('public/product-demo.png'),realFetch=globalThis.fetch;
+  try{
+   globalThis.fetch=async(url,options)=>{
+    assert.equal(url,detail.value.photo);assert.equal(options.credentials,'omit');
+    return new Response(fixture,{headers:{'content-type':'image/png'}});
+   };
+   const downloaded=await page.evaluate(()=>window.externalMessage({op:'workspaceBrowser',action:'offerDetail',workspace:'default',sku:'123',download:true}));
+   assert.equal(downloaded.value.base64,fixture.toString('base64'));
+  }finally{globalThis.fetch=realFetch;}
   await page.locator('.sidebar-create').click();await page.locator('#goal').fill('比较候选商品报价');await page.locator('#submit-task').click();
   await page.locator('.goal-tabs [data-tab=tasks]').click();await page.getByRole('button',{name:'读取或补入候选报价'}).click();
   const dialog=page.getByRole('dialog',{name:'比较候选报价'});

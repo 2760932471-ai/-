@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "电商工作台 · 云电脑连接器",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "连接工作台，自动收集 1688 搜索报价、识别美团商品与闲鱼发布表单。",
   "permissions": [
     "activeTab",
@@ -22,7 +22,15 @@
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqV1XA30J1HIvQXQofmi3Y7DRDKZzhPFxlfJWSXEo/nynEuMpKS5wHC9aq3AqIOqKEoDe7RilSjObQf+lqKb/dyCGrrg/O23kguOtxL8FghX/1Twbmbjya5Iz3/wRAtHrpJBYZBrh/vpfYMfZenhJhKJHH5TyU43zhKL4IZHzpNEV2I4i5IPEUrO6bGpmi1LAToNakxnupinntVAr1WXQcM1sKdfzGfnGn3o6v5fESy/1EKDUXQNr3qhTZqc3RZygrM+F4o8N1tp6uTQC/PG1bcFVNyYQd+ed4r07rcJFrruHrKDFgqBponuEYKPXQTZh7ovh+NWn15ozr3hgAYZJ8wIDAQAB",
   "host_permissions": [
-    "https://s.1688.com/*"
+    "https://s.1688.com/*",
+    "https://cbu01.alicdn.com/*",
+    "https://cbu02.alicdn.com/*",
+    "https://cbu03.alicdn.com/*",
+    "https://cbu04.alicdn.com/*",
+    "https://img.alicdn.com/*",
+    "https://imgextra.alicdn.com/*",
+    "https://gw.alicdn.com/*",
+    "https://img1.alicdn.com/*"
   ],
   "externally_connectable": {
     "matches": [

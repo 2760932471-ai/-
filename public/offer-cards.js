@@ -26,8 +26,16 @@ export function readOfferCards(root=document){
    const price=Number(quote[1].replaceAll(',',''));if(!Number.isFinite(price)||price<=0)continue;
    const rate=body.match(/(?:回购率|回头率)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*%/);
    const terms=body.match(/(?:\d+\s*(?:件|个|套|箱|只)\s*起(?:批|订)|(?:起批量|起订量)\s*[:：]?\s*\d+\s*(?:件|个|套|箱|只))/)?.[0]||'起订量待核对';
-   const img=card.querySelector('img'),photo=img?.getAttribute('data-src')||img?.getAttribute('data-lazy-src')||img?.currentSrc||img?.getAttribute('src');
-   rows.push({...(photo?{photo}:{}),url,title:title.slice(0,160),price,repurchase:rate?Number(rate[1]):null,terms});seen.add(url);break;
+   // Some cards wrap the photo and the price in separate links to the same SKU.
+   let product=card;
+   for(let i=0;!product.querySelector('img')&&i<3&&product.parentElement;i++){
+    const parent=product.parentElement;
+    if([...parent.querySelectorAll('a[href*="/offer/"]')].some(link=>detail(link)!==url))break;
+    product=parent;
+   }
+   const photos=[...product.querySelectorAll('img')].flatMap(img=>[img.getAttribute('data-original'),img.getAttribute('data-src'),img.getAttribute('data-lazy-src'),img.currentSrc,img.getAttribute('src'),...(img.srcset||'').split(',').map(v=>v.trim().split(/\s+/)[0])]).filter(src=>src&&/alicdn\.com\/|^\/?img\/ibank\//i.test(src)).slice(0,8);
+   const photo=photos[0];
+   rows.push({...(photo?{photo,photos}:{}),url,title:title.slice(0,160),price,repurchase:rate?Number(rate[1]):null,terms});seen.add(url);break;
   }
   if(rows.length>=40)break;
  }
