@@ -26,7 +26,9 @@ for(const source of ['server','browser'])test('1688 goal to deliverable using '+
   assert.equal(goal().flow.nodes[1].status,'needs_input');
   const action={kind:'browserOffers',expectedVersion:1,query:'露营灯',rows};
   await assert.rejects(()=>p.action(g.id,{...action,query:'其他'}));await assert.rejects(()=>p.action(g.id,{...action,rows:[]}));
-  await p.action(g.id,action);await assert.rejects(()=>p.action(g.id,action));await p.pump();
+  const first={...action,rows:rows.slice(0,1)};
+  await p.action(g.id,first);await p.action(g.id,first);assert.equal(goal().flow.nodes[1].offers.length,1);assert.match(goal().flow.nodes[1].error,/还需 1 件/);
+  await p.action(g.id,{...action,rows:rows.slice(1)});await assert.rejects(()=>p.action(g.id,action));await p.pump();
  }
  await p.pump();assert.equal(goal().stage,'review');assert.match(goal().artifacts.at(-1).body,/估算单件收益 ¥42.00/);
 });

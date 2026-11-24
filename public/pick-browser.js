@@ -27,9 +27,11 @@ export function createPickBrowser({state,act,esc,render}){
   });
   getReply().then(async res=>{
    if(jobs.get(key)!==entry||!state.goals.some(x=>x.id===g.id&&x.version===g.version)||session(g)?.key!==s.key)return;
-   if((res.rows||[]).length<2){entry.message=res.message;return;}
+   const rows=res.rows||[];
+   if(!rows.length){entry.message=res.message;return;}
+   if(rows.every(r=>node.offers?.some(o=>o.url===r.url&&o.price===r.price))){entry.message='当前页面只读到已保存的商品。向下滚动，让另一件商品的名称和报价显示出来。';return;}
    await act('browserOffers',{expectedVersion:g.version,query,rows:res.rows},g.id);
-   entry.message='已读回商品报价，正在比较。';
+   entry.message='已读回商品报价。';
   }).catch(e=>{entry.message=e.message;}).finally(()=>{entry.busy=false;
    if(jobs.get(key)===entry&&entry.shown!==entry.message){entry.shown=entry.message;render(true);}
   });
@@ -44,8 +46,9 @@ export function createPickBrowser({state,act,esc,render}){
   if(n.status!=='needs_input'||g.paused)return '';
   const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});const entry=jobs.get(key);
   const expired=session(g)&&Date.now()-session(g).at>180000;
-  return `<section class="pick-import"><h3>从 1688 带回「${esc(intent.query)}」报价</h3><p role="status">${esc(expired?'自动读取已暂停。重新打开搜索即可继续。':entry.message||'公开搜索页暂未提供足够报价。打开搜索后可从当前页面带回商品。')}</p><button class="primary" data-pick-open="${esc(g.id)}">打开 1688 搜索 ↗</button>
-  <label>粘贴选中的商品卡片<textarea data-pick-paste="${esc(g.id)}" rows="2" placeholder="在搜索页选中至少两件带标题、报价和链接的商品，复制后粘贴到这里"></textarea></label>
+  const count=n.offers?.length||0;
+  return `<section class="pick-import"><h3>等待「${esc(intent.query)}」的商品报价</h3><p><strong>已保存 ${count}/2 件</strong> · 还需 ${2-count} 件不同商品。每件需要商品名、页面报价和 1688 详情链接。</p>${count?`<p>已保存：${n.offers.map(r=>esc(r.title)+' · ¥'+esc(r.price)).join('、')}</p>`:''}<p role="status">${esc(expired?'自动读取已暂停。重新打开搜索即可继续。':entry.message||'公开搜索页暂未提供足够报价。打开搜索后可从当前页面带回商品。')}</p><button class="primary" data-pick-open="${esc(g.id)}">打开 1688 搜索 ↗</button>
+  <label>粘贴选中的商品卡片<textarea data-pick-paste="${esc(g.id)}" rows="2" placeholder="从已打开的 1688 搜索页复制商品卡片，可逐件粘贴。收齐两件后自动比较。"></textarea></label>
   <details><summary>使用 Chrome 自动读回</summary><p><a href="/cloud-browser.zip" download="工作台浏览器连接器.zip">下载选品扩展</a>，解压，在 chrome://extensions 开启开发者模式并加载解压后的目录。回到工作台刷新，再点「打开 1688 搜索」。支持 Codespaces、项目 GitHub Pages 与本机地址。</p></details></section>`;
  }
  document.addEventListener('click',e=>{const b=e.target.closest('[data-pick-open]');if(b){const g=state.goals.find(g=>g.id===b.dataset.pickOpen);if(g)openSearch(g,reserve());}});
@@ -63,7 +66,9 @@ export function createPickBrowser({state,act,esc,render}){
   const notice=field.closest('section').querySelector('[role=status]');
   if(html.length>4000000){notice.textContent='选中的范围太大，请只复制商品卡片。';return;}
   t.innerHTML=html;const rows=readOfferCards(t.content);
-  if(rows.length<2){notice.textContent='没有读到两条带报价的商品链接。请复制网页上的商品卡片，或使用扩展自动读取。';return;}
+  if(!rows.length){notice.textContent='这次粘贴未识别到完整商品。请在搜索结果中选中并复制含商品名、价格和详情链接的整张卡片。';return;}
+  const saved=g.flow.nodes.find(n=>n.capability==='sourcing.1688')?.offers||[];
+  if(rows.every(r=>saved.some(o=>o.url===r.url&&o.price===r.price))){notice.textContent='这件商品的报价已经保存，请复制另一件商品。';return;}
   field.disabled=true;try{await act('browserOffers',{expectedVersion:g.version,query:sourcingIntent(g.text).query,rows},g.id);}
   catch(error){notice.textContent=error.message;}finally{field.disabled=false;}
  });

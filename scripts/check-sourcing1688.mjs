@@ -21,10 +21,20 @@ try{
  const next=ctx.waitForEvent('page');await page.locator('#submit-task').click();const search=await next;await search.waitForURL('https://s.1688.com/**');
  assert.equal(new URL(search.url()).searchParams.get('keywords'),'露营灯');const rows=await search.evaluate(readOfferCards);assert.equal(rows.length,2);
  await page.bringToFront();await page.locator('.goal-tabs [data-tab=tasks]').click();const paste=page.locator('[data-pick-paste]');await paste.waitFor();
+ const step=page.locator('[data-flow-node=pick1688]');await step.locator('summary').click();await step.locator('[data-run]').click();
+ await page.getByRole('heading',{name:'筛选 1688 商品报价 · 等待商品报价'}).waitFor();
+ assert.match(await page.locator('#run-diagnosis').innerText(),/已保存 0\/2 件/);
+ assert(!((await page.locator('#run-meta').innerText()).includes('undefined')));assert.equal(await page.locator('#run-data').evaluate(d=>d.open),false);
+ await page.getByRole('button',{name:'去粘贴商品报价'}).click();assert(await paste.evaluate(f=>f===document.activeElement));
  if(process.argv.includes('--auto')){
   // Feed the real visible-card reader's output through the extension callback contract.
   await page.evaluate(({rows,href})=>{const url=new URL(href);window.chrome.runtime={sendMessage:(id,cmd,cb)=>cb(cmd.query===url.searchParams.get('keywords')&&url.hash==='#pick-'+cmd.key?{rows}:{})};},{rows,href:search.url()});
- }else await paste.evaluate((el,html)=>{const data=new DataTransfer();data.setData('text/html',html);el.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));},cards);
+ }else{
+  for(const [i,card] of (cards.match(/<article>[\s\S]*?<\/article>/g)||[]).entries()){
+   await paste.evaluate((el,html)=>{const data=new DataTransfer();data.setData('text/html',html);el.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));},card);
+   if(i===0)await page.getByText('已保存 1/2 件',{exact:true}).waitFor();
+  }
+ }
  await page.locator('.pick-results article').first().waitFor({timeout:20000});assert.match(await page.locator('.pick-results').innerText(),/估算单件收益 ¥46.00/);
  assert.equal(await page.locator('.pick-results a').count(),2);
  await page.getByText('按我的售价试算收益',{exact:true}).click();const calculator=page.locator('[data-pick-estimate]');await calculator.locator('[name=retail]').fill('100');await calculator.getByRole('button').click();assert.match(await page.locator('.pick-results').innerText(),/估算单件收益 ¥57.00/);

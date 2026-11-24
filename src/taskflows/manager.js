@@ -10,6 +10,7 @@ import {collectResearch,assertResearch} from '../workforce/research.js';
 const now=()=>new Date().toISOString();
 const fail=message=>{throw Object.assign(new Error(message),{status:409});};
 const output=(title,body,evidence='本次实际执行结果')=>({status:'succeeded',summary:title,missing:[],artifacts:[{title,body,evidence}]});
+const quoteWait=count=>'已保存 '+count+'/2 件不同商品的有效报价，还需 '+(2-count)+' 件。每件须包含商品名称、页面报价和 1688 商品详情链接。';
 const blocked=message=>({status:'needs_input',summary:message,missing:[message],artifacts:[]});
 export function createTaskflowManager({getData,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill,offerSearch=searchPublicOffers}){
  let pumping=false;
@@ -58,9 +59,14 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const query=sourcingIntent(g.text)?.query;
    if(!query||query!==input.query)fail('品类已经变化，请重新打开搜索页');
    const rows=cleanOffers(input.rows);
-   if(rows.length<2)throw new Error('至少需要两个不同商品的有效报价和 1688 详情链接');
-   node.offers=rows;node.offerSource='浏览器搜索页';node.status='pending';node.missing=[];node.error=null;
-   event(g,'已从 1688 搜索页读回 '+rows.length+' 个商品，继续比较。');sync(g);
+   if(!rows.length)throw new Error('未识别有效报价，请复制含名称、价格和 1688 详情链接的商品卡片');
+   const previous=node.offers||[],merged=cleanOffers([...rows,...previous]);
+   if(merged.length===previous.length&&merged.every(r=>previous.some(p=>p.sku===r.sku&&p.price===r.price)))return g;
+   node.offers=merged;
+   node.offerSource=previous.length&&node.offerSource&&node.offerSource!=='浏览器搜索页'?'1688 搜索页与已保存报价':'浏览器搜索页';
+   if(merged.length<2){node.error=quoteWait(merged.length);node.missing=[node.error];}
+   else{node.status='pending';node.missing=[];node.error=null;}
+   event(g,merged.length<2?node.error:'已收齐 '+merged.length+' 件不同商品的报价，继续比较。');sync(g);
   }else if(kind==='supplyOffers'){
    const node=g.flow.nodes.find(n=>n.id===input.nodeId);
    if(g.stage==='completed'||node?.capability!=='product.compare'||node.status!=='needs_input')fail('此比较步骤已更新，请查看当前进度');
@@ -112,18 +118,18 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const criteria=sourcingIntent(g.text);
    if(!criteria?.query)return blocked('请在目标中说明想找的品类，例如水龙头或露营灯');
    let offers=n.offers,source=n.offerSource||'公开搜索页',reason='';
-   if(!offers?.length){
-    try{offers=cleanOffers(await offerSearch(criteria.query));}
+   if((offers?.length||0)<2){
+    try{offers=cleanOffers([...(offers||[]),...await offerSearch(criteria.query)]);}
     catch{reason='服务端未能读取公开搜索页。';}
    }
    let discovery;
    if(!offers||offers.length<2){
     const local=g.flow.nodes.find(x=>x.discovery)?.discovery;
     if(local?.candidates?.length){assertResearch(d,local);const localRows=cleanOffers(local.candidates.map(c=>({title:c.name||c.sku,price:c.price,url:c.source.match(/https:\/\/detail\.1688\.com\/offer\/\d+\.html/)?.[0],terms:'已登记的供应商报价'})));
-     if(localRows.length>=2){offers=localRows;source='已登记的 1688 资料';discovery=local;}
+     if(localRows.length){source=offers?.length?'1688 搜索页与已登记资料':'已登记的 1688 资料';offers=cleanOffers([...(offers||[]),...localRows]);discovery=local;}
     }
    }
-   if(!offers||offers.length<2)return blocked(reason+'需要搜索页上至少两件商品的报价。打开 1688，登录或完成页面提示后可用浏览器连接器读回。');
+   if(!offers||offers.length<2)return {...blocked(reason+quoteWait(offers?.length||0)),offers:offers||[],offerSource:source,discovery};
    const ranked=rankedOffers(offers,criteria);
    const body=ranked.map((r,i)=>[(i+1)+'. '+r.title,'展示报价 ¥'+r.price,r.terms,r.repurchase!==null?'页面回购率 '+r.repurchase+'%':'回购率未披露',r.margin!==null?'估算单件收益 ¥'+r.margin.toFixed(2):'',r.url].filter(Boolean).join(' · ')).join('\n');
    return {...output('1688 选品清单 · '+criteria.query,body+'\n按展示价和可见回购率初筛。阶梯报价、规格及起订条件需核对。'+(ranked[0].margin===null?'缺少售价或其他单件成本，利润待算。':'估算采用目标售价 '+criteria.retail+' 元，其他单件成本 '+criteria.expenses+' 元。'),source),offers,offerSource:source,discovery};
