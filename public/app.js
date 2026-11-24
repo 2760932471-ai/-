@@ -22,8 +22,21 @@ const viewNames={overview:'协同工作台',tasks:'任务中心',employees:'数�
 const tabNames={discussion:'讨论',tasks:'任务',artifacts:'交付物',review:'复盘',facts:'资料'};
 let state={flows:null,images:null,workspaces:[],integrations:null,knowledge:null,sources:null,workforce:null,goals:[],agents:[],runs:[],view:'overview',configTab:'models',goal:sessionStorage.getItem('selectedGoal'),tab:'discussion',filter:'all',details:false};
 let fingerprint='',drafts={},targets={},intents={},positions={},sending=new Set(),busy=false,createStep=1,preview=null,sourceGoal=null,createPermission='draft',changeEpoch=0;
-let authenticationRequired = null;
-async function api(route, options) { const res=await fetch('/api/'+route,{...options,headers:{'X-Workspace-ID':sessionStorage.getItem('workspaceId')||'default',...options?.headers,...(authenticationRequired!==false&&sessionStorage.getItem('platformToken')?{Authorization:'Bearer '+sessionStorage.getItem('platformToken')}:{})}});const data=await res.json();if(res.status===401&&authenticationRequired!==false&&!$('#access-dialog').open)$('#access-dialog').showModal();if(!res.ok)throw new Error(data.error||'请求失败');return data; }
+sessionStorage.removeItem('platformToken');
+async function api(route, options) { const res=await fetch('/api/'+route,{...options,credentials:'same-origin',headers:{'X-Workspace-ID':sessionStorage.getItem('workspaceId')||'default',...options?.headers}});const data=await res.json();if(!res.ok)throw new Error(data.error||'请求失败');return data; }
+function canEnter(health){
+ const locked=health.authenticationRequired&&!health.authenticated;
+ if(locked&&state.agents.length){location.reload();return false;}
+ $('#login-screen').hidden=!locked;document.querySelector('.shell').hidden=!!locked;
+ $('#logout').hidden=!health.authenticationRequired||locked;
+ if(locked){
+  const hint=health.accessMode!=='account'?'服务端仍在运行旧版本，请更新并重启后端。':(location.protocol!=='https:'||!health.secureTransport)?'请通过 HTTPS 打开工作台，并核对服务端 HTTPS 代理配置。':!health.accountReady?'管理员尚未初始化。请在服务端设置初始账号密码后重启。':'';
+  const first=$('#login-form').hidden;
+  $('#login-hint').textContent=hint;$('#login-hint').hidden=!hint;$('#login-form').hidden=!!hint;
+  if(!hint&&first)$('#login-form').elements.username.focus();
+ }
+ return !locked;
+}
 const post=(route,input)=>api(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
 const current=()=>state.goals.find(g=>g.id===state.goal);
 const agentName=id=>state.workforce?.employees.find(e=>e.id===id)?.name||state.agents.find(a=>a.id===id)?.name||'数字员工';
@@ -107,7 +120,7 @@ function go(route){const canonical=applyRoute(route);$('#navigation-dialog')?.cl
 function openGoal(id,tab='discussion'){capture();state.goal=id;state.tab=tab;state.details=false;sessionStorage.setItem('selectedGoal',id);go('overview');}
 function receive(g){changeEpoch++;const i=state.goals.findIndex(x=>x.id===g.id);if(i<0)state.goals.unshift(g);else state.goals[i]=g;render();}
 async function act(kind,extra={},id=state.goal){const result=await post(`goals/${id}/actions`,{kind,expectedVersion:state.goals.find(g=>g.id===id)?.version,...extra});receive(result);return result;}
-async function refresh(){const epoch=changeEpoch;try{const health=await api('health');authenticationRequired=health.authenticationRequired;if(authenticationRequired===false){sessionStorage.removeItem('platformToken');$('#access-token').value='';$('#access-dialog').close();}const [agents,goals,runs,workforce,sources,knowledge,workspaces,integrations,images,flows]=await Promise.all([api('agents'),api('goals'),api('runs'),api('workforce'),api('sources'),api('knowledge'),api('workspaces'),api('integrations'),api('images'),api('flows')]);if(busy||epoch!==changeEpoch)return;state.agents=agents;state.goals=goals;state.runs=runs;state.workforce=workforce;state.sources=sources;state.knowledge=knowledge;state.workspaces=workspaces;state.integrations=integrations;state.images=images;state.flows=flows;setupUI.update();await updateRunPreview();$('#connection-state').textContent='服务已连接';render();}catch(err){$('#connection-state').textContent='连接中断';if(!state.agents.length)$('#main').innerHTML='<div class="panel empty-state"><h2>暂时无法连接</h2><p>请确认服务已启动，页面将自动重试。</p></div>';}}
+async function refresh(){const epoch=changeEpoch;try{const health=await api('health');if(!canEnter(health))return;const [agents,goals,runs,workforce,sources,knowledge,workspaces,integrations,images,flows]=await Promise.all([api('agents'),api('goals'),api('runs'),api('workforce'),api('sources'),api('knowledge'),api('workspaces'),api('integrations'),api('images'),api('flows')]);if(busy||epoch!==changeEpoch)return;state.agents=agents;state.goals=goals;state.runs=runs;state.workforce=workforce;state.sources=sources;state.knowledge=knowledge;state.workspaces=workspaces;state.integrations=integrations;state.images=images;state.flows=flows;setupUI.update();await updateRunPreview();$('#connection-state').textContent='服务已连接';render();}catch(err){$('#connection-state').textContent='连接中断';if(!state.agents.length)$('#main').innerHTML='<div class="panel empty-state"><h2>暂时无法连接</h2><p>请确认服务已启动，页面将自动重试。</p></div>';}}
 function openCreate(text='',kind='analysis',only=null,source=null){sourceGoal=source;createMembersTouched=false;createKindManual=kind==='listing'||!!only;createRequestId=globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);createStep=1;createPermission='draft';$('#goal').value=text;$('#team-recommendation').textContent='';$('#goal-kind').value=kind;$('#create-store').value='未关联店铺';$('#create-store').readOnly=false;$('#create-connected-store').innerHTML='<option value="">未关联店铺 · 仅草案</option>'+(state.integrations?.stores||[]).filter(s=>s.enabled).map(s=>`<option value="${s.id}">${esc(s.name)} · ${s.platform==='taobao'?'淘宝 / 天猫':s.platform==='douyin'?'抖店':esc(s.platform)}</option>`).join('');$('#create-sku').value=kind==='listing'?'DEMO-JF-001':'全店汇总';$('#create-product').value=kind==='listing'?'角阀':'经营分析';$('#create-price').value='29.90';$('#form-error').textContent='';$('#create-engine').value=only&&state.agents.some(a=>a.id===only)?'legacy':only?'team':'flow';$('#team-selection').value=only?'manual':'auto';syncTeamChoice();updateCreateMembers(kind,only);showCreateStep();$('#task-dialog').showModal();$('#goal').focus();}
 function syncTeamChoice(){const flow=$('#create-engine').value==='flow';$('label[for=team-selection]').hidden=flow;$('label[for=goal-kind]').hidden=flow;$('#goal-kind').hidden=flow;$('#team-selection').hidden=flow;const manual=$('#create-engine').value==='legacy'||$('#team-selection').value==='manual';$('#manual-team-options').hidden=flow||!manual;$('#auto-team-hint').hidden=flow||manual;$('#team-selection').disabled=$('#create-engine').value==='legacy';}
 $('#team-selection').onchange=syncTeamChoice;
@@ -184,7 +197,13 @@ $('#test-agent').onclick=async()=>{const b=$('#test-agent');b.disabled=true;try{
 $('#close-run').onclick=()=>{$('#run-dialog').close();runPreviewId=null;};
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.config)await openConfig(b.dataset.config);if(b.dataset.run){runPreviewId=b.dataset.run;$('#run-input').textContent='正在载入输入…';$('#run-output').textContent='正在载入结果…';$('#run-dialog').showModal();await updateRunPreview();}if(b.dataset.fillData){const values=b.dataset.fillData==='listing'?{material:'黄铜（演示）',connector:'G1/2（演示）',cost:12,stock:200,source:'内置虚构商品样例'}:{netSales:3000,goods:1200,fees:150,fulfillment:300,ads:600,returns:150,other:0,source:'内置虚构经营账单',window:'演示第1–7天'};for(const [k,v] of Object.entries(values))$('#field-'+k).value=v;toast('已填入演示数据，请核对后保存');}}catch(err){toast(err.message);}});
 document.addEventListener('submit',async e=>{if(!['facts-form','ledger-form'].includes(e.target.id))return;e.preventDefault();const form=e.target,id=form.dataset.goal,b=e.submitter;b.disabled=true;busy=true;try{const data=Object.fromEntries(new FormData(form));const g=state.goals.find(g=>g.id===id);await act(form.id==='facts-form'?'facts':'ledger',form.id==='facts-form'?{facts:data,confirmed:data.confirmed==='on',expectedVersion:g.version}:{financials:data,expectedVersion:g.version},id);state.tab='tasks';render(true);toast('资料已保存，请确认当前版本计划');}catch(err){$('#data-error').textContent=err.message;}finally{b.disabled=false;busy=false;}});
-$('#access-form').onsubmit=async e=>{e.preventDefault();sessionStorage.setItem('platformToken',$('#access-token').value);try{await api('workspaces');$('#access-error').textContent='';$('#access-dialog').close();await refresh();}catch(err){sessionStorage.removeItem('platformToken');$('#access-error').textContent=err.message;}};
+$('#login-form').onsubmit=async e=>{
+ e.preventDefault();const f=e.target,b=e.submitter;b.disabled=true;$('#login-error').textContent='';
+ try{await post('auth/login',Object.fromEntries(new FormData(f)));f.reset();await refresh();}
+ catch(err){$('#login-error').textContent=err.message;f.elements.password.select();}finally{b.disabled=false;}
+};
+$('#logout').onclick=async()=>{try{await post('auth/logout',{});location.reload();}catch(err){toast(err.message);}};
+
 
 
 function updateCreateMembers(kind,only){$('#agent-options').innerHTML=$('#create-engine').value==='team'?workforceUI.memberOptions(kind,only):state.agents.filter(a=>a.enabled).map(a=>`<label class="agent-option"><input type="checkbox" name="agents" value="${a.id}" ${!only||only===a.id?'checked':''}>${esc(a.name)}</label>`).join('');}

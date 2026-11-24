@@ -21,8 +21,10 @@ services:
         value: production
       - key: DATA_DIR
         value: /var/data/workbench
-      - key: PLATFORM_TOKEN
-        generateValue: true
+      - key: WORKSPACE_ACCESS
+        value: account
+      - key: WORKSPACE_ADMIN_PASSWORD
+        sync: false
       - key: AGENT_ALLOWED_HOSTS
         value: generativelanguage.googleapis.com
       - key: IMAGE_SECRET_GEMINI

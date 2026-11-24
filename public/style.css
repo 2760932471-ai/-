@@ -123,3 +123,5 @@ button,a{-webkit-tap-highlight-color:transparent}
 @media(max-width:600px){.flow-panel{padding:14px;}.flow-node-grid,.flow-template-grid{grid-template-columns:1fr;}.flow-panel .section-title{flex-wrap:wrap;}}
 
 .product-demo-image{display:block;width:100%;max-height:640px;object-fit:contain;border:1px solid #e2e4ea;border-radius:10px;background:#f7f7f8;margin:16px 0;}.product-demo-card .section-title{flex-wrap:wrap;gap:12px}.product-demo-card a.secondary{display:inline-flex;align-items:center;min-height:44px;text-decoration:none;}
+
+#login-screen{min-height:100dvh;display:grid;place-items:center;padding:20px}.login-card{width:min(100%,400px);padding:28px}.login-card p{margin:12px 0}.login-card form{display:grid;gap:12px}

@@ -17,6 +17,7 @@ const access = accessPolicy();
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dataDir = process.env.DATA_DIR || path.join(root, '.data');
 await mkdir(dataDir, { recursive: true });
+const auth=access.authenticationRequired?await (await import('./accounts.js')).accounts(dataDir):null;
 const storeFile = path.join(dataDir, 'tasks.json');
 let tasks = [];
 try { tasks = JSON.parse(await readFile(storeFile, 'utf8')); if (!Array.isArray(tasks)) throw new Error('任务存储格式错误'); }
@@ -45,9 +46,20 @@ async function body(req, maxBytes) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
-    if(url.pathname.startsWith('/api/')&&url.pathname!=='/api/health'){
-      if(!access.accepts(req.headers.authorization))return json(res,401,{error:'请填写工作空间访问令牌'});
+    if(url.pathname.startsWith('/api/')){
+      if(access.mode==='local'&&(!/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(req.headers.host||'')||req.headers['x-forwarded-host']||req.headers['x-forwarded-proto']))return json(res,403,{error:'本机模式仅供本机使用；远程部署请启用账号登录'});
       if(req.method!=='GET'&&req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)return json(res,403,{error:'不允许跨站修改工作空间'});
+      const secure=!!req.socket.encrypted||(access.trustHttpsProxy&&req.headers['x-forwarded-proto']==='https');
+      if(url.pathname==='/api/health')return json(res,200,{ok:true,mode:'platform',storeAdapter:'configured-official-adapters',goalStoreAdapter:'simulation',authenticationRequired:!!auth,accessMode:access.mode,secureTransport:secure,accountReady:auth?.ready()??false,authenticated:auth?secure&&auth.accepts(req.headers.cookie):true});
+      if(auth&&!secure)return json(res,403,{error:'请通过 HTTPS 打开工作台，并检查 HTTPS 反向代理配置'});
+      if(auth&&url.pathname==='/api/auth/login'&&req.method==='POST'){
+        if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'请使用 JSON 登录'});
+        const session=await auth.login(await body(req,8192));res.setHeader('Set-Cookie',session);return json(res,200,{ok:true});
+      }
+      if(auth&&!auth.accepts(req.headers.cookie))return json(res,401,{error:'请登录工作台'});
+      if(auth&&url.pathname==='/api/auth/logout'&&req.method==='POST'){
+        res.setHeader('Set-Cookie',auth.logout(req.headers.cookie));return json(res,200,{ok:true});
+      }
     }
     if(url.pathname==='/api/workspaces'&&req.method==='GET')return json(res,200,workspaces.list());
     if(url.pathname==='/api/workspaces'&&req.method==='POST')return json(res,201,await workspaces.save(null,await body(req)));
@@ -144,7 +156,6 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/api/rooms'&&req.method==='POST'){const input=await body(req);const room=createRoom(input.goal,input.agents);rooms.unshift(room);await saveRooms();return json(res,201,room);}
     const roomMatch=url.pathname.match(/^\/api\/rooms\/([^/]+)\/(messages|pause)$/);
     if(roomMatch&&req.method==='POST'){const room=rooms.find(r=>r.id===roomMatch[1]);if(!room)return json(res,404,{error:'协作群不存在'});const input=await body(req);if(roomMatch[2]==='messages')sendMessage(room,input.text,input.target);else{if(typeof input.paused!=='boolean')throw new Error('无效暂停状态');room.paused=input.paused;}await saveRooms();return json(res,200,room);}
-    if (url.pathname === '/api/health') return json(res, 200, { ok: true, mode: 'platform', storeAdapter: 'configured-official-adapters', goalStoreAdapter: 'simulation', authenticationRequired: access.authenticationRequired, accessMode: access.mode });
     if (url.pathname === '/api/plan' && req.method === 'POST') return json(res, 200, planGoal((await body(req)).goal));
     if (url.pathname === '/api/tasks' && req.method === 'GET') return json(res, 200, tasks);
     if (url.pathname === '/api/tasks' && req.method === 'POST') {

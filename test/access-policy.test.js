@@ -5,19 +5,16 @@ import {mkdtemp, mkdir, copyFile, writeFile, rm} from 'node:fs/promises';
 import {once} from 'node:events';
 import {accessPolicy} from '../src/access-policy.js';
 
-test('private Codespaces ignores legacy tokens; local binds loopback; public token access stays protected', () => {
-  const codespaces = accessPolicy({CODESPACES:'true', PLATFORM_TOKEN:'legacy-token'});
-  assert.equal(codespaces.mode, 'codespaces');
-  assert.equal(codespaces.authenticationRequired, false);
-  assert(codespaces.accepts());
-  assert(codespaces.accepts('Bearer wrong-old-browser-token'));
-  assert.equal(accessPolicy({}).host, '127.0.0.1');
-  const publicAccess = accessPolicy({PLATFORM_TOKEN:'public-token'});
-  assert.equal(publicAccess.host, '0.0.0.0');
-  assert(!publicAccess.accepts());
-  assert(!publicAccess.accepts('Bearer wrong'));
-  assert(publicAccess.accepts('Bearer public-token'));
-  assert.equal(accessPolicy({CODESPACES:'true', ENABLE_CODEX_LOCAL:'1'}).host, '127.0.0.1');
+test('legacy secrets cannot enable the old login; public hosting uses accounts',()=>{
+ for(const env of [{},{PLATFORM_TOKEN:'unused'}]){
+  assert.equal(accessPolicy(env).authenticationRequired,false);
+  assert.equal(accessPolicy(env).host,'127.0.0.1');
+ }
+ assert.equal(accessPolicy({CODESPACES:'true',NODE_ENV:'production',PLATFORM_TOKEN:'unused'}).mode,'codespaces');
+ assert.equal(accessPolicy({RENDER:'true'}).mode,'account');
+ assert.equal(accessPolicy({NODE_ENV:'production'}).mode,'account');
+ assert.equal(accessPolicy({WORKSPACE_ACCESS:'account'}).mode,'account');
+ assert.equal(accessPolicy({CODESPACES:'true',ENABLE_CODEX_LOCAL:'1'}).host,'127.0.0.1');
 });
 
 test('Codespaces API works without app login even with mismatched inherited and browser tokens', async t => {
