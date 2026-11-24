@@ -303,7 +303,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(result)for(const key of ['recall','discovery','preparation','imageJobId','offers','offerSource','detailChecked','detailDeadline','photoAttempts','nextPhotoTry'])if(result[key])n[key]=result[key];
    for(const a of result?.artifacts||[]){const artifact={...a,id:randomUUID(),goalId:id,taskId:nodeId,version:g.version,status:'draft',agent:'taskflow',agentName:n.title,runId:n.runId};g.artifacts.push(artifact);n.artifactIds.push(artifact.id);}
    Object.assign(r,{status:n.status,result:result||null,error:n.error,finishedAt:n.finishedAt});if(result?.report)g.messages.push({id:randomUUID(),role:'coordinator',author:'目标总控',at:now(),text:result.report.text,artifactIds:result.report.imageIds,links:result.report.source?[{title:'查看所选商品',url:result.report.source,snippet:''}]:[],reportVersion:g.version});
-   else event(g,n.title+'：'+(n.error||result.summary));sync(g);
+   else {
+    const text=n.title+'：'+(n.error||result.summary);
+    if(!n.error?.includes('所选商品的参考图')||snapshot.n.error!==n.error)event(g,text);
+   }
+   sync(g);
   });
  }
  async function pollImages(){await transaction(d=>{for(const g of d.goals.filter(g=>g.mode==='flow'&&g.stage!=='completed'))for(const n of g.flow.nodes.filter(n=>n.status==='waiting_external')){

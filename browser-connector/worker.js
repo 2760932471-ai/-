@@ -112,7 +112,15 @@ chrome.runtime.onMessageExternal?.addListener((cmd,sender,reply)=>{
     const [scan]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readOfferCards,args:[]});
     const card=scan.result?.find(r=>r.url===url);if(card)photos=[card.photo,...(card.photos||[]),...photos];
    }
-   return downloadSelectedPhoto({sku:cmd.photoSku,facts:[],photo:selected.photo},photos);
+   // The goal-bound search can authorize only an item actually present in
+   // its saved results. Use that item's details even after a workbench reload.
+   if(!cmd.cardOnly&&await chrome.permissions.contains({origins:['https://detail.1688.com/*']})){
+    const detail=await openOfferDetail(cmd.photoSku,sender.tab.windowId);
+    return downloadSelectedPhoto(detail,[selected.photo,...photos]);
+   }
+   const result=await downloadSelectedPhoto({sku:cmd.photoSku,facts:[],photo:selected.photo},photos);
+   if(!result.base64)result.reason='请在扩展中连接当前工作空间并允许读取 1688 商品详情页。';
+   return result;
   })().then(reply,()=>reply({sku:cmd.photoSku,reason:'原搜索页暂时无法读取商品图'}));return true;
  }
  readSearch(cmd,sender).then(({rows,phase,message})=>reply({rows,phase,message}),()=>reply({phase:'unavailable',message:'搜索页已变化，请返回原搜索结果，工作台将再次读取。'}));return true;

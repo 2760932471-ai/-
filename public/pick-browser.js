@@ -27,12 +27,12 @@ export function createPickBrowser({state,act,esc,render}){
     clearTimeout(timer);resolve(runtime.lastError?null:r);
    });}catch{clearTimeout(timer);resolve(null);}
   });
-  const response=await send({op:'workspaceBrowser',action:'offerDetail',workspace:sessionStorage.getItem('workspaceId')||'default',sku,download},download?44000:9000);
+  const response=await send({op:'workspaceBrowser',action:'offerDetail',workspace:sessionStorage.getItem('workspaceId')||'default',sku,download},download?47000:9000);
   const detail=response?.value?.sku===sku?response.value:null;
   const saved=g&&session(g);
   if(download&&!detail?.base64&&saved){
-   const card=await send({op:'pick1688',key:saved.key,query:sourcingIntent(g.text)?.query,photoSku:sku},35000);
-   if(card?.sku===sku&&card.base64)return {...card,facts:detail?.facts||[]};
+   const card=await send({op:'pick1688',key:saved.key,query:sourcingIntent(g.text)?.query,photoSku:sku,cardOnly:!!detail},47000);
+   if(card?.sku===sku&&(card.base64||!detail))return {...card,facts:detail?.facts||card.facts||[]};
   }
   return detail||{sku,reason:response?.error||'请在当前窗口连接新版 1688 浏览器扩展'};
  }
@@ -49,7 +49,7 @@ export function createPickBrowser({state,act,esc,render}){
   getReply().then(async res=>{
    if(jobs.get(key)!==entry||!state.goals.some(x=>x.id===g.id&&x.version===g.version)||session(g)?.key!==s.key)return;
    if(!res.phase&&(res.rows?.length||0)<2){
-    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.7.0 后，工作台会自动向下浏览并读取更多商品。';
+    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.7.1 后，工作台会自动向下浏览并读取更多商品。';
     if(!res.rows?.length)return;
    }else entry.phase=res.phase||'scanning';
    const rows=res.rows||[];
@@ -144,7 +144,7 @@ export function createPickBrowser({state,act,esc,render}){
     const sku=missing.preparation.candidate.sku,key=storageKey(g)+'-detail-'+sku;
     const previous=jobs.get(key);
     if(!previous?.busy&&(!previous||previous.attempt!==missing.attempts||Date.now()>=previous.next)){
-     const request={attempt:missing.attempts,busy:true,failures:previous?.failures||0};jobs.set(key,request);
+     const request={attempt:missing.attempts,busy:true,message:previous?.message,failures:previous?.failures||0};jobs.set(key,request);
      const download=g.flow.nodes.some(n=>n.capability.startsWith('image.')&&n.status==='needs_input'&&n.preparation?.candidate?.sku===sku&&n.error?.includes('所选商品的参考图'));
      readSelected(sku,download,g).then(async detail=>{
       const row=g.flow.nodes.find(n=>n.capability==='sourcing.1688')?.offers?.find(o=>o.sku===sku);

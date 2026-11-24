@@ -4,7 +4,6 @@ export function readOfferDetail(sku){
  const u=new URL(location.href);
  if(u.origin!=='https://detail.1688.com'||u.pathname!=='/offer/'+sku+'.html')return null;
  const scope=document.querySelector('main')||document;
- if(document.querySelector('input[type=password]')||/请完成验证|滑动验证|登录后查看/.test((document.body?.innerText||'').slice(0,900)))return {sku,facts:[],photos:[],reason:'请在已打开的 1688 商品页完成登录或验证，工作台会继续取图'};
  const facts=[];
  for(const root of scope.querySelectorAll('[class*="attribute" i],[id*="attribute" i],[class*="pc-attr" i],[class*="product-prop" i],#mod-detail-attributes,[class*="specification" i]')){
   if(root.closest('[class*="recommend" i]'))continue;
@@ -16,7 +15,23 @@ export function readOfferDetail(sku){
  }
  const images=[...scope.querySelectorAll('img[alt*="白底"],[class*="od-gallery" i] img,[class*="swiper" i] img,[id*="gallery" i] img,[class*="main-img" i] img,[class*="mainImage" i] img,[class*="gallery" i] img,[class*="mainPic" i] img,[id*="mainPic" i] img,[class*="preview" i] img,[class*="main-image" i] img')].filter(img=>!img.closest('[class*="recommend" i],footer'));
  images.sort((a,b)=>Number(b.alt.includes('白底'))-Number(a.alt.includes('白底')));
- const candidates=images.flatMap(img=>[img.getAttribute('data-original'),img.getAttribute('data-zoom-image'),img.getAttribute('data-lazy-src'),img.getAttribute('data-src'),img.currentSrc,img.getAttribute('src'),...(img.srcset||'').split(',').map(v=>v.trim().split(/\s+/)[0])]);
+ // Some supplier pages use generated class names. Anchor the large product
+ // image to its adjacent thumbnail rail, excluding reviews and recommended items.
+ const excluded='aside,[class*="recommend" i],[class*="review" i],footer,header,nav';
+ const visible=[...scope.querySelectorAll('img,[style*="url("]')].filter(el=>!el.closest(excluded))
+  .map(el=>({el,box:el.getBoundingClientRect()})).filter(({box})=>box.width>24&&box.height>24);
+ const heroes=visible.filter(({box})=>{
+  if(box.width<220||box.height<220||box.width/box.height>1.8||box.height/box.width>1.8)return false;
+  const neighbors=visible.filter(({box:t})=>t.width>=36&&t.width<=125&&t.height>=36&&t.height<=125&&
+   ((t.right<=box.left+6&&box.left-t.right<180&&t.top>=box.top-20&&t.bottom<=box.bottom+20)||
+    (t.top>=box.bottom-6&&t.top-box.bottom<100&&t.left>=box.left-20&&t.right<=box.right+20)));
+  return neighbors.length>=2;
+ }).map(({el})=>el);
+ const gallery=[...new Set([...images.filter(img=>img.alt.includes('白底')),...heroes,...images])];
+ const candidates=gallery.flatMap(el=>{
+  if(el.tagName!=='IMG')return [el.style.backgroundImage.match(/url\(["']?([^"')]+)/)?.[1]];
+  return [el.getAttribute('data-original'),el.getAttribute('data-zoom-image'),el.getAttribute('data-lazy-src'),el.getAttribute('data-src'),el.currentSrc,el.getAttribute('src'),...(el.srcset||'').split(',').map(v=>v.trim().split(/\s+/)[0])];
+ });
  candidates.push(document.querySelector('meta[property="og:image"],meta[name="twitter:image"],meta[itemprop="image"]')?.content);
  const title=document.querySelector('h1')?.textContent.trim();
  if(title&&title.length>3){
@@ -39,13 +54,16 @@ export function readOfferDetail(sku){
   }catch{}
  }
  const white=images.filter(img=>img.alt.includes('白底')).flatMap(img=>[img.getAttribute('data-original'),img.getAttribute('data-src'),img.currentSrc,img.src]);
- return {sku,facts:facts.filter(f=>f.length<=72).slice(0,60),white,photos:candidates.filter(Boolean).slice(0,40)};
+ const login=document.querySelector('input[type=password]')||/请完成验证|滑动验证|登录后查看|登录查看全部规格/.test((document.body?.innerText||'').slice(0,2000));
+ return {sku,login:!!login,facts:facts.filter(f=>f.length<=72).slice(0,60),white,photos:candidates.filter(Boolean).slice(0,40)};
 }
 
 export async function openOfferDetail(sku,windowId){
  if(!/^\d{1,24}$/.test(sku))throw Error('商品编号无效');
  const url='https://detail.1688.com/offer/'+sku+'.html';
- const [open]=await chrome.tabs.query({windowId,url:url+'*'});
+ const tabs=await chrome.tabs.query({windowId,url:url+'*'});
+ const open=tabs.filter(t=>new URL(t.url).pathname==='/offer/'+sku+'.html')
+  .sort((a,b)=>Number(!!b.active)-Number(!!a.active)||(b.lastAccessed||0)-(a.lastAccessed||0))[0];
  const key='offer-photo-tab:'+windowId+':'+sku;
  let tab=open;
  if(!tab){
@@ -63,15 +81,16 @@ export async function openOfferDetail(sku,windowId){
   try{
    const [probe]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:readOfferDetail,args:[sku]});
    if(probe?.result){
-    best=probe.result;if(best.reason)break;
+    best=probe.result;
     const [embedded]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:embeddedOfferCandidates,args:[sku]});
     best.photos=offerPhotos(best.white,embedded?.result,best.photos);best.photo=best.photos[0]||'';
-    if(best.photo&&best.facts.length)break;
+    if(best.photo&&(best.facts.length||i>=2))break;
    }
   }catch{}
   await new Promise(resolve=>setTimeout(resolve,450));
  }
- return best||{sku,facts:[],photo:''};
+ if(!best?.photo&&best?.login)best.reason='当前详情页提示登录，尚未识别到商品图库。';
+ return {...(best||{sku,facts:[],photo:''}),tabId:tab.id};
 }
 
 async function readImageBytes(url){
@@ -98,14 +117,45 @@ async function readImageBytes(url){
  }
  if(!(bytes[0]===0xff&&bytes[1]===0xd8||bytes[0]===137&&bytes[1]===80||String.fromCharCode(...bytes.slice(0,4))==='RIFF'&&String.fromCharCode(...bytes.slice(8,12))==='WEBP'))throw Error('图片格式不支持');
  let binary='';
- for(let i=0;i<length;i+=16384)binary+=String.fromCharCode(...bytes.subarray(i,i+16384));
+ for(let i=0;i<bytes.length;i+=16384)binary+=String.fromCharCode(...bytes.subarray(i,i+16384));
  return btoa(binary);
+}
+
+// Recover already displayed gallery pixels, or reload that same gallery URL
+// from the offer page with its normal referrer and browser CORS checks.
+export async function readDisplayedPhoto({sku,photo}){
+ if(location.origin!=='https://detail.1688.com'||location.pathname!=='/offer/'+sku+'.html')return null;
+ function encode(img){
+  if(!img.complete||!img.naturalWidth||!img.naturalHeight)return null;
+  const scale=Math.min(1,1600/Math.max(img.naturalWidth,img.naturalHeight));
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+  canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  try{return canvas.toDataURL('image/jpeg',0.95).split(',')[1];}catch{return null;}
+ }
+ for(const img of document.images){
+  if(img.currentSrc===photo){const bytes=encode(img);if(bytes)return bytes;}
+ }
+ const img=new Image();img.crossOrigin='anonymous';
+ return new Promise(resolve=>{
+  const end=value=>{clearTimeout(timer);img.onload=img.onerror=null;resolve(value);};
+  const timer=setTimeout(()=>end(null),2500);
+  img.onload=()=>end(encode(img));img.onerror=()=>end(null);img.src=photo;
+ });
 }
 
 export async function downloadSelectedPhoto(detail,cardImages){
  const photos=offerPhotos(detail.photo,detail.photos,cardImages);
  for(const photo of photos.slice(0,4)){
   try{return {...detail,photo,photos,base64:await readImageBytes(photo)};}catch{}
+  if(Number.isInteger(detail.tabId)){
+   try{
+    const [frame]=await chrome.scripting.executeScript({target:{tabId:detail.tabId},func:readDisplayedPhoto,args:[{sku:detail.sku,photo}]});
+    if(frame?.result)return {...detail,photo,photos,base64:frame.result};
+   }catch{}
+  }
  }
  return {...detail,photos,reason:detail.reason||(photos.length?'CDN 未返回可读取的商品图片':'详情页和该商品的搜索卡片均未显示可读取的图片')};
 }

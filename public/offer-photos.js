@@ -7,7 +7,7 @@ export function offerPhoto(value){
  try{
   const u=new URL(src,'https://cbu01.alicdn.com');
   if(u.username||u.password||u.port||!/^(?:cbu0[1-4]|img|imgextra|gw|img1)\.alicdn\.com$/.test(u.hostname))return '';
-  if(!/^\/(?:img\/ibank\/|bao\/uploaded\/i\d\/|imgextra\/i\d\/|i\d\/)[\w./@%-]+\.(?:jpe?g|png|webp|avif)$/i.test(u.pathname))return '';
+  if(!/^\/(?:img\/ibank\/|bao\/uploaded\/i\d\/|imgextra\/i\d\/|i\d\/)[\w.!/@%-]+\.(?:jpe?g|png|webp|avif)$/i.test(u.pathname))return '';
   return 'https://'+u.hostname+u.pathname+u.search;
  }catch{return '';}
 }
