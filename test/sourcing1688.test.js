@@ -72,3 +72,73 @@ for(const legacy of [false,true])test('selected 1688 product reaches the image p
  const artifacts=current().artifacts.filter(a=>a.imageJobId);assert.equal(artifacts.length,nodes.length);
  for(const a of artifacts)assert.equal((await p.images.image(a.imageJobId)).base64,png);
 });
+
+test('restart after a failed image resumes the same plan and reports the delivered image',async t=>{
+ const dir=await mkdtemp('/tmp/pick-resume-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ let searches=0,images=0;
+ const options={offerSearch:async()=>{searches++;return rows;},imageReady:()=>true,imageCall:async()=>{
+  if(++images===1)throw new Error('provider failed');
+  return {base64:png,width:1,height:1};
+ }};
+ let p=await createPlatform(dir,options);
+ await p.images.save({revision:0,enabled:true,provider:'gemini',endpoint:'https://generativelanguage.googleapis.com/v1beta',model:'gemini-test',secretEnv:'IMAGE_SECRET_TEST'});
+ const goal=await p.create({executionMode:'flow',requestId:randomUUID(),text:text+'，做淘宝主图，活动名称：双十一，活动价：89元'});
+ const current=()=>p.goals().find(g=>g.id===goal.id);
+ const step=cap=>current().flow.nodes.find(n=>n.capability===cap);
+ for(let i=0;i<6;i++){await p.pump();await p.images.pump();}
+ const pickId=step('sourcing.1688').runId,previousImageJob=step('image.main').imageJobId;
+ assert.equal(step('image.main').status,'failed');
+ p=await createPlatform(dir,options);
+ const action={kind:'retry',expectedVersion:1,nodeId:step('image.main').id,previousImageJob};
+ await p.action(goal.id,action);await p.action(goal.id,action);
+ for(let i=0;i<5;i++){await p.pump();await p.images.pump();}
+ assert.equal(current().stage,'review');assert.equal(images,2);assert.equal(searches,1);
+ assert.equal(step('sourcing.1688').runId,pickId);assert.notEqual(step('image.main').imageJobId,previousImageJob);
+ const reports=current().messages.filter(m=>m.reportVersion===1);
+ assert.equal(reports.length,1);assert.match(reports[0].text,/露营灯 A/);assert.match(reports[0].text,/卖点建议/);assert.match(reports[0].text,/信息带/);
+ assert.equal(reports[0].links[0].url,rows[0].url);
+ const image=current().artifacts.find(a=>a.id===reports[0].artifactIds[0]);
+ assert.equal(image.layoutName,'活动价格主图');assert.equal((await p.images.image(image.imageJobId)).base64,png);
+});
+
+test('main image templates use only confirmed promotional copy',async()=>{
+ const {mainImageLayout}=await import('../src/workforce/main-image-layout.js');
+ assert.equal(mainImageLayout('采购价12元，预计售价29元').name,'白底商品展示');
+ assert.equal(mainImageLayout('做主图',['接口：G1/2']).name,'卖点特写主图');
+ const promotion=mainImageLayout('做主图，活动：周末特惠，活动价：29.90元，采购价：10元');
+ assert.equal(promotion.name,'活动价格主图');assert.match(promotion.prompt,/¥29.90/);assert.doesNotMatch(promotion.prompt,/10元/);
+});
+
+test('replanning an unchanged blocked goal reuses saved sourcing evidence',async t=>{
+ const dir=await mkdtemp('/tmp/pick-checkpoint-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ let calls=0;const p=await createPlatform(dir,{offerSearch:async()=>{calls++;return rows;}});
+ const goal=await p.create({executionMode:'flow',requestId:randomUUID(),text:text+'，做主图'});
+ for(let i=0;i<5;i++)await p.pump();
+ await p.action(goal.id,{kind:'replan',expectedVersion:1});
+ for(let i=0;i<5;i++)await p.pump();
+ const current=p.goals().find(g=>g.id===goal.id);
+ assert.equal(current.version,2);assert.equal(calls,1);assert.equal(current.flow.nodes.find(n=>n.capability==='sourcing.1688').offers.length,2);
+ assert.equal(current.flow.nodes.find(n=>n.capability==='image.main').preparation.candidate.source,rows[0].url);
+});
+
+test('a restored visible 1688 goal opens its search and receives offers without a click',async t=>{
+ const {createPickBrowser}=await import('../public/pick-browser.js');
+ const values=new Map(),commands=[],writes=[];let check;
+ const original=new Map();
+ function substitute(name,value){
+  original.set(name,Object.getOwnPropertyDescriptor(globalThis,name));
+  Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
+ }
+ t.after(()=>{for(const [name,descriptor] of original){if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];}});
+ substitute('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
+ substitute('document',{hidden:false,addEventListener(){}});
+ substitute('window',{addEventListener(){}});
+ substitute('setInterval',fn=>{check=fn;});
+ substitute('chrome',{runtime:{sendMessage:(id,cmd,reply)=>{commands.push(cmd);reply(cmd.op==='pick1688'?{rows,phase:'complete'}:{value:true});}}});
+ const goal={id:'restored-goal',version:3,text,mode:'flow',flow:{nodes:[{capability:'sourcing.1688',status:'needs_input'}]}};
+ createPickBrowser({state:{goal:goal.id,goals:[goal]},act:async(...args)=>writes.push(args),esc:String,render(){}});
+ check();check();await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(commands.map(cmd=>cmd.action||cmd.op),['openSearch','pick1688']);
+ assert.equal(commands[0].key,commands[1].key);assert.equal(commands[0].query,'露营灯');
+ assert.deepEqual(writes,[['browserOffers',{expectedVersion:3,query:'露营灯',rows},goal.id]]);
+});

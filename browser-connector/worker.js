@@ -38,6 +38,14 @@ async function run(cmd,sender,restored=false){
   }));
   return groups.flat();
  }
+ if(cmd.op==='openSearch'){
+  if(typeof cmd.query!=='string'||!cmd.query.trim()||cmd.query.length>60||!/^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.test(cmd.key))throw Error('目标搜索参数无效');
+  const url=new URL('https://s.1688.com/selloffer/offer_search.htm');
+  url.searchParams.set('keywords',cmd.query);url.searchParams.set('charset','utf8');url.hash='pick-'+cmd.key;
+  const windowId=sender.tab.windowId,open=await chrome.tabs.query({windowId,url:'https://s.1688.com/*'});
+  if(!open.some(t=>t.url===url.href))await chrome.tabs.create({windowId,url:url.href,active:false});
+  return true;
+ }
  if(!['read','fill'].includes(cmd.op)||!Number.isInteger(cmd.tab))throw Error('无效的浏览器操作。');
  const reading=cmd.op==='read',role=reading?'source':'target';
  const allowed=await Promise.all(sites.filter(site=>site.roles.includes(role)).map(site=>siteTabs(site,sender.tab.windowId)));
@@ -67,7 +75,7 @@ chrome.runtime.onMessageExternal?.addListener((cmd,sender,reply)=>{
    const paired=matchesPair(pair,cmd,sender,true)&&
     await chrome.permissions.contains({origins:['https://*.meituan.com/*','https://*.goofish.com/*']});
    if(cmd.action==='status')return {installed:true,paired};
-   if(!paired||!['tabs','disconnect','read','fill'].includes(cmd.action))throw Error('请先在扩展中连接当前工作空间。');
+   if(!paired||!['tabs','disconnect','read','fill','openSearch'].includes(cmd.action))throw Error('请先在扩展中连接当前工作空间。');
    // A restored tab may have a new document. The external request already
    // proved its approved tab, exact workbench URL and workspace above.
    return run({...cmd,op:cmd.action},sender,true);

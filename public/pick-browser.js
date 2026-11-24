@@ -9,9 +9,11 @@ export function createPickBrowser({state,act,esc,render}){
  function openSearch(g,tab){
   const query=sourcingIntent(g.text)?.query;if(!query){tab?.close();return;}
   const key=crypto.randomUUID(),url=sourcingURL(query)+'#pick-'+key;
-  try{sessionStorage.setItem(storageKey(g),JSON.stringify({key,at:Date.now()}));}catch{}
   jobs.delete(storageKey(g));
-  if(tab&&!tab.closed)tab.location.replace(url);else jobs.set(storageKey(g),{last:0,phase:'unavailable',message:'浏览器拦截了新窗口。允许此站点打开弹窗后，点「打开 1688 搜索」。'});
+  if(tab&&!tab.closed){
+   tab.location.replace(url);
+   try{sessionStorage.setItem(storageKey(g),JSON.stringify({key,at:Date.now()}));}catch{}
+  }else{sessionStorage.removeItem(storageKey(g));}
   render(true);
  }
  function reserve(){const tab=window.open('about:blank','_blank');if(tab)tab.opener=null;return tab;}
@@ -28,11 +30,15 @@ export function createPickBrowser({state,act,esc,render}){
   getReply().then(async res=>{
    if(jobs.get(key)!==entry||!state.goals.some(x=>x.id===g.id&&x.version===g.version)||session(g)?.key!==s.key)return;
    if(!res.phase&&(res.rows?.length||0)<2){
-    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.2.0 后，工作台会自动向下浏览并读取更多商品。';
+    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.5.0 后，工作台会自动向下浏览并读取更多商品。';
     if(!res.rows?.length)return;
    }else entry.phase=res.phase||'scanning';
    const rows=res.rows||[];
-   if(!rows.length){entry.message=res.message;return;}
+   if(!rows.length){
+    entry.message=res.message;
+    if(res.phase==='unavailable'&&Date.now()-s.at>12000&&g.id===state.goal&&!document.hidden)autoOpen(g,entry,s);
+    return;
+   }
    if(rows.every(r=>node.offers?.some(o=>o.url===r.url&&o.price===r.price))){entry.message=res.message||'当前报价已保存，继续检测搜索页。';return;}
    await act('browserOffers',{expectedVersion:g.version,query,rows:res.rows},g.id);
    entry.message='已读回商品报价。';
@@ -55,8 +61,8 @@ export function createPickBrowser({state,act,esc,render}){
   const headline={scanning:'正在自动收集报价',install:'需要连接浏览器',verify:'等待 1688 页面验证',login:'等待 1688 登录',unavailable:'等待搜索页就绪',exhausted:'当前结果中的报价不足',expired:'本次浏览器采集已结束'}[phase]||'正在接收商品报价';
   const install=phase==='install';
   return `<section class="pick-import" tabindex="-1"><h3>${esc(headline)} · ${esc(intent.query)}</h3><p><strong>已保存 ${count}/2 件</strong> · 收齐两件不同商品的名称、报价和详情链接后，总控会自动比较。</p>${count?`<p>已保存：${n.offers.map(r=>esc(r.title)+' · ¥'+esc(r.price)).join('、')}</p>`:''}
-  <p role="status">${esc(!attached||expired?'从这个目标打开搜索页，工作台会识别并跟进该标签页。':entry.message||'正在检测搜索页与浏览器连接器。')}</p>
-  ${!attached||expired||phase==='unavailable'?`<button class="primary" data-pick-open="${esc(g.id)}">打开本目标的 1688 搜索 ↗</button>`:''}
+  <p role="status">${esc(entry.message||(!attached||expired?'正在连接当前窗口，准备打开品类搜索。':'正在检测搜索页与浏览器连接器。'))}</p>
+  ${phase==='unavailable'||(!attached&&!globalThis.chrome?.runtime?.sendMessage)||expired?`<button class="primary" data-pick-open="${esc(g.id)}">打开本目标的 1688 搜索 ↗</button>`:''}
   ${install?`<p><a href="/cloud-browser.zip" download="工作台浏览器连接器.zip">下载 Chrome 连接器</a></p><p>解压后在 chrome://extensions 开启开发者模式，加载解压后的目录，再刷新工作台。保持 1688 搜索页打开，采集会自动继续。</p>`:''}
   <details><summary>手动补充报价（可选）</summary><label>粘贴选中的商品卡片<textarea data-pick-paste="${esc(g.id)}" rows="2" placeholder="从 1688 搜索结果复制商品卡片，可逐件粘贴。"></textarea></label></details></section>`;
 
@@ -82,10 +88,33 @@ export function createPickBrowser({state,act,esc,render}){
   field.disabled=true;try{await act('browserOffers',{expectedVersion:g.version,query:sourcingIntent(g.text).query,rows},g.id);}
   catch(error){notice.textContent=error.message;}finally{field.disabled=false;}
  });
+ function autoOpen(g,entry,existing){
+  if(entry.opening||entry.tried)return;
+  const runtime=globalThis.chrome?.runtime,query=sourcingIntent(g.text)?.query;
+  if(!query||!runtime?.sendMessage)return;
+  const key=existing?.key||crypto.randomUUID(),storage=storageKey(g);
+  entry.opening=true;
+  function finish(ok){
+   entry.opening=false;entry.tried=true;
+   if(jobs.get(storage)!==entry||session(g)?.key!==existing?.key)return;
+   if(ok){
+    sessionStorage.setItem(storage,JSON.stringify({key,at:Date.now()}));
+    entry.phase='scanning';entry.message='搜索页已在当前窗口打开，正在读取报价。';
+   }else{
+    entry.phase='unavailable';entry.message='自动打开需要已配对的新版连接器。也可手动打开本目标的搜索页。';
+   }
+   render(true);
+  }
+  try{
+   runtime.sendMessage(extension,{op:'workspaceBrowser',action:'openSearch',workspace:sessionStorage.getItem('workspaceId')||'default',key,query},reply=>finish(!runtime.lastError&&reply?.value===true));
+  }catch{finish(false);}
+ }
  function checkGoals(){
   for(const g of state.goals){
-   if(g.mode!=='flow'||g.paused||!g.flow.nodes.some(n=>n.capability==='sourcing.1688'&&n.status==='needs_input')||!session(g))continue;
-   const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});scan(g,jobs.get(key));
+   if(g.mode!=='flow'||g.paused||!g.flow.nodes.some(n=>n.capability==='sourcing.1688'&&n.status==='needs_input'))continue;
+   const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});const entry=jobs.get(key),saved=session(g);
+   if(saved&&Date.now()-saved.at<=lifetime)scan(g,entry);
+   else if(g.id===state.goal&&!document.hidden){if(saved)sessionStorage.removeItem(key);autoOpen(g,entry);}
   }
  }
  setInterval(checkGoals,3000);window.addEventListener('focus',checkGoals);

@@ -20,11 +20,11 @@ try{
  await source.goto('https://example.meituan.com/deal');await target.goto('https://example.goofish.com/sell');
  await target.evaluate(()=>document.addEventListener('submit',e=>{e.preventDefault();document.title='submitted';}));
  await page.goto('http://127.0.0.1/#ai-config/market');await page.getByRole('button',{name:'云电脑浏览器',exact:true}).click();
- assert.match(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.4.0'}).getAttribute('href'),/^data:application\/zip/);
+ assert.match(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.5.0'}).getAttribute('href'),/^data:application\/zip/);
  await page.bringToFront();
  // Same document-bound binding used after the user grants activeTab in the extension popup.
  if(simulated){
-  let listener,external,pair={tabId:1,doc:'document',workspace:'default',scope:'http://127.0.0.1/'};
+  const opened=[];let listener,external,pair={tabId:1,doc:'document',workspace:'default',scope:'http://127.0.0.1/'};
   const pages=new Map([[2,source],[3,target]]);secondTarget=()=>pages.set(4,target);
   additionalSources=async()=>{
    for(const [id,url,title,price] of [[5,'https://detail.1688.com/offer/123.html','角阀 A','12'],[6,'https://www.goofish.com/item?id=321&tracking=no','角阀 B','18']]){
@@ -34,7 +34,7 @@ try{
   globalThis.chrome={
    runtime:{onMessage:{addListener:fn=>{listener=fn;}},onMessageExternal:{addListener:fn=>{external=fn;}}},permissions:{contains:async()=>true},
    storage:{session:{get:async()=>({pair}),remove:async()=>{pair=null;}}},
-   tabs:{query:async({url})=>[...pages].filter(([,p])=>new URL(p.url()).hostname.endsWith(url.includes('meituan')?'meituan.com':url.includes('goofish')?'goofish.com':url.includes('detail.1688')?'detail.1688.com':'s.1688.com')).map(([id,p])=>({id,url:p.url()}))},
+   tabs:{create:async tab=>{opened.push(tab);},query:async({url})=>url==='https://s.1688.com/*'?opened:[...pages].filter(([,p])=>new URL(p.url()).hostname.endsWith(url.includes('meituan')?'meituan.com':url.includes('goofish')?'goofish.com':url.includes('detail.1688')?'detail.1688.com':'s.1688.com')).map(([id,p])=>({id,url:p.url()}))},
    scripting:{executeScript:async({target,func,args})=>[{result:await pages.get(target.tabId).evaluate(func,args[0])}]}
   };
   await import('../browser-connector/worker.js');
@@ -42,6 +42,12 @@ try{
    const reply=await new Promise(resolve=>external({op:'workspaceBrowser',action:'tabs',workspace},{tab:{id:tabId,windowId:1},documentId:'new',url:origin},resolve));
    assert(reply.error);
   }
+  const goalSearch={op:'workspaceBrowser',action:'openSearch',workspace:'default',query:'花洒',key:crypto.randomUUID()};
+  const request=cmd=>new Promise(resolve=>external(cmd,{tab:{id:1,windowId:9},documentId:'document',url:'http://127.0.0.1/'},resolve));
+  assert((await request({...goalSearch,key:'bad'})).error);
+  assert.equal((await request(goalSearch)).value,true);assert.equal((await request(goalSearch)).value,true);
+  assert.equal(opened.length,1);assert.equal(opened[0].windowId,9);assert.equal(opened[0].active,false);
+  const openedUrl=new URL(opened[0].url);assert.equal(openedUrl.host,'s.1688.com');assert.equal(openedUrl.searchParams.get('keywords'),'花洒');assert.equal(openedUrl.hash,'#pick-'+goalSearch.key);
   await page.exposeFunction('simulateMessage',cmd=>new Promise(resolve=>listener(cmd,{tab:{id:1,windowId:1},documentId:'document'},resolve)));
   await page.exposeFunction('externalMessage',cmd=>new Promise(resolve=>external(cmd,{url:'http://127.0.0.1/#ai-config/market',tab:{id:1,windowId:1},frameId:0,documentId:'restored-document'},resolve)));
   const runtime=()=>{window.chrome.runtime={sendMessage:(id,msg,cb)=>typeof id==='string'?window.externalMessage(msg).then(cb):window.simulateMessage(id)};};
@@ -59,7 +65,7 @@ try{
   await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
  assert.equal(await page.locator('[data-cloud-workspace] [data-new]').count(),0);
- assert(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.4.0'}).isVisible());
+ assert(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.5.0'}).isVisible());
  await page.locator('.sidebar-create').click();assert.equal(await page.locator('#goal').inputValue(),'');await page.locator('#close-dialog').click();
  assert.equal(await page.locator('#cloud-source').count(),0);
  await page.getByText('读取这件商品',{exact:true}).click();

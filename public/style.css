@@ -147,3 +147,14 @@ button,a{-webkit-tap-highlight-color:transparent}
 #goal-advanced{margin:10px 0 2px;padding-top:10px;border-top:1px solid var(--line)}#goal-advanced summary{cursor:pointer;color:#46546a;padding:6px 0}#pick-example{min-height:36px}
 
 .browser-connector{max-width:900px}.browser-download{display:inline-flex;margin:8px 0 20px}.cloud-setup{margin-top:16px}.cloud-setup summary{cursor:pointer;font-weight:600}.cloud-setup[open] p{margin-top:8px}
+
+.chat-log .chat-message{align-items:flex-start;justify-content:flex-start}
+.chat-log .chat-message .message-body{flex:0 1 auto;max-width:min(82%,760px)}
+.chat-log .chat-message.human{flex-direction:row-reverse}
+.chat-log .chat-message.human .message-meta,.chat-log .chat-message.human .message-actions{justify-content:flex-end}
+.chat-log .chat-message.human .message-bubble{background:#e4ecff;color:#182a4b;border:0;border-radius:12px 2px 12px 12px}
+.chat-log .chat-message:not(.human) .message-bubble{background:#f2f4f7;border-radius:2px 12px 12px 12px}
+.delivery-report p{white-space:pre-line;max-width:64ch;line-height:1.75}
+.delivery-report a{display:inline-block;margin-bottom:12px}
+.report-image{display:block;max-width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:white;text-align:left;color:var(--ink)}
+.report-image span{display:block;padding-top:5px}

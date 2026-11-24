@@ -56,6 +56,9 @@ try{
  await page.locator('.pick-results article').first().waitFor({timeout:20000});assert.match(await page.locator('.pick-results').innerText(),/估算单件收益 ¥46.00/);
  assert.equal(await page.locator('.pick-results a').count(),2);
  await page.getByText('按我的售价试算收益',{exact:true}).click();const calculator=page.locator('[data-pick-estimate]');await calculator.locator('[name=retail]').fill('100');await calculator.getByRole('button').click();assert.match(await page.locator('.pick-results').innerText(),/估算单件收益 ¥57.00/);
+ await page.locator('.goal-tabs [data-tab=discussion]').click();await page.locator('.chat-message.coordinator').filter({hasText:'我推荐「露营灯 0」'}).waitFor();
+ await page.locator('.goal-tabs [data-tab=artifacts]').click();await page.locator('.delivery-report').waitFor();
+ assert.equal(await page.locator('.delivery-report a').getAttribute('href'),'https://detail.1688.com/offer/1200.html');
  assert.deepEqual(errors,[]);
  console.log('PASS inline validation, category clarification, automatic category search tab, two sourced offers and unit estimates ('+(process.argv.includes('--auto')?'simulated extension transport':'manual paste')+')');
 }finally{await browser.close();if(server&&server.exitCode===null){server.kill();await once(server,'exit');}if(dir)await rm(dir,{recursive:true,force:true});}

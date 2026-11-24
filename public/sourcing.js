@@ -35,3 +35,25 @@ export function rankedOffers(rows,criteria){
  for(const r of scored)r.shortlist=r.repurchase!==null&&!scored.some(o=>o.repurchase!==null&&o.price<=r.price&&o.repurchase>=r.repurchase&&(o.price<r.price||o.repurchase>r.repurchase));
  return scored.sort((a,b)=>Number(b.shortlist)-Number(a.shortlist)||a.price-b.price||(b.repurchase??-1)-(a.repurchase??-1));
 }
+
+// Derive the report from this version's saved offers and delivered files.
+export function sourcingReport(g){
+ const pick=g.flow?.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='succeeded');
+ const criteria=sourcingIntent(g.text);
+ if(!pick?.offers?.length||!criteria)return null;
+ const rows=rankedOffers(cleanOffers(pick.offers),criteria);
+ if(!rows.length)return null;
+ const imageSteps=g.flow.nodes.filter(n=>n.capability.startsWith('image.')&&n.status==='succeeded');
+ const prep=imageSteps.find(n=>n.preparation?.candidate)?.preparation;
+ if(rows[0].margin!==null&&/利润|毛利|收益|盈利/.test(g.text))rows.sort((a,b)=>b.margin-a.margin);
+ const selected=prep?rows.find(r=>r.sku===prep.candidate.sku):rows[0];
+ if(!selected)return null;
+ const pictures=g.artifacts.filter(a=>a.version===g.version&&a.imageJobId&&imageSteps.some(n=>n.imageJobId===a.imageJobId));
+ const facts=(prep?.facts||[]).filter(f=>!/^商品品类/.test(f));
+ const terms=['增压','防堵','手持','可调节','旋转','可拆洗','折叠','便携','快充','套装'].filter(term=>selected.title.includes(term)).slice(0,3);
+ const pitch=facts.length?facts.slice(0,3).join('；'):terms.length?'供应商标题提到'+terms.map(t=>'「'+t+'」').join('、')+'，建议核对实物后用于详情文案。':'当前报价只列出了商品名称；建议先展示外观，性能卖点待核实。';
+ const lines=['从 '+rows.length+' 款'+criteria.query+'里，我推荐「'+selected.title+'」。','采购页展示价 ¥'+selected.price+'；'+(selected.repurchase===null?'页面未披露回购率。':'页面回购率 '+selected.repurchase+'%。')+(selected.margin===null?'缺少售价或其他成本，暂时无法判断哪款利润最高。':'按售价 ¥'+criteria.retail+'、其他单件成本 ¥'+criteria.expenses+'，估算单件收益 ¥'+selected.margin.toFixed(2)+'。'),'卖点建议：'+pitch];
+ const compositions={'白底商品展示':'白底居中，突出完整商品轮廓','卖点特写主图':'右侧展示商品，左侧呈现特点与局部细节','活动价格主图':'上方展示商品，下方信息带突出已确认的促销文案'};
+ if(pictures.length)lines.push('图片交付：'+pictures.map(a=>a.title+(a.layoutName?' · '+(compositions[a.layoutName]||a.layoutName):'')).join('、')+'。'+(pictures.some(a=>a.title.includes('概念'))?'上架前请核对图中外观、颜色与实际发货配件。':'请核对实物与最终版面后上架。'));
+ return {text:lines.join('\n\n'),imageIds:pictures.map(a=>a.id),source:selected.url};
+}
