@@ -14,14 +14,14 @@ test('legacy secrets cannot enable the old login; public hosting uses accounts',
  assert.equal(accessPolicy({RENDER:'true'}).mode,'account');
  assert.equal(accessPolicy({NODE_ENV:'production'}).mode,'account');
  assert.equal(accessPolicy({WORKSPACE_ACCESS:'account'}).mode,'account');
- assert.equal(accessPolicy({CODESPACES:'true',ENABLE_CODEX_LOCAL:'1'}).host,'127.0.0.1');
+ assert.equal(accessPolicy({CODESPACES:'true',ENABLE_CODEX_LOCAL:'1'}).host,'0.0.0.0');
 });
 
 test('Codespaces API works without app login even with mismatched inherited and browser tokens', async t => {
   const dir = await mkdtemp('/tmp/codespaces-access-');
   const child = spawn(process.execPath, ['src/server.js'], {
     cwd: new URL('../', import.meta.url),
-    env: {...process.env, DATA_DIR:dir, PORT:'0', CODESPACES:'true', PLATFORM_TOKEN:'stale-server-token', ENABLE_CODEX_LOCAL:'0'},
+    env: {...process.env, DATA_DIR:dir, PORT:'0', CODESPACES:'true', PLATFORM_TOKEN:'stale-server-token', ENABLE_CODEX_LOCAL:'1'},
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {
