@@ -1,14 +1,10 @@
+import {requestedImages} from '../../public/goal-language.js';
 import {bm25} from '../knowledge-retrieval.js';
 import {materialProblem} from '../sources.js';
 export const contentChannels=['全渠道','淘宝 / 天猫','抖音','小红书','京东','拼多多','1688','自有商城'];
 export const normalizeChannel=value=>!value||['商品详情页','详情页','主图','详情图'].includes(value)?'全渠道':value;
 export const placeholderFact=value=>/^(嗯+|哦+|好[的吧]?|暂无|无|不知道|待补[充齐]?|测试|test|n\/a|\.+|…+|待确认)$/i.test(String(value||'').trim());
-export function imageOutputs(text){
- const t=String(text||'').replace(/(?:不要|无需|不做|不用)[^，。；\n]*/g,'');
- if(/简报|提示词|仅.*文案|只.*文字/.test(t))return [];
- const out=[];if(/主图|海报|配图/.test(t))out.push('main');if(/详情(?:页)?(?:图|图片)/.test(t))out.push('detail');
- if(!out.length&&/(生图|作图|做图|出图|生成.{0,15}图片|制作.{0,15}图片|做.{0,15}图片)/.test(t))out.push('main');return out;
-}
+export const imageOutputs=requestedImages;
 export function channelFromGoal(g){
  const existing=g.skillData?.copyBrief?.channel;if(existing&&!['商品详情页','详情页','主图','详情图'].includes(existing))return normalizeChannel(existing);
  if(/全渠道/.test(g.text))return '全渠道';

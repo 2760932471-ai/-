@@ -49,7 +49,7 @@ export function createPickBrowser({state,act,esc,render}){
   getReply().then(async res=>{
    if(jobs.get(key)!==entry||!state.goals.some(x=>x.id===g.id&&x.version===g.version)||session(g)?.key!==s.key)return;
    if(!res.phase&&Array.isArray(res.rows)&&res.rows.length<2){
-    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.7.1 后，工作台会自动向下浏览并读取更多商品。';
+    entry.phase='install';entry.message='检测到旧版连接器。更新到 1.7.2 后，工作台会自动向下浏览并读取更多商品。';
     if(!res.rows?.length)return;
    }else entry.phase=res.phase||'scanning';
    const rows=res.rows||[];
@@ -58,7 +58,7 @@ export function createPickBrowser({state,act,esc,render}){
     if(res.phase==='unavailable'&&Date.now()-s.at>12000&&g.id===state.goal&&!document.hidden)autoOpen(g,entry,s);
     return;
    }
-   if(rows.every(r=>node.offers?.some(o=>o.url===r.url&&o.price===r.price))){entry.message=res.message||'当前报价已保存，继续检测搜索页。';return;}
+   if(rows.every(r=>node.offers?.some(o=>o.url===r.url&&o.price===r.price&&o.terms===r.terms&&o.repurchase===r.repurchase))){entry.message=res.message||'当前报价已保存，继续检测搜索页。';return;}
    if(rows.length+(node.offers?.length||0)>=2&&g.flow.nodes.some(n=>/^(copy|image)\./.test(n.capability))){
     const chosen=selectedOffer([...rows,...(node.offers||[])],sourcingIntent(businessBrief(g)),businessBrief(g));
     if(chosen){
@@ -77,17 +77,17 @@ export function createPickBrowser({state,act,esc,render}){
   const intent=sourcingIntent(businessBrief(g)),n=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
   if(!intent?.query||!n)return '';
   if(n.status==='succeeded'){
-   const basis=estimates.get(storageKey(g))||intent,sorted=decisionOrder(n.offers||[],basis,businessBrief(g));
+   const basis={...intent,...estimates.get(storageKey(g))},sorted=decisionOrder(n.offers||[],basis,businessBrief(g));
    const prep=g.flow.nodes.find(step=>step.capability.startsWith('image.')&&step.preparation?.candidate)?.preparation;
-   return `<section class="pick-results"><h3>${esc(intent.query)} · ${sorted.length} 个候选</h3>${prep?`<p><strong>本次制图商品</strong> · ${esc(prep.productName)}<br>${esc(prep.selectionReason)}</p>`:''}<p>按本目标的比较口径排列。报价规格与起订量可在商品详情页核对。</p><details><summary>按我的售价试算收益</summary><form novalidate data-pick-estimate="${esc(g.id)}"><div class="data-fields"><label>预计售价（元）<input name="retail" type="number" min="0.01" step="0.01" value="${basis.retail??''}"></label><label>每件其他成本（元）<input name="expenses" type="number" min="0" step="0.01" value="${basis.expenses??''}"></label></div><p>其他成本包括运费、平台费等。试算只更新当前页面。</p><button class="secondary">计算单件收益</button><span role="status"></span></form></details>${sorted.map(r=>`<article><div><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)} ↗</a><small>${esc(r.terms)} · ${r.repurchase===null?'回购率未披露':'回购率 '+r.repurchase+'%'}</small></div><div><strong>¥${esc(r.price)}</strong><small>${r.margin===null?'利润待算':'估算单件收益 ¥'+r.margin.toFixed(2)}</small></div></article>`).join('')}</section>`;
+   return `<section class="pick-results"><h3>${esc(intent.query)} · ${sorted.length} 个候选</h3>${prep?`<p><strong>本次制图商品</strong> · ${esc(prep.productName)}<br>${esc(prep.selectionReason)}</p>`:''}<p>按本目标的比较口径排列。报价规格与起订量可在商品详情页核对。</p><details><summary>按我的售价试算收益</summary><form novalidate data-pick-estimate="${esc(g.id)}"><div class="data-fields"><label>预计售价（元）<input name="retail" type="number" min="0.01" step="0.01" value="${basis.retail??''}"></label><label>每件其他成本（元）<input name="expenses" type="number" min="0" step="0.01" value="${basis.expenses??''}"></label></div><p>其他成本包括运费、平台费等。试算只更新当前页面。</p><button class="secondary">计算单件收益</button><span role="status"></span></form></details>${sorted.map(r=>`<article><div><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)} ↗</a><small>${esc(r.terms)} · ${r.repurchase===null?'回购率未披露':'回购率 '+r.repurchase +'%'}${r.eligibilityReasons.length?' · '+esc((r.eligibility==='excluded'?'已排除：':'待核实：')+r.eligibilityReasons.join('；')):''}</small></div><div><strong>¥${esc(r.price)}</strong><small>${r.margin===null?'利润待算':'估算单件收益 ¥'+r.margin.toFixed(2)}</small></div></article>`).join('')}</section>`;
   }
   if(n.status!=='needs_input'||g.paused)return '';
   const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});const entry=jobs.get(key);
   const attached=session(g),expired=attached&&Date.now()-attached.at>lifetime;
   const phase=expired?'expired':entry.phase||'scanning',count=n.offers?.length||0;
-  const headline={unpaired:'等待商品来源',scanning:'正在自动收集报价',install:'需要连接浏览器',verify:'等待 1688 页面验证',login:'等待 1688 登录',unavailable:'等待搜索页就绪',exhausted:'当前结果中的报价不足',expired:'本次浏览器采集已结束'}[phase]||'正在接收商品报价';
+  const headline=count>=2?'正在核对采购条件':{unpaired:'等待商品来源',scanning:'正在自动收集报价',install:'需要连接浏览器',verify:'等待 1688 页面验证',login:'等待 1688 登录',unavailable:'等待搜索页就绪',exhausted:'当前结果中的报价不足',expired:'本次浏览器采集已结束'}[phase]||'正在接收商品报价';
   const install=phase==='install';
-  return `<section class="pick-import" tabindex="-1"><h3>${esc(headline)} · ${esc(intent.query)}</h3><p><strong>已保存 ${count}/2 件</strong> · 收齐两件不同商品的名称、报价和详情链接后，总控会自动比较。</p>${count?`<p>已保存：${n.offers.map(r=>esc(r.title)+' · ¥'+esc(r.price)).join('、')}</p>`:''}
+  return `<section class="pick-import" tabindex="-1"><h3>${esc(headline)} · ${esc(intent.query)}</h3><p><strong>${count<2?'已保存 '+count+'/2 件':'已保存 '+count+' 件'}</strong> · ${count<2?'收齐两件不同商品的名称、报价和详情链接后，总控会自动比较。':esc(n.error||'请核实这些报价是否满足本次采购条件。')}</p>${count?`<p>已保存：${n.offers.map(r=>esc(r.title)+' · ¥'+esc(r.price)).join('、')}</p>`:''}
   <p role="status">${esc(entry.message||(!attached||expired?'正在连接当前窗口，准备打开品类搜索。':'正在检测搜索页与浏览器连接器。'))}</p>
   ${phase==='unavailable'||(!attached&&!globalThis.chrome?.runtime?.sendMessage)||expired?`<button class="primary" data-pick-open="${esc(g.id)}">打开本目标的 1688 搜索 ↗</button>`:''}
   ${install?`<p><a href="/cloud-browser.zip" download="工作台浏览器连接器.zip">下载 Chrome 连接器</a></p><p>解压后在 chrome://extensions 开启开发者模式，加载解压后的目录，再刷新工作台。保持 1688 搜索页打开，采集会自动继续。</p>`:''}
@@ -100,7 +100,7 @@ export function createPickBrowser({state,act,esc,render}){
   const g=state.goals.find(x=>x.id===f.dataset.pickEstimate);if(!g)return;
   const retail=f.elements.retail.valueAsNumber,expenses=f.elements.expenses.valueAsNumber;
   if(!(retail>0)||!(expenses>=0)){f.querySelector('[role=status]').textContent='请填入售价和单件其他成本；确认为零的成本可填 0。';return;}
-  estimates.set(storageKey(g),{retail,expenses,grams:sourcingIntent(businessBrief(g))?.grams});render(true);
+  estimates.set(storageKey(g),{retail,expenses,fees:undefined});render(true);
  });
  document.addEventListener('paste',async e=>{
   const field=e.target.closest('[data-pick-paste]');if(!field)return;e.preventDefault();

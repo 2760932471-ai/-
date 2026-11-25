@@ -18,7 +18,8 @@ export function taskMemory(goal, nodes = goal.flow?.nodes || []) {
  if (!pick || !basis) return memory;
  const offers = cleanOffers(pick.offers);
  const deliveredSku=nodes.find(n=>n.capability.startsWith('image.')&&n.status==='succeeded'&&n.preparation?.candidate)?.preparation.candidate.sku;
- const best = deliveredSku ? rankedOffers(offers,basis).find(row=>row.sku===deliveredSku) : selectedOffer(offers, basis, businessBrief(goal));
+ const chosenSku = pick.selection?.sku || deliveredSku;
+ const best = chosenSku ? rankedOffers(offers,basis).find(row=>row.sku===chosenSku&&row.eligibility==='eligible') : selectedOffer(offers, basis, businessBrief(goal));
  if (!best) return memory;
  memory.selection = {
   count: offers.length, grams:basis.grams, category: basis.query, asOf: pick.finishedAt, method: pick.offerSource,

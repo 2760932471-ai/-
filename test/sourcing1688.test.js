@@ -31,7 +31,8 @@ for(const source of ['server','browser'])test('1688 goal to deliverable using '+
   await p.action(g.id,first);await p.action(g.id,first);assert.equal(goal().flow.nodes[1].offers.length,1);assert.match(goal().flow.nodes[1].error,/还需 1 件/);
   await p.action(g.id,{...action,rows:rows.slice(1)});await assert.rejects(()=>p.action(g.id,action));await p.pump();
  }
- await p.pump();assert.equal(goal().stage,'review');assert.match(goal().artifacts.at(-1).body,/估算单件收益 ¥42.00/);
+ for(let i=0;i<6&&goal().stage!=='review';i++)await p.pump();
+ assert.equal(goal().stage,'review');assert.match(goal().artifacts.at(-1).body,/估算单件收益 ¥42.00/);
 });
 
 const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/S1sAAAAASUVORK5CYII=';
@@ -61,7 +62,8 @@ for(const legacy of [false,true])test('selected 1688 product reaches the image p
  }
  await p.images.save({revision:0,enabled:true,provider:'gemini',endpoint:'https://generativelanguage.googleapis.com/v1beta',model:'gemini-test',secretEnv:'IMAGE_SECRET_TEST'});
  if(legacy)await p.action(g.id,{kind:'retry',nodeId:'main',expectedVersion:1});
- await p.pump();const nodes=current().flow.nodes.filter(n=>n.capability.startsWith('image.'));
+ for(let i=0;i<4&&current().flow.nodes.some(n=>n.capability.startsWith('image.')&&n.status==='pending');i++)await p.pump();
+ const nodes=current().flow.nodes.filter(n=>n.capability.startsWith('image.'));
  const selected=legacy?offers[1]:offers[0];
  assert.equal(nodes.length,legacy?1:2);
  for(const n of nodes){assert.equal(n.status,'waiting_external');assert.equal(n.preparation.candidate.source,selected.url);}

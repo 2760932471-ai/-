@@ -39,8 +39,22 @@ try{
  const intervention=page.locator('[data-flow-intervention="'+nodeId+'"]');
  await intervention.getByRole('button',{name:'读取或补入候选报价'}).click();
  const quotes=page.getByRole('dialog',{name:'比较候选报价'});for(let i=0;i<2;i++){const row=quotes.locator('fieldset').nth(i);await row.locator('[name=sku]').fill('龙头-'+i);await row.locator('[name=price]').fill(String(25+i));await row.locator('[name=source]').fill('测试报价单 '+i);}
- await quotes.getByRole('button',{name:'保存并继续比较'}).click();await quotes.waitFor({state:'hidden'});await page.getByText('3 / 3 步完成',{exact:true}).waitFor();assert.equal(await page.locator('.flow-attention').count(),0);
+ await quotes.getByRole('button',{name:'保存并继续比较'}).click();
+ await quotes.waitFor({state:'hidden'});
+ await page.locator('[data-flow-node="'+nodeId+'"][data-status=succeeded]').waitFor();
+ // The quotes complete the comparison. Publishing to a shop is a separate external action.
+ await page.locator('[data-flow-node][data-status=needs_capability]').filter({hasText:'上架'}).waitFor();
+ assert.equal(await page.locator('[data-flow-node=summary]').getAttribute('data-status'),'pending');
  if(offline){
+  await page.locator('.sidebar-create').click();
+  await page.locator('#goal').fill('在1688选猫粮，新店小批量测款，首批最多10袋。比较候选利润，给首选款制作淘宝主图和卖点。');
+  await page.locator('#submit-task').click();
+  await page.locator('#task-dialog').waitFor({state:'hidden'});
+  await page.locator('.goal-tabs [data-tab=tasks]').click();
+  for(const node of ['pick1688','profit','main','selling','summary']){
+   await page.locator('[data-flow-node="'+node+'"]').waitFor();
+  }
+  assert.equal(await page.locator('[data-flow-node=main]').getAttribute('data-status'),'pending');
   await primaryNav.locator('[data-view=overview]').click();
   await page.locator('.inbox-row').filter({hasText:'四名员工协作准备角阀上新资料'}).click();
  }else{

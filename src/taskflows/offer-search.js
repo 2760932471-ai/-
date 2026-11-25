@@ -1,6 +1,22 @@
 import {offerPhotos,embeddedOfferCandidates} from '../../public/offer-photos.js';
 import {sourcingURL,cleanOffers} from '../../public/sourcing.js';
 
+// Keep quantities attached to the price that actually applies. A wholesale
+// aggregate's lowest tier is not evidence that the same price applies at MOQ.
+function publicQuoteTerms(offer,price){
+ const spec=offer.priceSpecification;
+ const units={KGM:'公斤',GRM:'克',H87:'件',SET:'套',BOX:'箱'};
+ const unit=q=>units[q?.unitCode]||q?.unitText;
+ const quantity=spec?.referenceQuantity;
+ const samePrice=Number(spec?.price)===price&&(!spec?.priceCurrency||spec.priceCurrency==='CNY');
+ const unitName=unit(quantity);
+ const knownUnit=samePrice&&Number(quantity?.value)>0&&/^(?:斤|公斤|千克|克|kg|g|件|个|套|箱|只|袋|包)$/i.test(unitName);
+ const terms=[knownUnit?'元/'+Number(quantity.value)+unitName:'计价单位待核实'];
+ const lot=offer.eligibleQuantity||(samePrice&&spec?.eligibleQuantity);
+ const count=Number(lot?.minValue??lot?.value);
+ if(Number.isSafeInteger(count)&&count>0&&/^(?:件|个|套|箱|只|袋|包)$/.test(unit(lot)))terms.push(count+unit(lot)+'起订');
+ return terms.join('；');
+}
 // Read only published Product offers on the official search page. Pages rendered
 // after login are handled by the user's browser, without transferring its cookies.
 export function publicProducts(html){
@@ -12,7 +28,9 @@ export function publicProducts(html){
    for(const o of [item.offers].flat().filter(Boolean)){
     if(o.priceCurrency&&o.priceCurrency!=='CNY')continue;
     const image=[item.image].flat()[0];
-    rows.push({url:o.url||item.url,title:item.name,photo:typeof image==='string'?image:image?.url,price:Number(o.price??o.lowPrice),terms:'页面展示报价；规格与起订量待核对'});
+    const price=Number(o.price??o.lowPrice??o.priceSpecification?.price);
+    if(o.priceSpecification?.priceCurrency&&o.priceSpecification.priceCurrency!=='CNY'&&o.price==null&&o.lowPrice==null)continue;
+    rows.push({url:o.url||item.url,title:item.name,photo:typeof image==='string'?image:image?.url,price,terms:publicQuoteTerms(o,price)});
    }
   }
   for(const key of ['@graph','itemListElement','item','mainEntity'])visit(item[key]);
@@ -61,11 +79,7 @@ export function publicOfferDetail(html,sku){
      const currency=directPrice!=null?o.priceCurrency:spec?.priceCurrency;
      if(currency!=='CNY')continue;
      const price=Number(directPrice??spec?.price);
-     const quantity=spec?.referenceQuantity;
-     const unit={KGM:'公斤',GRM:'克'}[quantity?.unitCode]||quantity?.unitText;
-     const samePrice=Number(spec?.price)===price&&(!spec?.priceCurrency||spec.priceCurrency===currency);
-     const basis=samePrice&&Number(quantity?.value)>0&&/^(?:斤|公斤|千克|克|kg|g)$/i.test(unit)?'元/'+Number(quantity.value)+unit:'计价单位待核实';
-     const [row]=cleanOffers([{url:new URL(url,'https://detail.1688.com').href,title:item.name,price,terms:'详情页人民币展示报价，'+basis+'，起订量待核实'}]);
+     const [row]=cleanOffers([{url:new URL(url,'https://detail.1688.com').href,title:item.name,price,terms:publicQuoteTerms(o,price)}]);
      if(row?.sku===sku)quotes.push(row);
     }
     for(const p of [item.additionalProperty||[]].flat())facts.push(p.name+'：'+p.value);

@@ -18,7 +18,10 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   if(n.detailDeadline&&n.error?.includes('正在读取所选商品'))return '<small>工作台正在收集属性，完成后会继续。</small>';
   if(n.error?.includes('所选商品的参考图'))return '<small role="status">'+esc(pickBrowser.photoStatus(g,n)||'正在尝试获取白底图或商品图，取到后会继续生图。')+'</small><button class="secondary" data-flow-retry="'+id+'" data-goal="'+goal+'">立即重新取图</button><button class="text-button" data-product-upload="'+goal+'">使用我自己的底图</button>';
   if(n.imageJobId)return `<button class="primary" data-flow-retry="${id}" data-goal="${goal}" data-previous-image="${esc(n.imageJobId)}">从生图步骤继续</button><button class="text-button" data-view="ai-config/images">查看生图配置</button>`;
-  if(n.capability==='analysis.reason'&&!g.flow.model)return '<button class="primary" data-view="flows">选择总控模型</button><small>设置完成后，重新规划以使用新模型。</small>';
+  if(n.capability==='analysis.reason'&&!g.flow.model){
+   if(state.flows?.modelReady)return retry;
+   return '<button class="primary" data-view="flows">选择分析模型</button><small>选择后回到这里，可继续当前步骤。</small>';
+  }
   if(n.capability==='market.offers')return '<button class="primary" data-view="ai-config/market" data-market-method="browser">在浏览器中处理</button><button class="text-button" data-view="ai-config/market" data-market-method="api">管理授权接口</button>'+retry;
   const images=n.capability.startsWith('image.')&&/服务|模型/.test(n.error||'');
   return (images?'<button class="primary" data-view="ai-config/images">打开连接配置</button>':'<button class="secondary" data-tab="facts">查看与补充资料</button>')+retry;
@@ -60,14 +63,16 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   const steps=nodes.map((n,i)=>{
    const waiting=n.dependsOn.map(id=>nodes.find(x=>x.id===id)).filter(x=>x&&x.status!=='succeeded');
    const checking=['pending','running'].includes(n.status)&&n.investigation;
+   const assignment=n.assignment;
+   const owner=assignment?'<p>'+esc(assignment.employeeName)+' · '+esc(assignment.reason)+'</p>':'';
    const stateLabel=checking?(n.investigation.phase==='search'?'正在补查资料':'正在复核判断'):n.status==='pending'&&!waiting.length?'等待调度':label(n.status);
-   return `<li class="flow-node" data-flow-node="${esc(n.id)}" data-status="${esc(n.status)}" tabindex="-1"><span class="step-mark" aria-hidden="true">${n.status==='succeeded'?'✓':i+1}</span><div class="step-body"><details ${disclosure(g.id+'/'+g.version+'/step/'+n.id)}><summary aria-label="${esc(n.title)} · ${esc(stateLabel)} · 执行详情"><strong>${esc(n.title)}</strong>${badge(stateLabel,active.includes(n))}</summary>${waiting.length?`<p>等待「${waiting.map(x=>esc(x.title)).join('、')}」完成</p>`:''}${checking?`<p>${esc(n.investigation.query)} · ${esc(n.investigation.why)}</p>`:''}<p>${esc(n.objective)} · ${esc(n.acceptance)}</p><small>${esc(state.flows?.capabilities.find(c=>c.id===n.capability)?.name||n.capability)} · 已执行 ${n.attempts||0} 次</small>${n.runId?`<button class="text-button" data-run="${esc(n.runId)}">查看本步运行记录</button>`:''}${n.capabilityProposal?`<p>${esc(n.capabilityProposal.description)}</p><pre>${esc(n.capabilityProposal.implementation)}</pre><p>验证要求：${esc(n.capabilityProposal.tests)}</p>`:''}</details></div></li>`;
+   return `<li class="flow-node" data-flow-node="${esc(n.id)}" data-status="${esc(n.status)}" tabindex="-1"><span class="step-mark" aria-hidden="true">${n.status==='succeeded'?'✓':i+1}</span><div class="step-body"><details ${disclosure(g.id+'/'+g.version+'/step/'+n.id)}><summary aria-label="${esc(n.title)} · ${esc(stateLabel)} · 执行详情"><strong>${esc(n.title)}</strong>${badge(stateLabel,active.includes(n))}</summary>${waiting.length?`<p>等待「${waiting.map(x=>esc(x.title)).join('、')}」完成</p>`:''}${owner}${checking?`<p>${esc(n.investigation.query)} · ${esc(n.investigation.why)}</p>`:''}<p>${esc(n.objective)} · ${esc(n.acceptance)}</p><small>${esc(state.flows?.capabilities.find(c=>c.id===n.capability)?.name||n.capability)} · 已执行 ${n.attempts||0} 次</small>${n.runId?`<button class="text-button" data-run="${esc(n.runId)}">查看本步运行记录</button>`:''}${n.capabilityProposal?`<p>${esc(n.capabilityProposal.description)}</p><pre>${esc(n.capabilityProposal.implementation)}</pre><p>验证要求：${esc(n.capabilityProposal.tests)}</p>`:''}</details></div></li>`;
   }).join('');
   return `<section class="flow-panel" aria-label="任务流执行"><header class="flow-overview"><h2>${esc(f.plan?.name||'任务执行')}</h2>${badge(status,true)}</header>
    ${current}
    ${nodes.length?`<div class="task-steps-heading"><h3 class="flow-step-heading">执行步骤</h3><small>${done} / ${nodes.length} 步完成</small><progress value="${done}" max="${nodes.length}" aria-label="已完成步骤"></progress></div><ol class="execution-steps">${steps}</ol>`:''}
    ${pick?.status==='succeeded'?pickBrowser.panel(g):''}
-   <details class="flow-policy" ${disclosure(g.id+'/'+g.version+'/policy')}><summary>规划依据与执行设置</summary><p>${esc(f.plan?.rationale||'正在选择任务路径。')}</p><small>${f.plan?.planner==='model'?'模型规划':'基础组合'} · 调用 ${f.calls} / ${f.policy?.maxCalls||24} 次 · 并行上限 ${f.policy?.parallel||3}</small>
+   <details class="flow-policy" ${disclosure(g.id+'/'+g.version+'/policy')}><summary>规划依据与执行设置</summary><p>${esc(f.plan?.rationale||'正在选择任务路径。')}</p>${(f.plan?.corrections?.length||0)>0?`<p>总控已校正计划</p><ul>${f.plan.corrections.map(note=>`<li>${esc(note)}</li>`).join('')}</ul>`:''}<small>${f.plan?.planner==='model'?'模型参与规划':'工作台规划'} · 调用 ${f.calls} / ${f.policy?.maxCalls||24} 次 · 并行上限 ${f.policy?.parallel||3}</small>
    <div class="action-buttons">${g.stage==='completed'?`<button class="secondary" data-flow-save="${esc(g.id)}">保存为可复用任务流</button>`:`<button class="secondary" data-flow-replan="${esc(g.id)}" ${g.paused||f.status==='planning_running'?'disabled':''}>重新规划</button>${!g.paused&&(blocked.length||['review','planning_failed','awaiting_context'].includes(f.status))?pause:''}`}<button class="text-button" data-view="flows">总控设置</button></div></details></section>`;
  }
  function enterOffers(g,nodeId){

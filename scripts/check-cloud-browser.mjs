@@ -20,7 +20,7 @@ try{
  await source.goto('https://example.meituan.com/deal');await target.goto('https://example.goofish.com/sell');
  await target.evaluate(()=>document.addEventListener('submit',e=>{e.preventDefault();document.title='submitted';}));
  await page.goto('http://127.0.0.1/#ai-config/market');await page.getByRole('button',{name:'云电脑浏览器',exact:true}).click();
- assert.match(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.1'}).getAttribute('href'),/^data:application\/zip/);
+ assert.match(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.2'}).getAttribute('href'),/^data:application\/zip/);
  await page.bringToFront();
  // Same document-bound binding used after the user grants activeTab in the extension popup.
  if(simulated){
@@ -66,7 +66,7 @@ try{
   await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
  assert.equal(await page.locator('[data-cloud-workspace] [data-new]').count(),0);
- assert(!await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.1'}).isVisible());
+ assert(!await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.2'}).isVisible());
  await page.locator('.sidebar-create').click();assert.equal(await page.locator('#goal').inputValue(),'');await page.locator('#close-dialog').click();
  assert.equal(await page.locator('#cloud-source').count(),0);
  await page.getByText('读取这件商品',{exact:true}).click();
@@ -128,6 +128,8 @@ try{
   await page.getByText('3 / 3 步完成',{exact:true}).waitFor();
   await page.goto('http://127.0.0.1/#ai-config/market');await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
- await page.getByText('安装、更新与连接',{exact:true}).click();await page.getByRole('button',{name:'断开工作空间连接'}).click();await page.getByText('已断开工作空间连接。',{exact:true}).waitFor();
+ const disconnect=page.getByRole('button',{name:'断开工作空间连接'});
+ if(!await disconnect.isVisible())await page.getByText('安装、更新与连接',{exact:true}).click();
+ await disconnect.click();await page.getByText('已断开工作空间连接。',{exact:true}).waitFor();
  console.log((simulated?'SIMULATED EXTENSION API: ':'')+'PASS bound document, tab discovery, product read, existing draft protection, field fill without submit, disconnect');
 }finally{await ctx?.close();await rm(dir,{recursive:true,force:true});}

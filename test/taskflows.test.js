@@ -34,6 +34,28 @@ test('pause stops new work and changing goal version discards in-flight results'
 test('restart marks in-flight calls failed instead of repeating potentially billable work',async t=>{const {p,dir}=await make(t);const g=await create(p);await p.pump();const stored=JSON.parse(await readFile(dir+'/platform.json','utf8'));stored.goals[0].flow.nodes[1].status='running';await writeFile(dir+'/platform.json',JSON.stringify(stored));const restored=await createPlatform(dir);assert.equal(get(restored,g).flow.nodes[1].status,'failed');assert.match(get(restored,g).flow.nodes[1].error,/重启/);});
 test('invalidated evidence prevents final acceptance',async t=>{const {p}=await make(t,{flowSkillCall:async id=>result(id)});const doc=await p.knowledge.saveDocument(null,{baseId:'kb-default',title:'水龙头说明',source:'企业产品册',sku:'',body:'水龙头为不锈钢材质，接口 G1/2。',enabled:true,confirmed:true,size:700,overlap:100});const g=await create(p);for(let i=0;i<3;i++)await p.pump();assert.equal(get(p,g).stage,'review');await p.knowledge.deleteDocument(doc.id,{revision:doc.revision,confirmed:true});await assert.rejects(()=>act(p,g,'complete'),/不存在|更新|停用/);});
 async function connectModel(t,p){const old=process.env.MODEL_SECRET_FLOW_TEST;process.env.MODEL_SECRET_FLOW_TEST='fake-test-only';t.after(()=>old===undefined?delete process.env.MODEL_SECRET_FLOW_TEST:process.env.MODEL_SECRET_FLOW_TEST=old);const m=await p.workforce.saveModel(null,{name:'总控测试模型',provider:'api',model:'mock',endpoint:'https://api.example.com/chat',secretEnv:'MODEL_SECRET_FLOW_TEST',timeoutMs:1000});await p.workforce.testModel(m.id);await p.pump();await p.flows.saveSettings({...p.flows.view().settings,modelId:m.id});return m;}
+test('a newly connected reasoning model resumes an existing plan and keeps the collected evidence',async t=>{
+ const {p}=await make(t,{modelCall:async(model,messages)=>{
+  if(messages.length===1)return {message:{content:'连接正常'}};
+  const context=JSON.parse(messages[1].content);
+  assert.match(JSON.stringify(context.observations),/协议运费每单7元/);
+  return {message:{content:JSON.stringify({conclusion:'协议运费每单7元，报价时需计入。'})}};
+ }});
+ await p.knowledge.saveDocument(null,{baseId:'kb-default',title:'门店运费',source:'运费协议',sku:'',body:'门店协议运费每单7元。',enabled:true,confirmed:true,size:700,overlap:100});
+ const goal=await create(p,'分析门店运费的影响');
+ await p.pump();await p.pump();
+ const initial=get(p,goal),step=initial.flow.nodes.find(n=>n.capability==='analysis.reason');
+ const evidence=initial.flow.nodes.find(n=>n.capability==='evidence.collect');
+ assert.equal(step.status,'needs_input');
+ const model=await connectModel(t,p);
+ await act(p,goal,'retry',{nodeId:step.id});
+ for(let i=0;i<4&&get(p,goal).stage!=='review';i++)await p.pump();
+ const finished=get(p,goal);
+ assert.equal(finished.stage,'review');
+ assert.equal(finished.version,initial.version);
+ assert.equal(finished.flow.model.id,model.id);
+ assert.deepEqual(finished.flow.nodes.find(n=>n.id===evidence.id).artifactIds,evidence.artifactIds);
+});
 test('flow chat uses the selected workspace model for this turn, preserving recall, routing and the default',async t=>{
  const calls=[];
  let release,started;

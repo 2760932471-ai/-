@@ -100,8 +100,14 @@ test('investigating a competing supplier quote can change the selection before f
  const dir=await mkdtemp('/tmp/recheck-');t.after(()=>rm(dir,{recursive:true,force:true}));
  const p=await createPlatform(dir,{offerSearch:async()=>[product('123',12),product('456',15)],offerDetail:async sku=>({sku,quote:product(sku,sku==='123'?18:15)})});
  const g=await p.create({executionMode:'flow',requestId:randomUUID(),text:'在1688找高利润的猫粮，售价30元，其他成本2元'});
- for(let i=0;i<3;i++)await p.pump();
- const done=p.goals().find(x=>x.id===g.id);
- assert.match(done.artifacts.at(-1).body,/首选由「猫粮 123」调整为「猫粮 456」/);
+ let done=g,report;
+ for(let i=0;i<10&&!report;i++){
+  await p.pump();
+  done=p.goals().find(x=>x.id===g.id);
+  const summary=done.flow.nodes.find(n=>n.capability==='result.compile'&&n.status==='succeeded');
+  report=done.artifacts.find(a=>a.version===done.version&&summary?.artifactIds.includes(a.id));
+ }
+ assert.ok(report,'应产出本版本的选品汇总');
+ assert.match(report.body,/首选由「猫粮 123」调整为「猫粮 456」/);
  assert.equal(taskMemory(done).selection.selected.sku,'456');
 });

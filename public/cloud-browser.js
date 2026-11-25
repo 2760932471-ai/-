@@ -50,8 +50,8 @@ export function createCloudBrowser({esc,render,currentWorkspace,post,refresh}){
   ${connected?`<p class="field-hint">${[tabs.filter(t=>t.role==='sourcing').length+' 个搜索页',sources.length+' 个商品页',targets.length+' 个发布表单'].join(' · ')}</p>${tabChoice('source',source,'选择要读取的商品','cloud-source')}${source?`<div class="action-buttons"><button class="secondary" data-cloud="read">读取这件商品</button><small>${esc(tabs.find(t=>String(t.id)===source)?.title||'')}</small></div>`:sources.length?'':'<p>打开商品详情页后，这里会显示可读取的商品。</p>'}`:'<p class="field-hint">连接后可直接读取已打开的商品。</p>'}
   <details class="cloud-setup" ${!installed&&!connected||setupExpanded?'open':''}><summary>安装、更新与连接</summary>
   <p>已安装的扩展可供后续目标复用。断开时，在 Chrome 工具栏选择「连接此工作台」。</p>
-  <a class="secondary browser-download" href="/cloud-browser.zip" download="cloud-browser.zip">下载 Chrome 扩展 v1.7.1</a>
-  <p><strong>更新已有扩展</strong>　解压下载包，把里面的文件复制到上次加载的扩展文件夹，替换同名文件。在 Chrome 地址栏输入 <code>chrome://extensions</code>，找到「电商工作台 · 云电脑连接器」，点击卡片上的重新加载按钮（↻），核对版本为 1.7.1。</p>
+  <a class="secondary browser-download" href="/cloud-browser.zip" download="cloud-browser.zip">下载 Chrome 扩展 v1.7.2</a>
+  <p><strong>更新已有扩展</strong>　解压下载包，把里面的文件复制到上次加载的扩展文件夹，替换同名文件。在 Chrome 地址栏输入 <code>chrome://extensions</code>，找到「电商工作台 · 云电脑连接器」，点击卡片上的重新加载按钮（↻），核对版本为 1.7.2。</p>
   <p><strong>首次安装</strong>　在同一扩展管理页打开「开发者模式」，点击「加载已解压的扩展程序」，选择包含 <code>manifest.json</code> 的文件夹。</p>
   <p>安装或更新后，刷新此工作台页面，点 Chrome 工具栏中的连接器图标，选择「连接此工作台」。</p>${connected?'<button class="text-button" data-cloud="disconnect">断开工作空间连接</button>':''}</details>
   <p role="status" class="field-hint">${esc(message)}</p>
@@ -98,10 +98,15 @@ export function createCloudBrowser({esc,render,currentWorkspace,post,refresh}){
  }
  setInterval(autoScan,1100);window.addEventListener('focus',()=>{nextScan=0;autoScan();});
  document.addEventListener('commerce-cloud-ready',()=>{if(!document.querySelector('[data-cloud-workspace]'))return;if(detecting)pairedDuringCheck=true;else act('tabs');});
- document.addEventListener('click',e=>{const b=e.target.closest('[data-cloud]');if(b)act(b.dataset.cloud);});
- document.addEventListener('toggle',e=>{
-  if(connected&&e.target.isConnected&&e.target.matches('.cloud-setup'))setupExpanded=e.target.open;
- },true);
+ document.addEventListener('click',e=>{
+  const setup=e.target.closest('.cloud-setup > summary');
+  if(setup&&connected){
+   // Capture the user's choice synchronously so an automatic tab refresh can restore it.
+   setupExpanded=!setup.parentElement.open;
+  }
+  const button=e.target.closest('[data-cloud]');
+  if(button)act(button.dataset.cloud);
+ });
  document.addEventListener('change',e=>{
   if(e.target.id==='cloud-source'){source=e.target.value;sourcePicked=!!source;product=null;message='';render(true);}
   if(e.target.id==='cloud-target'){target=e.target.value;targetPicked=!!target;draft.confirmed=false;render(true);}

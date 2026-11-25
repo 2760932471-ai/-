@@ -6,6 +6,42 @@ function moduleBundle(name,source,prelude=''){
  const names=[...source.matchAll(/^export (?:async )?(?:function|const) (\w+)/gm)].map(m=>m[1]);
  return `const ${name}=(()=>{\n${prelude}\n${source.replace(/^import .*;\n/gm,'').replace(/^export /gm,'')}\nreturn {${names.join(',')}};\n})();`;
 }
+// The browser runs the same goal contracts, planning checks and assignment code as
+// the server. Bind their real named imports so new runtime dependencies cannot
+// silently become undefined only in the downloadable preview.
+const planningModules={
+ 'public/goal-language.js':'previewGoalLanguage',
+ 'public/offer-photos.js':'previewOfferPhotos',
+ 'public/offer-cards.js':'previewOfferCards',
+ 'public/sourcing.js':'previewSourcing',
+ 'public/pick-browser.js':'previewPickBrowser',
+ 'src/sources.js':'previewSources',
+ 'src/knowledge-retrieval.js':'previewKnowledgeRetrieval',
+ 'src/workforce/content-preparation.js':'previewContentPreparation',
+ 'src/workforce/skills.js':'previewSkills',
+ 'src/workforce/commerce.js':'previewCommerce',
+ 'src/workforce/model.js':'previewModel',
+ 'src/workforce/research.js':'previewResearch',
+ 'src/taskflows/catalog.js':'previewFlowCatalog',
+ 'src/taskflows/contract.js':'previewFlowContract',
+ 'src/taskflows/deliveries.js':'previewFlowDeliveries',
+ 'src/taskflows/planner.js':'previewFlowPlanner',
+ 'src/taskflows/memory.js':'previewFlowMemory',
+ 'src/taskflows/decision.js':'previewDecision',
+ 'src/taskflows/manager.js':'previewFlowManager',
+ 'src/taskflows/offer-search.js':'({searchPublicOffers:async()=>[],fetchOfferDetail:async()=>null})',
+ 'node:crypto':'({randomUUID:previewUUID})',
+};
+async function planningBundle(file){
+ const code=await read(file);
+ const bound=code.replace(/^import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"];?/gm,(_,names,specifier)=>{
+  const path=specifier.startsWith('.')?new URL(specifier,new URL(file,root)).href.slice(root.href.length):specifier;
+  if(!Object.hasOwn(planningModules,path))throw new Error('Missing preview dependency '+path+' for '+file);
+  return 'const {'+names.replace(/\s+as\s+/g,':')+'}='+planningModules[path]+';';
+ });
+ if(/^import\b/m.test(bound))throw new Error('Unsupported preview import in '+file);
+ return moduleBundle(planningModules[file],bound);
+}
 const builtins=moduleBundle('previewBuiltins',await read('src/agents/builtins.js'));
 const goals=moduleBundle('previewGoals',await read('src/goals.js'),'const goalUUID=previewUUID;');
 const registrySource=await read('src/agents/registry.js');
@@ -20,7 +56,8 @@ const external=moduleBundle('previewExternal',await read('src/workforce/external
 const starter=moduleBundle('previewStarter',await read('src/workforce/starter-skills.js'));
 const conversation=moduleBundle('previewConversation',await read('src/workforce/conversation.js'));
 const discussionUI=moduleBundle('previewDiscussionUI',await read('public/discussion.js'));
-const contentPreparation=moduleBundle('previewContentPreparation',await read('src/workforce/content-preparation.js'),'const {bm25}=previewKnowledgeRetrieval;const {materialProblem}=previewSources;');
+const goalLanguage=await planningBundle('public/goal-language.js');
+const contentPreparation=await planningBundle('src/workforce/content-preparation.js');
 const production=moduleBundle('previewProduction',await read('src/workforce/production.js'),'const {imageOutputs,prepareContent}=previewContentPreparation;');
 const content=moduleBundle('previewContent',await read('src/workforce/content.js'),'const {normalizeChannel,placeholderFact}=previewContentPreparation;');
 const selectsUI=moduleBundle('previewSelects',await read('public/selects.js'));
@@ -55,14 +92,16 @@ const cloudUI=moduleBundle('previewCloudUI',await read('public/cloud-browser.js'
 const noticesUI=moduleBundle('previewNoticesUI',await read('public/stock-notices.js'));
 const setupUI=moduleBundle('previewSetupUI',await read('public/setup.js'),`const {createStockNotices}=previewNoticesUI;const {createStoreUI}=previewStoreUI;const {createCloudBrowser}=previewCloudUI;const {createVoucherUI}=previewVoucherUI;`);
 const offerPhotoModule=moduleBundle('previewOfferPhotos',await read('public/offer-photos.js'));
-const sourcing=moduleBundle('previewSourcing',await read('public/sourcing.js'),'const {offerPhotos,offerPhoto:normalizeOfferPhoto}=previewOfferPhotos;');
+const sourcing=await planningBundle('public/sourcing.js');
 const offerCards=moduleBundle('previewOfferCards',await read('public/offer-cards.js'));
-const pickBrowser=moduleBundle('previewPickBrowser',await read('public/pick-browser.js'),'const {readOfferCards}=previewOfferCards;const {businessBrief,sourcingIntent,sourcingURL,decisionOrder,selectedOffer}=previewSourcing;const {offerPhoto,offerPhotos}=previewOfferPhotos;');
-const flowCatalog=moduleBundle('previewFlowCatalog',await read('src/taskflows/catalog.js'),'const {skillDefinitions}=previewSkills;');
-const flowPlanner=moduleBundle('previewFlowPlanner',await read('src/taskflows/planner.js'),'const {sourcingIntent,businessBrief}=previewSourcing;const {flowCapabilities,flowTemplates}=previewFlowCatalog;const {imageOutputs}=previewContentPreparation;');
-const flowMemory=moduleBundle('previewFlowMemory',await read('src/taskflows/memory.js'),'const {businessBrief,cleanOffers,expenseDescription,scenarioExpenses,rankedOffers,selectedOffer,sourcingIntent,sourcingReport}=previewSourcing;');
+const pickBrowser=await planningBundle('public/pick-browser.js');
+const flowCatalog=await planningBundle('src/taskflows/catalog.js');
+const flowContract=await planningBundle('src/taskflows/contract.js');
+const flowDeliveries=await planningBundle('src/taskflows/deliveries.js');
+const flowPlanner=await planningBundle('src/taskflows/planner.js');
+const flowMemory=await planningBundle('src/taskflows/memory.js');
 const decision=moduleBundle('previewDecision',await read('src/taskflows/decision.js'),'const {parseBusinessCsv}=previewCommerce;');
-const flowManager=moduleBundle('previewFlowManager',await read('src/taskflows/manager.js'),'const {analyzeDecision,withSalesEvidence}=previewDecision;const {taskMemory,relatedMethods,recalledReply}=previewFlowMemory;const randomUUID=previewUUID;const {businessBrief,decisionOrder,selectedOffer,offerFacts,sourcingReport,sourcingIntent,rankedOffers,cleanOffers}=previewSourcing;const {offerPhotos,offerPhoto}=previewOfferPhotos;const searchPublicOffers=async()=>[];const fetchOfferDetail=async()=>null;const {flowDefaults,flowTemplates,flowCapabilities,flowEmployees}=previewFlowCatalog;const {basicFlow,validateFlow,proposeFlow}=previewFlowPlanner;const {publicModel,requireChatModel}=previewModel;const {executeSkill}=previewSkills;const {prepareContent,assertContentEvidence,imageOutputs}=previewContentPreparation;const {collectResearch,assertResearch}=previewResearch;');
+const flowManager=await planningBundle('src/taskflows/manager.js');
 const demoImage='data:image/png;base64,'+(await readFile(new URL('public/product-demo.png',root))).toString('base64');
 const flowsUI=moduleBundle('previewFlowsUI',(await read('public/flows.js')).replaceAll('/product-demo.png',demoImage));
 const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const {createTaskflowManager}=previewFlowManager;const {prepareContent,imageOutputs,assertContentEvidence}=previewContentPreparation;const {createProductionManager}=previewProduction;const {createImages}=previewImages;const imageFiles=()=>({save:async()=>{},read:async()=>{throw new Error('预览没有生成图片');}});const {createStoreOperations}=previewStoreOperations;const {createIntegrations}=previewIntegrations;const {createResearchManager,researchInputs,assertResearch,collectResearch,isResearchGoal}=previewResearch;const {contentPacks,validateCopyBrief}=previewContent;const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {createPlanningManager,assertPlanCurrent}=previewPlanning;const {discussionMembers,contextSettings,selectConversation}=previewConversation;const {runEmployee}=previewEmployeeRuntime;const {callModel,requireChatModel}=previewModel;const {executeSkill,skillDefinitions}=previewSkills;const {externalDefinitions,externalBlockers,publicExternal}=previewExternal;const invokeExternal=async()=>{throw new Error('静态预览不能调用外部 Agent，请启动完整后端');};const {initialSources,createSourceManager}=previewSources;const {initialKnowledge,createKnowledgeManager}=previewKnowledge;`);
@@ -141,7 +180,7 @@ let app=await read('public/app.js');
 if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
 app=app.replace(/^import .*;\n/gm,'').replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
 const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['目标、任务与协作空间已保存到服务端','目标、任务与协作空间已保存到当前浏览器'],['服务端持久化','浏览器本地保存'],['使用服务端已保存的配置','使用当前浏览器已保存的配置'],['后端自动执行','浏览器规则执行'],['数据保存在后端','数据保存在当前浏览器'],['等待后端执行','等待本地执行'],['代码 / HTTP 能力','本地代码能力']];
-let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,contentPreparation,production,content,selectsUI,contentUI,skills,employees,model,runtime,planning,planningUI,matching,research,team,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,sourcing,offerCards,pickBrowser,flowCatalog,flowPlanner,flowMemory,decision,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,goalLanguage,contentPreparation,production,content,selectsUI,contentUI,skills,employees,model,runtime,planning,planningUI,matching,research,team,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,sourcing,offerCards,pickBrowser,flowCatalog,flowContract,flowDeliveries,flowPlanner,flowMemory,decision,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
 for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
 code=code.replaceAll('href="/cloud-browser.zip"', 'href="data:application/zip;base64,'+(await readFile(new URL('public/cloud-browser.zip',root))).toString('base64')+'"');
 let html=await read('public/index.html');const css=[await read('public/style.css'),await read('public/shell.css'),await read('public/employees.css')].join('\n');
