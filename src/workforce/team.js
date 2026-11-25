@@ -9,7 +9,7 @@ import {recipes,matchingRecipes} from './commerce.js';
 import {randomUUID} from 'node:crypto';
 import {createGoal} from '../goals.js';
 import {validateEmployee,employeeReadiness,workforceView} from './employees.js';
-import {validateModel,publicModel} from './model.js';
+import {validateModel,publicModel,requireChatModel} from './model.js';
 import {skillSample,skillDefinitions,skillInputHint} from './skills.js';
 import {financeFields,isSelectionGoal} from '../agents/builtins.js';
 const stamp=()=>new Date().toISOString();
@@ -17,10 +17,20 @@ const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status
 export function createTeamManager({getData,transaction,enqueue,inputs,event,sources,knowledge,images}){
  const models=d=>d.models.map(publicModel);
  const employee=(d,id)=>d.employees.find(e=>e.id===id)||fail('员工不存在',404);
- function requireReady(d,id){const e=employee(d,id),r=employeeReadiness(e,models(d),d.externalSkills.map(publicExternal));if(!r.ready)fail(e.name+'：'+r.blockers.join('；'));return e;}
- function enqueueEmployee(d,id,input,meta){
-  let e=requireReady(d,id);if(meta.purpose==='draft'&&meta.assignment){e={...e,skillIds:meta.assignment.skillIds};input={...input,assignment:meta.assignment};}const model=e.mode==='model'?d.models.find(m=>m.id===e.modelId):null;
-  return enqueue(d,id,input,{...meta}, {id:e.id,name:e.name,revision:e.revision,employee:structuredClone(e),model:model?structuredClone(model):null,externalSkills:d.externalSkills.filter(s=>e.skillIds.includes(s.id)),enabled:true,adapter:e.mode});
+ function effectiveEmployee(d,id,chatModel){
+  const e=employee(d,id);
+  return chatModel?{...e,mode:'model',modelId:chatModel.id}:e;
+ }
+ function requireReady(d,id,chatModel){
+  const e=effectiveEmployee(d,id,chatModel),r=employeeReadiness(e,models(d),d.externalSkills.map(publicExternal));
+  if(!r.ready)fail(e.name+'：'+r.blockers.join('；'));
+  return e;
+ }
+ function enqueueEmployee(d,id,input,meta,chatModel){
+  let e=requireReady(d,id,chatModel);
+  if(meta.purpose==='draft'&&meta.assignment){e={...e,skillIds:meta.assignment.skillIds};input={...input,assignment:meta.assignment};}
+  const model=chatModel||(e.mode==='model'?d.models.find(m=>m.id===e.modelId):null);
+  return enqueue(d,id,input,meta,{id:e.id,name:e.name,revision:e.revision,employee:structuredClone(e),model:model?structuredClone(model):null,externalSkills:d.externalSkills.filter(s=>e.skillIds.includes(s.id)),enabled:true,adapter:e.mode});
  }
  function selectionTeam(d){return ['research','selection','coordination'].map(role=>d.employees.find(e=>e.roleId===role&&e.skillIds.includes(({research:'product.compare',selection:'selection.score',coordination:'task.brief'})[role])&&employeeReadiness(e,models(d),d.externalSkills.map(publicExternal)).ready)?.id).filter(Boolean);}
  function receipt(g,e,text,extra={}){g.messages.push({id:randomUUID(),role:'agent',employeeId:e.id,author:e.name,text,goalVersion:g.version,at:stamp(),...extra});}
@@ -113,16 +123,18 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(['contentPreferences','knowledge','references','facts','ledger','inputs','plan','retry','complete','revise','adoptPlan','discardPlan','replan','kickoff','regroupSelection','setTeam','research'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
   if(k==='message'){
    const text=String(input.text||'').trim();if(!text||text.length>2000)fail('请输入1–2000字的消息');if(g.queue.length>=24)fail('待回复队列已满');
-   const invites=input.inviteIds||[];if(!Array.isArray(invites)||invites.length>4)fail('一次最多邀请 4 位员工');invites.forEach(id=>requireReady(d,id));
+   const chatModel=input.chatModelId!=null&&input.chatModelId!==''?requireChatModel(d,input.chatModelId):null;
+   const selection=chatModel?{chatModelId:chatModel.id,chatModelName:chatModel.name,chatModelRevision:chatModel.revision}:{};
+   const invites=input.inviteIds||[];if(!Array.isArray(invites)||invites.length>4)fail('一次最多邀请 4 位员工');invites.forEach(id=>requireReady(d,id,chatModel));
    const people=[...new Set([...discussionMembers(g),...invites])];if(people.length>24)fail('讨论成员最多 24 人');const mentioned=mentionedEmployees(text,people.map(id=>employee(d,id)),input.mentionIds||[]);
    const everyone=mentionsEveryone(text);
    if(!everyone&&mentioned.length&&input.target&&input.target!=='coordinator'&&(mentioned.length!==1||input.target!==mentioned[0]))fail('@成员与接收者不一致，请改为数字员工协调或只选一位');
-   const recipients=everyone?[...new Set([...people.filter(id=>employeeReadiness(employee(d,id),models(d),d.externalSkills.map(publicExternal)).ready),...mentioned])]:mentioned.length?mentioned:[input.target||'coordinator'];if(!recipients.length)fail('本群暂无可回复员工，请先邀请或启用员工');for(const target of recipients)if(target!=='coordinator'&&!people.includes(target))fail('请先邀请该员工加入本目标讨论');
+   const recipients=everyone?[...new Set([...people.filter(id=>employeeReadiness(effectiveEmployee(d,id,chatModel),models(d),d.externalSkills.map(publicExternal)).ready),...mentioned])]:mentioned.length?mentioned:[input.target||'coordinator'];if(!recipients.length)fail('本群暂无可回复员工，请先邀请或启用员工');for(const target of recipients)if(target!=='coordinator'&&!people.includes(target))fail('请先邀请该员工加入本目标讨论');
    if(g.queue.length+recipients.length>24)fail('待回复队列已满');
    const intent=input.intent||'discuss';if(!['discuss','context','change'].includes(intent))fail('消息用途无效');
    if(input.replyTo){const ref=g.messages.find(m=>m.id===input.replyTo),c=contextSettings(g);if(!ref)fail('引用消息不存在');if(c.excludedIds.includes(ref.id)||g.messages.indexOf(ref)<=g.messages.findIndex(m=>m.id===c.startAfter))fail('该消息已排除或属于旧话题，请将必要背景重新说明');}
    if(invites.some(id=>!mentioned.includes(id)))fail('新邀请员工必须出现在本条 @ 消息中');g.participants=people;
-   const m={id:randomUUID(),role:'human',author:'你',text,at:stamp(),goalVersion:g.version,replyTo:input.replyTo||null,targets:recipients,intent,mentionAll:everyone,skippedTargets:everyone?people.filter(id=>!recipients.includes(id)):[]};g.messages.push(m);
+   const m={...selection,id:randomUUID(),role:'human',author:'你',text,at:stamp(),goalVersion:g.version,replyTo:input.replyTo||null,targets:recipients,intent,mentionAll:everyone,skippedTargets:everyone?people.filter(id=>!recipients.includes(id)):[]};g.messages.push(m);
    for(const target of recipients)g.queue.push({source:m.id,target,intent});
   }else if(k==='inviteDiscussion'){
    const e=requireReady(d,input.employeeId),people=discussionMembers(g);if(people.length>=24&&!people.includes(e.id))fail('讨论成员最多 24 人');g.participants=[...new Set([...people,e.id])];event(g,e.name+'已加入讨论，可 @ 提问；执行计划的成员和授权范围未改变。');
@@ -216,12 +228,21 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(g.repliesPaused||!g.queue.length)return;const job=g.queue.shift(),source=g.messages.find(m=>m.id===job.source);
   if(contextSettings(g).startAfter&&g.messages.findIndex(m=>m.id===source.id)<=g.messages.findIndex(m=>m.id===contextSettings(g).startAfter))return;
   if(job.intent!=='discuss'){event(g,'已记录背景或变更请求。业务事实请在资料页更新，确认后生成新版本。');return;}
+  let chatModel;
+  const selection=source.chatModelId?{chatModelId:source.chatModelId,chatModelName:source.chatModelName,chatModelRevision:source.chatModelRevision}:{};
+  function reportFailure(error){
+   if(!source.chatModelId){event(g,error.message);return;}
+   const recipient=d.employees.find(e=>e.id===job.target);
+   g.messages.push({id:randomUUID(),role:recipient?'agent':'coordinator',author:recipient?.name||'数字员工',employeeId:recipient?.id,replyTo:source.id,goalVersion:g.version,status:'failed',at:stamp(),...selection,text:error.message});
+  }
+  if(source.chatModelId)try{chatModel=requireChatModel(d,source.chatModelId,source.chatModelRevision);}catch(error){reportFailure(error);return;}
   if(source.imageRequest||images?.prepareChat(g,source))return;
   if(isResearchGoal(g)&&(researchQuestion(source.text)||/全网|1688|网上|网络|寻找|搜索|检索|帮我.{0,12}(找|搜)|^(?:请)?(?:找|搜|查找)|淋浴头|花洒|角阀|水龙头/.test(source.text))){
    if(!source.researchHandled){source.researchHandled=true;g.researchRequest={id:randomUUID(),source:source.id,version:g.version,contextRevision:contextSettings(g).revision,question:source.text};}
-   return;
+   if(!chatModel)return;
+   if(g.researchRequest?.source===source.id){g.queue.unshift(job);return;}
   }
-  if(job.target==='coordinator'&&/进度|做到哪|下一步|还缺|缺什么|缺哪些/.test(source.text)){
+  if(!chatModel&&job.target==='coordinator'&&/进度|做到哪|下一步|还缺|缺什么|缺哪些/.test(source.text)){
    const completed=g.runtime?.completed||[],next=g.members.find(id=>!completed.includes(id));
    const labels={plan:'等待负责人确认计划',draft:'正在执行分工',review:'已交付，等待人工验收',completed:'负责人已验收'};
    const snapshot=g.planProposal||g.executionPlan||g.collaboration,missing=g.runtime?.missing?.length?g.runtime.missing:snapshot?.goalVersion===g.version?snapshot.checks.filter(c=>c.status==='missing').flatMap(c=>c.missing):[];
@@ -234,19 +255,19 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   if(id==='coordinator'){
    id=reply?.employeeId||reply?.resolvedTargets?.[0];
    if(!id&&desired.length)id=people.find(id=>employee(d,id).skillIds.some(s=>desired.includes(s)));
-   if(!id&&!desired.length&&/^(那|这个|刚才|继续|再|为什么|怎么)|上一条/.test(source.text)&&previous?.resolvedTargets?.length>1){event(g,'上一轮有多位员工参与，请 @ 一位员工或引用他的回复后继续提问。');return;}
+   if(!chatModel&&!id&&!desired.length&&/^(那|这个|刚才|继续|再|为什么|怎么)|上一条/.test(source.text)&&previous?.resolvedTargets?.length>1){event(g,'上一轮有多位员工参与，请 @ 一位员工或引用他的回复后继续提问。');return;}
    if(!id&&/^(那|这个|刚才|继续|再|为什么|怎么)|上一条/.test(source.text))id=previous?.resolvedTargets?.[0];
    if(!people.includes(id))id=people.find(id=>employee(d,id).roleId==='coordination')||people[0];
   }
   source.resolvedTargets=[...new Set([...(source.resolvedTargets||[]),id])];
-  let e;try{e=requireReady(d,id);}catch(error){event(g,error.message);return;}
-  if(/你是谁|你能做什么|能做哪些|介绍一下自己|需要哪些资料/.test(source.text)){
+  let e;try{e=requireReady(d,id,chatModel);}catch(error){reportFailure(error);return;}
+  if(!chatModel&&/你是谁|你能做什么|能做哪些|介绍一下自己|需要哪些资料/.test(source.text)){
    const defs=[...skillDefinitions,...externalDefinitions(d.externalSkills.map(publicExternal))];
    g.messages.push({id:randomUUID(),role:'agent',employeeId:id,author:e.name,text:'我目前可以处理：\n'+e.skillIds.map(id=>{const s=defs.find(s=>s.id===id);return '- '+s.name+'：'+s.description+'\n  所需资料：'+skillInputHint(id);}).join('\n')+'\n可在资料页补齐输入，或继续 @ 我讨论。基础代码员工按已装配规则处理，不具备通用模型的自由对话能力。',replyTo:source.id,goalVersion:g.version,status:'succeeded',at:stamp()});return;
   }
   const selected=selectConversation(g,source);
   const question=people.map(id=>employee(d,id).name).sort((a,b)=>b.length-a.length).reduce((text,name)=>text.replaceAll('@'+name,'').replaceAll('＠'+name,''),source.text).replace(/(?<![a-zA-Z0-9_.+%-])[@＠](?:所有员工|所有人|全体成员|all(?=$|[\s，。！？、,:：;；]))/gi,'').trim();
-  try{enqueueEmployee(d,id,{...inputs(g),...selected,question},{goalId:g.id,goalVersion:g.version,purpose:'chat',messageId:source.id,contextRevision:contextSettings(g).revision});}catch(e){event(g,e.message);}
+  try{enqueueEmployee(d,id,{...inputs(g),...selected,question},{goalId:g.id,goalVersion:g.version,purpose:'chat',messageId:source.id,contextRevision:contextSettings(g).revision,...selection},chatModel);}catch(error){reportFailure(error);}
 
  }
  return {create,action,schedule,apply,pumpMessages,kickoff,autoAssign,syncPending,needsMatching,installLocalMatches,

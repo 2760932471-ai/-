@@ -28,5 +28,5 @@ function knowledgeMediaFiles(root){
  return {put:(id,v)=>access(id,'put',v),get:id=>access(id,'get'),remove:id=>access(id,'delete')};
 }
 const previewBar=document.querySelector('#preview-status');
-previewBar.textContent=previewPersistent?'V0.31.0 · 本地预览 · 数据仅存于此浏览器，未连接店铺和外部 Agent':'V0.31.0 · 免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
+previewBar.textContent=previewPersistent?'V0.31.1 · 本地预览 · 数据仅存于此浏览器，未连接店铺和外部 Agent':'V0.31.1 · 免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
 document.querySelector('#preview-reset').onclick=()=>{if(!confirm('清空当前工作空间的目标、消息和配置？其他工作空间和完整后端不受影响。'))return;if(previewPersistent){const id=previewSession.getItem('workspaceId')||'default';localStorage.removeItem(id==='default'?previewKey:previewStorageKey('/preview/workspaces/'+id+'/platform.json'));}location.reload();};

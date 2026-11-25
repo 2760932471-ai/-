@@ -1,11 +1,50 @@
-export function createDiscussionUI({state,api,esc,receive,render,targets,drafts}){
+export function createDiscussionUI({state,api,esc,receive,render,targets,drafts,storage,navigate}){
  const $=s=>document.querySelector(s),replyIds=new Map(),picked=new Map();let menu=[],active=0,anchor=null,editing=null;
  const people=g=>[...new Set([...(g.mode==='team'?g.members:g.members.map(id=>({product:'employee-merchandise',insight:'employee-profit',content:'employee-creative',service:'employee-service'}[id]||id))),...(g.participants||[])])];
  const settings=g=>({revision:1,pinnedIds:[],excludedIds:[],note:'',maxMessages:12,maxChars:12000,...g.chatContext});
  const post=(g,body)=>api('goals/'+g.id+'/actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
  function toolbar(g){return `<div class="discussion-toolbar"><span>${people(g).length} 位员工 · 自动保存</span><span class="context-auto" title="系统自动筛选目标、近期对话和引用关系，无需手动设置">上下文自动衔接</span><button class="text-button" data-chat-invite="${g.id}">邀请员工</button><button class="text-button" data-chat-export="${g.id}">导出</button></div>`;}
  function composer(g){const m=g.messages.find(m=>m.id===replyIds.get(g.id));return `${m?`<div class="reply-draft">引用 ${esc(m.author)}：${esc(m.text.slice(0,100))}<button type="button" class="text-button" data-chat-unreply="${g.id}">取消引用</button></div>`:''}`;}
- function uploadButton(g){return `<button type="button" class="text-button attach-product" data-product-upload="${esc(g.id)}" title="上传商品参考图"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m8 13 7-7a2.6 2.6 0 0 1 3.7 3.7l-9 9a4.5 4.5 0 0 1-6.3-6.4l9-9"/></svg>添加商品图</button>`;}
+ function uploadButton(g){return `<button type="button" class="text-button attach-product" data-product-upload="${esc(g.id)}" title="上传商品参考图" aria-label="添加商品图"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m8 13 7-7a2.6 2.6 0 0 1 3.7 3.7l-9 9a4.5 4.5 0 0 1-6.3-6.4l9-9"/></svg><span>添加商品图</span></button>`;}
+ function modelKey(goalId){
+  return 'chat.replyModel:'+encodeURIComponent(storage.getItem('workspaceId')||'default')+':'+goalId;
+ }
+ function unavailableReason(model){
+  if(state.images?.previewOnly)return '仅服务端可用';
+  if(model.enabled===false)return '已停用';
+  if(!model.credentialConfigured)return model.provider==='codex-local'?'桥接未启用':'未配置密钥';
+  if(model.lastTest?.status!=='succeeded'||model.lastTest.revision!==model.revision)return '需测试连接';
+  return '';
+ }
+ function modelPicker(g){
+  const models=state.workforce?.models||[],saved=storage.getItem(modelKey(g.id))||'';
+  const missing=saved&&!models.some(model=>model.id===saved);
+  const options=models.map(model=>{
+   const reason=unavailableReason(model);
+   return `<option value="${esc(model.id)}" ${model.id===saved?'selected':''} ${reason?'disabled':''}>${esc(model.name)}${reason?' · '+reason:''}</option>`;
+  }).join('');
+  return `<span class="composer-model"><select id="chat-model" aria-label="对话模型"><option value="" ${saved?'':'selected'}>${state.images?.previewOnly?'模型 · 本地预览':'模型 · 默认'}</option>${missing?`<option value="${esc(saved)}" selected disabled>原模型已移除，请重选</option>`:''}${options}${models.length?'':'<option disabled>尚未配置模型</option>'}<option value="@configure">管理模型连接…</option></select></span>`;
+ }
+ function selectedModel(){
+  const id=$('#chat-model')?.value;
+  if(!id)return {};
+  const model=state.workforce?.models?.find(m=>m.id===id);
+  if(!model||unavailableReason(model))throw new Error('所选对话模型已不可用，请选择其他模型或默认回复。');
+  return {chatModelId:id};
+ }
+ document.addEventListener('change',event=>{
+  if(event.target.id!=='chat-model')return;
+  const select=event.target,key=modelKey(select.form.dataset.goal);
+  if(select.value==='@configure'){
+   select.value=storage.getItem(key)||'';
+   navigate('ai-config/models');
+  }else{
+   if(select.value)storage.setItem(key,select.value);
+   else storage.removeItem(key);
+   const error=$('#chat-error');
+   if(error)error.textContent='';
+  }
+ });
  function controls(m,g){if(!['human','agent','coordinator'].includes(m.role))return '';return `<div class="message-actions"><button class="message-action-icon" data-chat-reply="${m.id}" aria-label="引用回复" title="引用回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 5-6 6 6 6M3 11h10a7 7 0 0 1 7 7"/></svg><span>引用</span></button></div>`;}
  function hide(){menu=[];anchor=null;const m=$('#mention-menu');if(m)m.hidden=true;const input=$('#chat-input');if(input){input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');}}
  function candidates(g,query=''){
@@ -51,5 +90,5 @@ export function createDiscussionUI({state,api,esc,receive,render,targets,drafts}
   if(b.dataset.chatExport){const blob=new Blob([JSON.stringify({goal:g.text,exportedAt:new Date().toISOString(),messages:g.messages,context:settings(g)},null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='目标对话-'+g.id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
  }catch(error){if($('#discussion-dialog')?.open)$('#discussion-error').textContent=error.message;else if($('#chat-error'))$('#chat-error').textContent=error.message;b.disabled=false;}});
  document.addEventListener('submit',async event=>{const f=event.target;if(f.id!=='context-form')return;event.preventDefault();const b=event.submitter;b.disabled=true;try{const g=state.goals.find(g=>g.id===f.dataset.goal),data=Object.fromEntries(new FormData(f));receive(await post(g,{kind:'chatContext',revision:Number(f.dataset.revision),...data,maxMessages:Number(data.maxMessages),maxChars:Number(data.maxChars)}));$('#discussion-dialog').close();editing=null;}catch(error){$('#discussion-error').textContent=error.message;}finally{b.disabled=false;}});
- return {people,toolbar,composer,uploadButton,controls,hide,submission:(g,text)=>({workforceChat:true,inviteIds:(picked.get(g.id)||[]).filter(id=>!people(g).includes(id)&&(text.includes('@'+state.workforce.employees.find(e=>e.id===id)?.name)||text.includes('＠'+state.workforce.employees.find(e=>e.id===id)?.name))),replyTo:replyIds.get(g.id)||null,mentionIds:(picked.get(g.id)||[]).filter(id=>(text.includes('@'+state.workforce.employees.find(e=>e.id===id)?.name)||text.includes('＠'+state.workforce.employees.find(e=>e.id===id)?.name)))}),sent:id=>{replyIds.delete(id);picked.delete(id);hide();}};
+ return {people,toolbar,composer,uploadButton,modelPicker,controls,hide,submission:(g,text)=>({...selectedModel(),workforceChat:true,inviteIds:(picked.get(g.id)||[]).filter(id=>!people(g).includes(id)&&(text.includes('@'+state.workforce.employees.find(e=>e.id===id)?.name)||text.includes('＠'+state.workforce.employees.find(e=>e.id===id)?.name))),replyTo:replyIds.get(g.id)||null,mentionIds:(picked.get(g.id)||[]).filter(id=>(text.includes('@'+state.workforce.employees.find(e=>e.id===id)?.name)||text.includes('＠'+state.workforce.employees.find(e=>e.id===id)?.name)))}),sent:id=>{replyIds.delete(id);picked.delete(id);hide();}};
 }

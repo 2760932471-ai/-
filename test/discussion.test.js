@@ -94,3 +94,55 @@ test('@everyone aliases, pauses and queue overflow behave atomically, and delete
 test('broadcast refuses empty ready group and reserves broadcast names for the composer',async()=>{
  const {p}=await make(),g=await goal(p),e=p.workforce.view().employees.find(e=>e.id==='employee-coordination');await assert.rejects(p.workforce.saveEmployee(e.id,{...e,name:'所有员工'}),/保留/);await p.workforce.saveEmployee(e.id,{...e,enabled:false});await assert.rejects(p.action(g.id,{kind:'message',text:'@所有员工 你好'}),/暂无可回复/);assert.equal(latest(p,g).queue.length,0);
 });
+
+test('a selected chat model follows each team and legacy message without changing employee configuration',async t=>{
+ const env='MODEL_SECRET_DISCUSSION_TEST',old=process.env[env];process.env[env]='fixture';
+ t.after(()=>{if(old===undefined)delete process.env[env];else process.env[env]=old;});
+ const calls=[];
+ const modelCall=async(model,messages,tools)=>{
+  if(tools.length)calls.push({id:model.id,question:JSON.parse(messages.at(-1).content).question});
+  return {message:{role:'assistant',content:model.name+'的回复'}};
+ };
+ const {p,dir}=await make({modelCall});
+ const config={model:'chat',endpoint:'https://example.com/v1/chat/completions',secretEnv:env};
+ const a=await p.workforce.saveModel(null,{...config,name:'模型甲'}),b=await p.workforce.saveModel(null,{...config,name:'模型乙'});
+ const g=await goal(p),receiver=p.workforce.view().employees.find(e=>e.id==='employee-coordination');
+ const post=(platform,goal,text,chatModelId)=>platform.action(goal.id,{kind:'message',text,chatModelId});
+ await assert.rejects(post(p,g,'你好',b.id),/测试/);
+ await assert.rejects(post(p,g,'你好','another-workspace-model'),/重新选择/);
+ for(const m of [a,b]){await p.workforce.testModel(m.id);await p.pump();}
+ await p.workforce.saveEmployee(receiver.id,{...receiver,mode:'model',modelId:a.id});
+ const sent=await post(p,g,'当前进度如何？',b.id),human=sent.messages.at(-1);
+ const legacy=await p.create({requestId:randomUUID(),text:'旧版商品资料协作目标',kind:'listing',members:['product','insight'],permission:'draft'});
+ await post(p,legacy,'下一步是什么？',a.id);
+ const again=await createPlatform(dir,{modelCall});await again.pump();await again.pump();
+ assert.deepEqual(calls.map(c=>c.id).sort(),[a.id,b.id].sort());
+ const answer=latest(again,g).messages.find(m=>m.replyTo===human.id);
+ assert.equal(answer.text,'模型乙的回复');assert.equal(answer.chatModelName,'模型乙');assert.equal(answer.chatModelRevision,1);
+ assert.equal(again.run(answer.runId).chatModelId,b.id);assert.equal(again.workforce.view().employees.find(e=>e.id===receiver.id).modelId,a.id);
+ assert.equal(latest(again,legacy).messages.at(-1).chatModelId,a.id);
+ await again.action(g.id,{kind:'message',text:'@客服售后数字员工 你能做什么？',inviteIds:['employee-service'],mentionIds:['employee-service'],chatModelId:b.id});
+ await again.pump();assert.deepEqual(calls.at(-1),{id:b.id,question:'你能做什么？'});assert.equal(latest(again,g).messages.at(-1).employeeId,'employee-service');
+ await post(again,g,'下一步是什么？',b.id);
+ await again.workforce.saveModel(b.id,{...b,name:'已修改'});
+ const count=calls.length;await again.pump();const failure=latest(again,g).messages.at(-1);
+ assert.equal(calls.length,count);assert.equal(failure.status,'failed');assert.match(failure.text,/已改变/);
+ await post(again,g,'下一步是什么？');await again.pump();assert.equal(calls.length,count);assert.match(latest(again,g).messages.at(-1).text,/当前/);
+});
+
+test('changing a chat connection during the call discards its answer',async t=>{
+ const env='MODEL_SECRET_DISCUSSION_PENDING',old=process.env[env];process.env[env]='fixture';
+ t.after(()=>{if(old===undefined)delete process.env[env];else process.env[env]=old;});
+ let started,finish;
+ const pending=new Promise(resolve=>{started=resolve;});
+ const {p}=await make({modelCall:async(model,messages,tools)=>{
+  if(!tools.length)return {message:{role:'assistant',content:'ok'}};
+  started();return new Promise(resolve=>{finish=resolve;});
+ }});
+ const model=await p.workforce.saveModel(null,{name:'原配置',model:'test',endpoint:'https://example.com/v1/chat/completions',secretEnv:env});
+ await p.workforce.testModel(model.id);await p.pump();
+ const g=await goal(p);await p.action(g.id,{kind:'message',text:'帮我解释这项工作',chatModelId:model.id});
+ const pump=p.pump();await pending;await p.workforce.saveModel(model.id,{...model,name:'新配置'});
+ finish({message:{role:'assistant',content:'过期答案'}});await pump;
+ const reply=latest(p,g).messages.at(-1);assert.equal(reply.status,'failed');assert.match(reply.text,/已改变/);assert(!reply.text.includes('过期答案'));assert.equal(p.run(reply.runId).result,null);
+});

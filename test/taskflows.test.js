@@ -34,6 +34,52 @@ test('pause stops new work and changing goal version discards in-flight results'
 test('restart marks in-flight calls failed instead of repeating potentially billable work',async t=>{const {p,dir}=await make(t);const g=await create(p);await p.pump();const stored=JSON.parse(await readFile(dir+'/platform.json','utf8'));stored.goals[0].flow.nodes[1].status='running';await writeFile(dir+'/platform.json',JSON.stringify(stored));const restored=await createPlatform(dir);assert.equal(get(restored,g).flow.nodes[1].status,'failed');assert.match(get(restored,g).flow.nodes[1].error,/重启/);});
 test('invalidated evidence prevents final acceptance',async t=>{const {p}=await make(t,{flowSkillCall:async id=>result(id)});const doc=await p.knowledge.saveDocument(null,{baseId:'kb-default',title:'水龙头说明',source:'企业产品册',sku:'',body:'水龙头为不锈钢材质，接口 G1/2。',enabled:true,confirmed:true,size:700,overlap:100});const g=await create(p);for(let i=0;i<3;i++)await p.pump();assert.equal(get(p,g).stage,'review');await p.knowledge.deleteDocument(doc.id,{revision:doc.revision,confirmed:true});await assert.rejects(()=>act(p,g,'complete'),/不存在|更新|停用/);});
 async function connectModel(t,p){const old=process.env.MODEL_SECRET_FLOW_TEST;process.env.MODEL_SECRET_FLOW_TEST='fake-test-only';t.after(()=>old===undefined?delete process.env.MODEL_SECRET_FLOW_TEST:process.env.MODEL_SECRET_FLOW_TEST=old);const m=await p.workforce.saveModel(null,{name:'总控测试模型',provider:'api',model:'mock',endpoint:'https://api.example.com/chat',secretEnv:'MODEL_SECRET_FLOW_TEST',timeoutMs:1000});await p.workforce.testModel(m.id);await p.pump();await p.flows.saveSettings({...p.flows.view().settings,modelId:m.id});return m;}
+test('flow chat uses the selected workspace model for this turn, preserving recall, routing and the default',async t=>{
+ const calls=[];
+ let release,started;
+ const pendingCall=new Promise(resolve=>{started=resolve;});
+ const {p}=await make(t,{modelCall:async(model,messages)=>{
+  if(messages.length===1)return {message:{content:'连接正常'}};
+  const payload=JSON.parse(messages[1].content);
+  calls.push({id:model.id,payload});
+  if(payload.message==='等待回复'){
+   started();
+   await new Promise(resolve=>{release=resolve;});
+  }
+  if(payload.message==='连接异常')throw new Error('服务暂时不可用');
+  const decision=payload.message==='这次想专门评估运费影响'?{intent:'change'}:{intent:'discussion',answer:model.name+'的回答'};
+  return {message:{content:'```json\n'+JSON.stringify(decision)+'\n```'}};
+ }});
+ const primary=await connectModel(t,p);
+ const secondary=await p.workforce.saveModel(null,{...primary,name:'讨论模型',model:'discussion'});
+ await p.workforce.testModel(secondary.id);await p.pump();
+ const goal=await create(p);
+ const send=(text,chatModelId)=>act(p,goal,'message',{text,chatModelId});
+ await send('进度如何？',secondary.id);
+ assert.equal(calls.at(-1).id,secondary.id);
+ assert.match(calls.at(-1).payload.recalledAnswer,/已完成/);
+ const last=get(p,goal).messages.at(-1);
+ assert.equal(last.text,'讨论模型的回答');assert.equal(last.chatModelId,secondary.id);
+ assert.equal(last.chatModelRevision,secondary.revision);
+ await act(p,goal,'message',{intent:'discuss',text:'解释一下取舍',chatModelId:secondary.id});
+ assert.equal(get(p,goal).messages.at(-1).chatModelId,secondary.id);
+ await send('需要着重考虑什么？');
+ assert.equal(calls.at(-1).id,primary.id);
+ assert.equal(get(p,goal).messages.at(-1).text,'总控测试模型的回答');
+ assert.equal(p.flows.view().settings.modelId,primary.id);
+ await send('这次想专门评估运费影响',secondary.id);
+ assert.equal(get(p,goal).version,2);
+ const count=get(p,goal).messages.length;
+ await assert.rejects(send('连接异常',secondary.id),/服务暂时不可用/);
+ await assert.rejects(send('未知模型','absent'));
+ const pending=send('等待回复',secondary.id);
+ await pendingCall;
+ try{await p.workforce.saveModel(secondary.id,{...secondary,name:'新配置'});}finally{release();}
+ await assert.rejects(pending);
+ await assert.rejects(send('未测试的模型',secondary.id));
+ assert.equal(get(p,goal).messages.length,count);
+ assert.equal(p.flows.view().settings.modelId,primary.id);
+});
 test('real planning path uses configured model, retains creative proposal and automatically tries an alternative once',async t=>{
  let plans=0;const {p}=await make(t,{modelCall:async(m,messages)=>{
   if(messages.length===1)return {message:{content:'连接正常'}};

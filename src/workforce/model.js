@@ -13,6 +13,13 @@ export function validateModel(input,previous){
  return {id:previous?.id,provider,name,model,endpoint,secretEnv,timeoutMs,revision:(previous?.revision||0)+1,lastTest:null};
 }
 export function publicModel(model){return {...model,...(model.provider==='codex-local'?{bridge:codexEnvironment()}:{}),credentialConfigured:model.provider==='codex-local'?process.env.ENABLE_CODEX_LOCAL==='1':!!process.env[model.secretEnv]};}
+export function requireChatModel(data,id,expectedRevision){
+ const model=data.models.find(config=>config.id===id);
+ if(!model||model.enabled===false)throw new Error('所选对话模型不存在或已停用，请重新选择');
+ if(expectedRevision!==undefined&&model.revision!==expectedRevision)throw new Error('所选对话模型配置已改变，请重新选择后发送');
+ if(!publicModel(model).credentialConfigured||model.lastTest?.status!=='succeeded'||model.lastTest.revision!==model.revision)throw new Error('所选对话模型尚未就绪，请检查连接并通过测试后重试');
+ return model;
+}
 export async function callModel(model,messages,tools=[],options={}){
  if(model.provider==='codex-local')return callLocalCodex(model,messages,tools,options);
  const key=process.env[model.secretEnv];if(!key)throw new Error('模型密钥尚未配置：'+model.secretEnv);
