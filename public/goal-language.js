@@ -1,13 +1,14 @@
 // Keep examples, rejected actions and scenario descriptions out of executable requests.
 export function requestParts(text) {
  const input = String(text || '')
+  .replace(/(?:(?:资料|附件|旧版|文档|记录|邮件|案例)(?:里|中|上|的)?(?:写着|写道|提到|原文|记载|注明|要求|建议)(?:是|为)?|引用(?:原文|资料)?)[：:\s]*[“「『"][^”」』"]*[”」』"]/gu, '')
   .replace(/(?:举例|例如|比如|示例)[：:\s]*[“「『][^”」』]*[”」』]/g, '')
   .replace(/(?:不用|不必|无需|不要)(?:再)?(?:询问|问我|追问|提问|问)/g, '')
-  .replace(/(?=但是|而是|改为|改成|仅(?:需|做|要)|只(?:需|做|要|生成|制作)|(?:同时|并且)?(?:不要|不需要|暂不|无需|不用|先不|不做|不生成|别再|别(?:做|出|生成|选|找|搜)))/g, '；');
+  .replace(/(?=但是|而是|改为|改成|仅(?:需|做|要)|只(?:需|做|要|生成|制作)|(?:同时|并且)?(?:不要|不需要|暂不|无需|不用|先不|不做|不生成|不(?=发送|发通知|发邮件|发布|外发|导出|上架|下单|联网|上网)|别再|别(?:做|出|生成|选|找|搜|发|导出|上架|下单|联网)))/g, '；');
  const positive = [], negative = [];
  for (const clause of input.split(/[，,；;。！？!?\n]+/).map(value => value.trim()).filter(Boolean)) {
   if (/^(?:举例|例如|比如|示例|举个例子)/.test(clause)) continue;
-  const refusal = clause.match(/^(?:同时|并且)?(?:不要|不需要|暂不|无需|不用|先不|不(?=做|生成)|别再|别(?=做|出|生成|选|找|搜))/);
+  const refusal = clause.match(/^(?:同时|并且)?(?:不要|不需要|暂不|无需|不用|先不|不(?=做|生成|发送|发通知|发邮件|发布|外发|导出|上架|下单|联网|上网)|别再|别(?=做|出|生成|选|找|搜|发|导出|上架|下单|联网))/);
   if (refusal) negative.push(clause.slice(refusal[0].length));
   else positive.push(clause);
  }

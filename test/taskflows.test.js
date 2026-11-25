@@ -188,25 +188,25 @@ test('analysis can choose a missing fact, persist the investigation across resta
  assert.match(finished.artifacts.at(-1).body,/每单按7元/);assert.match(finished.artifacts.at(-1).body,/补查问题：活动运费协议/);
 });
 
-test('a material choice of use case survives restart and affects the business recommendation',async t=>{
+test('a missing category can be clarified after restart together with optional business preferences',async t=>{
  const offers=['101','102'].map((sku,i)=>({sku,title:'猫粮'+sku,price:i?18:10,repurchase:i?70:20,url:'https://detail.1688.com/offer/'+sku+'.html'}));
  const options={offerSearch:async()=>offers,offerDetail:async()=>null};
  let {p,dir}=await make(t,options);
- const g=await create(p,'在1688找猫粮，推荐最有利润的品');
+ const g=await create(p,'在1688选品，推荐最有利润的品');
  await p.pump();assert.equal(get(p,g).flow.status,'awaiting_context');
- await p.pump();assert.equal(get(p,g).messages.filter(m=>m.text.includes('这次选猫粮是给谁')).length,1);
+ await p.pump();assert.equal(get(p,g).messages.filter(m=>m.text.includes('品类或搜索关键词')).length,1);
  p=await createPlatform(dir,options);
- await act(p,g,'message',{text:'给老客补货，优先考虑复购，售价30元，其他成本2元'});
+ await act(p,g,'message',{text:'猫粮，给老客补货，优先考虑复购，售价30元，其他成本2元'});
  for(let i=0;i<4;i++)await p.pump();
  const goal=get(p,g),report=goal.artifacts.find(a=>a.title==='选品交付报告');
  assert.equal(goal.stage,'review');assert.match(report.body,/我推荐「猫粮102」/);assert.match(report.body,/单件收益 ¥10.00/);assert.match(report.body,/采购方行为/);
  assert.equal(goal.version,1);
 });
 
-test('a model can clarify a business decision once then plan with the answer',async()=>{
+test('a model preference question does not block initial work and supplied preferences inform the plan',async()=>{
  const goal={text:'评估是否开分店',messages:[],scope:{}},settings=flowDefaults();
  const question=await proposeFlow(goal,settings,{id:'m'},async()=>({message:{content:JSON.stringify({question:'这次开分店优先验证客群还是回收投资？'})}}));
- assert.match(question.question,/回收投资/);
+ assert.equal(question.question,undefined);assert.ok(question.nodes.some(n=>n.capability==='evidence.collect'));
  const decided=await proposeFlow({...goal,scenario:{answer:'优先回收投资'}},settings,{id:'m'},async(m,chat)=>{
   assert.match(JSON.parse(chat[1].content).goal,/优先回收投资/);return {message:{content:JSON.stringify(basicFlow(goal))}};
  });

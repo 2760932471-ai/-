@@ -10,6 +10,11 @@ function moduleBundle(name,source,prelude=''){
 // the server. Bind their real named imports so new runtime dependencies cannot
 // silently become undefined only in the downloadable preview.
 const planningModules={
+ 'src/taskflows/inquiry.js':'previewFlowInquiry',
+ 'src/taskflows/acceptance.js':'previewFlowAcceptance',
+ 'src/taskflows/brief.js':'previewFlowBrief',
+ 'src/taskflows/review.js':'previewDeliveryReview',
+ 'public/market-comparison.js':'previewMarketComparison',
  'public/goal-language.js':'previewGoalLanguage',
  'public/offer-photos.js':'previewOfferPhotos',
  'public/offer-cards.js':'previewOfferCards',
@@ -56,10 +61,15 @@ const external=moduleBundle('previewExternal',await read('src/workforce/external
 const starter=moduleBundle('previewStarter',await read('src/workforce/starter-skills.js'));
 const conversation=moduleBundle('previewConversation',await read('src/workforce/conversation.js'));
 const discussionUI=moduleBundle('previewDiscussionUI',await read('public/discussion.js'));
+const marketComparison=await planningBundle('public/market-comparison.js');
+const deliveryReview=await planningBundle('src/taskflows/review.js');
+const flowBrief=await planningBundle('src/taskflows/brief.js');
+const flowAcceptance=await planningBundle('src/taskflows/acceptance.js');
+const flowInquiry=await planningBundle('src/taskflows/inquiry.js');
 const goalLanguage=await planningBundle('public/goal-language.js');
 const contentPreparation=await planningBundle('src/workforce/content-preparation.js');
 const production=moduleBundle('previewProduction',await read('src/workforce/production.js'),'const {imageOutputs,prepareContent}=previewContentPreparation;');
-const content=moduleBundle('previewContent',await read('src/workforce/content.js'),'const {normalizeChannel,placeholderFact}=previewContentPreparation;');
+const content=moduleBundle('previewContent',await read('src/workforce/content.js'),'const {reviewText}=previewDeliveryReview;const {normalizeChannel,placeholderFact}=previewContentPreparation;');
 const selectsUI=moduleBundle('previewSelects',await read('public/selects.js'));
 const contentUI=moduleBundle('previewContentUI',await read('public/content.js'));
 const skills=moduleBundle('previewSkills',await read('src/workforce/skills.js'),'const {contentDefinitions,contentSample,executeContent}=previewContent;const {productAgent,insightAgent}=previewBuiltins;const {starterDefinitions,starterSample,executeStarter}=previewStarter;const {commerceDefinitions,commerceSample,executeCommerce}=previewCommerce;');
@@ -83,7 +93,7 @@ const businessUI=moduleBundle('previewBusinessUI',await read('public/business.js
 const storeOperations=moduleBundle('previewStoreOperations',await read('src/store-operations.js'),`const randomUUID=previewUUID;const nativeStoreTransport=async()=>{throw Object.assign(new Error('免安装预览不能操作真实店铺，请启动完整后端并配置应用授权'),{code:'PREVIEW_ONLY'});};`);
 const storeUI=moduleBundle('previewStoreUI',await read('public/store-operations.js'));
 const imageLayout=moduleBundle('previewImageLayout',await read('src/workforce/main-image-layout.js'));
-const images=moduleBundle('previewImages',await read('src/images.js'),`const {mainImageLayout}=previewImageLayout;const {assertContentEvidence,prepareContent}=previewContentPreparation;const randomUUID=previewUUID;const {selectConversation,contextSettings,requestsImage}=previewConversation;const {materialProblem}=previewSources;const downloadOfferPhoto=async()=>{throw new Error('静态预览需要生图后端');};const imageCredentialState=()=>false;const testImageConnection=async()=>{throw new Error('免安装预览不能测试服务端连接，请打开完整后端');};const generateImage=async()=>{throw new Error('免安装预览不能生成图片');};const validPNG=()=>{};`);
+const images=moduleBundle('previewImages',await read('src/images.js'),`const {publicImageBrief}=previewDeliveryReview;const {mainImageLayout}=previewImageLayout;const {assertContentEvidence,prepareContent}=previewContentPreparation;const randomUUID=previewUUID;const {selectConversation,contextSettings,requestsImage}=previewConversation;const {materialProblem}=previewSources;const downloadOfferPhoto=async()=>{throw new Error('静态预览需要生图后端');};const imageCredentialState=()=>false;const testImageConnection=async()=>{throw new Error('免安装预览不能测试服务端连接，请打开完整后端');};const generateImage=async()=>{throw new Error('免安装预览不能生成图片');};const validPNG=()=>{};`);
 const imagesUI=moduleBundle('previewImagesUI',await read('public/images.js'));
 const market=moduleBundle('previewMarket',await read('src/market-connectors.js'),`const randomUUID=previewUUID;const requestIntegration=async()=>{throw new Error('静态预览不能连接销售平台，请运行完整后端');};`);
 const integrations=moduleBundle('previewIntegrations',await read('src/integrations.js'),`const {createMarketConnectors}=previewMarket;const nativeStoreTransport=async()=>{throw Object.assign(new Error('免安装预览不能核验店铺授权，请运行完整后端'),{code:'PREVIEW_ONLY'});};const randomUUID=previewUUID;const process={env:{}};const searchTransport=async()=>{throw Object.assign(new Error('免安装预览不调用外部搜索，请运行完整后端'),{code:'PREVIEW_ONLY'});};const storeTransport=async()=>{throw Object.assign(new Error('免安装预览不能核验店铺授权，请运行完整后端'),{code:'PREVIEW_ONLY'});};`);
@@ -180,7 +190,7 @@ let app=await read('public/app.js');
 if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
 app=app.replace(/^import .*;\n/gm,'').replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
 const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['目标、任务与协作空间已保存到服务端','目标、任务与协作空间已保存到当前浏览器'],['服务端持久化','浏览器本地保存'],['使用服务端已保存的配置','使用当前浏览器已保存的配置'],['后端自动执行','浏览器规则执行'],['数据保存在后端','数据保存在当前浏览器'],['等待后端执行','等待本地执行'],['代码 / HTTP 能力','本地代码能力']];
-let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,goalLanguage,contentPreparation,production,content,selectsUI,contentUI,skills,employees,model,runtime,planning,planningUI,matching,research,team,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,sourcing,offerCards,pickBrowser,flowCatalog,flowContract,flowDeliveries,flowPlanner,flowMemory,decision,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,goalLanguage,deliveryReview,contentPreparation,production,content,selectsUI,contentUI,skills,employees,model,runtime,planning,planningUI,matching,research,team,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,marketComparison,sourcing,offerCards,pickBrowser,flowCatalog,flowBrief,flowContract,flowDeliveries,flowAcceptance,flowPlanner,flowMemory,flowInquiry,decision,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
 for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
 code=code.replaceAll('href="/cloud-browser.zip"', 'href="data:application/zip;base64,'+(await readFile(new URL('public/cloud-browser.zip',root))).toString('base64')+'"');
 let html=await read('public/index.html');const css=[await read('public/style.css'),await read('public/shell.css'),await read('public/employees.css')].join('\n');

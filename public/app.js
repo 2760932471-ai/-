@@ -169,15 +169,15 @@ function taskDestination(g){
  if(g.stage==='review')return {...base,title:'交付物已就绪',status:'待验收',tab:'review',focus:'section',label:'验收交付物',icon:'task-review'};
  if(g.mode==='flow'){
   const flow=g.flow;
-  if(flow.status==='awaiting_context')return {...base,title:'补充使用场景',status:'等待你的回复',tab:'discussion',focus:'reply',label:'回复问题'};
+  if(flow.status==='awaiting_context')return {...base,title:flow.question||'补充任务信息',status:'等待你的回复',tab:'discussion',focus:'reply',label:'回复问题'};
   const blocked=flow.nodes.find(n=>['needs_input','failed','needs_capability'].includes(n.status));
   if(blocked){
-   const label=blocked.capability==='sourcing.1688'?'查看采集进度':blocked.capability==='product.compare'?'核对候选报价':'处理这一步';
+   const label=flowsUI.needsResearchSources(g,blocked)?'查看缺少的资料':blocked.capability==='sourcing.1688'?'查看采集进度':blocked.capability==='product.compare'?'核对候选报价':'处理这一步';
    return {...base,title:blocked.title,status:flowsUI.label(blocked.status),focus:'intervention',node:blocked.id,label,icon:'task-hold'};
   }
   const running=flow.nodes.find(n=>['running','waiting_external'].includes(n.status));
   const next=running||flow.nodes.find(n=>n.status==='pending'&&(n.dependsOn||[]).every(id=>flow.nodes.some(step=>step.id===id&&step.status==='succeeded')));
-  if(next)return {...base,title:next.title,status:next.status==='pending'?'等待执行':flowsUI.label(next.status),focus:'step',node:next.id,label:'查看步骤详情',icon:'task-progress'};
+  if(next)return {...base,title:next.title,status:flowsUI.researchProgress(next)?.label||(next.status==='pending'?'等待执行':flowsUI.label(next.status)),focus:'step',node:next.id,label:'查看步骤详情',icon:'task-progress'};
   return {...base,title:flow.plan?.name||'规划执行步骤',status:flowsUI.label(flow.status),label:flow.status==='planning_failed'?'查看规划问题':'查看执行计划'};
  }
  if(g.production&&g.production.blocked)return {...base,status:'制作受阻',label:'查看制作要求',icon:'task-hold'};

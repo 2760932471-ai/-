@@ -24,8 +24,12 @@ test('sourcing switches to verified detail quotes and reuses the method with fre
  await p.integrations.testSearch({query:'猫粮',site:'1688.com'});
  async function run(){
   const g=await p.create({text:goalText,executionMode:'flow',requestId:randomUUID()});
-  for(let i=0;i<3;i++)await p.pump();
-  return p.goals().find(x=>x.id===g.id);
+  let result=g;
+  for(let i=0;i<10&&result.stage!=='review';i++){
+   await p.pump();
+   result=p.goals().find(x=>x.id===g.id);
+  }
+  return result;
  }
  const first=await run();
  assert.equal(first.stage,'review');

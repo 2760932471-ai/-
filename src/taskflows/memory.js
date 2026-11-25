@@ -1,4 +1,4 @@
-import {businessBrief,cleanOffers, expenseDescription, scenarioExpenses, rankedOffers, selectedOffer, sourcingIntent, sourcingReport} from '../../public/sourcing.js';
+import {businessBrief,goalSelection,expenseDescription,scenarioExpenses,sourcingIntent,sourcingReport} from '../../public/sourcing.js';
 
 // Rebuild from the persisted checkpoint so older goals, retries and superseded
 // images use the same evidence as the runner. Never serialize model credentials.
@@ -13,19 +13,16 @@ export function taskMemory(goal, nodes = goal.flow?.nodes || []) {
   })
  }));
  const memory = {version: goal.version, steps};
- const pick = nodes.find(n => n.capability === 'sourcing.1688' && n.status === 'succeeded');
- const basis = sourcingIntent(businessBrief(goal));
- if (!pick || !basis) return memory;
- const offers = cleanOffers(pick.offers);
- const deliveredSku=nodes.find(n=>n.capability.startsWith('image.')&&n.status==='succeeded'&&n.preparation?.candidate)?.preparation.candidate.sku;
- const chosenSku = pick.selection?.sku || deliveredSku;
- const best = chosenSku ? rankedOffers(offers,basis).find(row=>row.sku===chosenSku&&row.eligibility==='eligible') : selectedOffer(offers, basis, businessBrief(goal));
+ const {pick,research,criteria:basis,rows:offers,winner:best}=goalSelection(goal,nodes);
  if (!best) return memory;
  memory.selection = {
-  count: offers.length, grams:basis.grams, category: basis.query, asOf: pick.finishedAt, method: pick.offerSource,
+  count: offers.length, grams:basis.grams, category: basis.query, asOf: research?.finishedAt||pick.finishedAt, method: pick.offerSource,
   selected: {sku: best.sku, name: best.title, url: best.url, price: best.price, cost: best.cost, terms: best.terms, quoteNotes: best.quoteNotes},
   retail: best.retail, expenses: best.expenses, fees: basis.fees, estimatedMargin: best.margin,
+  ...(best.market?{market:{season:basis.season,priceRange:best.market.priceRange,margin:best.market.margin,
+   sample:best.market.sample,estimatedContribution:best.market.contribution}}:{}),
   openQuestions: [
+   ...(basis.demandGoal&&!best.market?.sample?['待核实同款同期间的零售销量']:[]),
    ...offers.filter(row=>row.quoteNotes?.length).map(row=>row.title+' 报价或单位待核对：'+row.quoteNotes.join(' / ')),
    ...(best.cost===null&&!best.quoteNotes?.length?['销售规格与报价单位尚未对应']:[]),
    ...(best.retail === null ? ['待确认零售价'] : []),

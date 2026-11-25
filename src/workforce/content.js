@@ -1,3 +1,4 @@
+import {reviewText} from '../taskflows/review.js';
 import {normalizeChannel,placeholderFact} from './content-preparation.js';
 // Deterministic content assembly: every product claim comes from the confirmed brief.
 export const contentPacks=[
@@ -8,7 +9,7 @@ export const contentPacks=[
  {id:'image_brief',name:'主图设计简报',employeeName:'主图策划数字员工',output:'3 版构图方向、画面文字与素材清单',description:'准备可交给设计师的制作要求；本能力不生成图片。'}
 ].map(p=>({...p,skillId:'copy.'+p.id,employeeId:'employee-copy-'+p.id}));
 export const contentDefinitions=contentPacks.map(p=>({id:p.skillId,name:p.name+'编排',description:p.description+'可从已有资料自动提取并编排；输出需审核。',roleIds:['creative','merchandise'],requires:['商品名称；渠道默认全渠道，受众与特点可由系统从已有资料自动整理'],version:1}));
-export function validateCopyBrief(value){
+export function validateCopyBrief(value,preparation){
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('请填写内容制作资料');
  value={...value,channel:normalizeChannel(value.channel)};
  const b={};for(const [key,label,max]of [['productName','商品名称',80],['channel','使用渠道',40],['audience','目标人群',120],['source','资料来源',500]]){if(typeof value[key]!=='string'||!value[key].trim()||value[key].trim().length>max)throw new Error(label+'必填，最多 '+max+' 字');b[key]=value[key].trim();}
@@ -17,12 +18,16 @@ export function validateCopyBrief(value){
  b.facts=[...new Set(value.facts.map(v=>v.trim()))];
  if(value.confirmed!==true)throw new Error('请先核对商品特点与来源并确认');b.confirmed=true;
  b.duration=Number(value.duration??30);if(![30,60].includes(b.duration))throw new Error('视频时长请选择 30 或 60 秒');
- const hits=['全网最低','永久不漏','百分百','100%','零风险','国家级','顶级'].filter(w=>[b.productName,...b.facts].join('\n').includes(w));if(hits.length)throw new Error('以下表述需核验并修改后再生成：'+hits.join('、'));
+ const claimEvidence=preparation||{
+  evidence:b.facts.map(text=>({text,source:b.source,kind:'manual'}))
+ };
+ const hits=reviewText([b.productName,b.audience,...b.facts].join('\n'),claimEvidence);
+ if(hits.length)throw new Error('以下表述需核验并修改后再生成：'+hits.map(hit=>hit.claim+'（'+hit.reason+'）').join('、'));
  return b;
 }
 export function contentSample(){return {goal:'为示例角阀制作内容草稿',kind:'analysis',scope:{store:'虚构示例店',sku:'COPY-DEMO',product:'示例角阀'},copyBrief:{productName:'示例黄铜角阀',channel:'全渠道',audience:'核对管件规格的家庭用户',facts:['材质：黄铜（虚构样例）','接口：G1/2（虚构样例）','包装：1 只装（虚构样例）'],source:'虚构测试资料，请替换为真实核验资料',confirmed:true,duration:30}};}
 export function executeContent(id,input){
- const pack=contentPacks.find(p=>p.skillId===id);if(!pack)throw new Error('未知内容能力');let b;try{b=validateCopyBrief(input.autoContent?{...input.autoContent,confirmed:true}:input.copyBrief);}catch(error){return {status:'needs_input',summary:'内容草稿尚未生成。',missing:[error.message],artifacts:[],metrics:{}};}
+ const pack=contentPacks.find(p=>p.skillId===id);if(!pack)throw new Error('未知内容能力');let b;try{b=validateCopyBrief(input.autoContent?{...input.autoContent,confirmed:true}:input.copyBrief,input.autoContent);}catch(error){return {status:'needs_input',summary:'内容草稿尚未生成。',missing:[error.message],artifacts:[],metrics:{}};}
  const facts=b.facts,numbered=facts.map((f,i)=>`[${i+1}] ${f}`).join('\n');let body='',metrics={factCount:facts.length};
  if(id==='copy.titles'){
   const candidates=[`${b.productName}｜${facts[0]}`,`${facts[0]}｜${b.productName}${facts[1]?'｜'+facts[1]:''}`,`${b.productName}｜${facts.join(' / ')}`];

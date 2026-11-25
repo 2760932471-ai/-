@@ -1,4 +1,5 @@
 import {offerPhoto as normalizeOfferPhoto,offerPhotos} from './offer-photos.js';
+import {demandPeriod,describeComparison,marketComparisons} from './market-comparison.js';
 import {requestParts,asksForMethod} from './goal-language.js';
 
 const sourcePlatform = /1688|阿里巴巴/;
@@ -59,7 +60,7 @@ export function sourcingIntent(text){
   .replace(/请|帮我|给我|帮忙|自动|卖得(?:比较)?好(?:的)?|热销的?|畅销的?|筛选|挑选|选购|找一下|寻找|搜索|搜寻|找出|搜|选品|选货|选款|推荐|比较|比价|找|挑|选|(?:[一二两三四五六七八九十几多]|\d+)款|一个|一些|性价比高|(?:利润|收益|毛利)(?:较|更)?高|高性价比|高利润|高收益|高毛利|低进价|划算|低起订量?|具有|适合|合适|进行|对应|某个|优先|并且|而且|同时|商品|产品|品类|类目/g,'')
   .replace(/^[\s、和且并的在上以]+|[\s、的和且并]+$/g,'').trim();
  const category=(explicit?[explicit[1]]:clauses.slice(selection)).map(cleanCategory)
-  .find(s=>s&&!/^(?:要|高|较高|高的|越高越好)$|作图|做图|出图|生成|制作|上架|售价|成本|毛利|利润|性价比|测款|起订|预算|补货|运费|判断|卖点|清单/.test(s));
+  .find(s=>s&&!/^(?:要|高|较高|高的|越高越好|品|货|款|东西|最佳|热卖|好卖|销量最高)$|作图|做图|出图|生成|制作|上架|售价|成本|毛利|利润|性价比|测款|起订|预算|补货|运费|判断|卖点|清单/.test(s));
  // A scenario can supply a missing category, but its examples never request new work.
  text=[requested,requestParts(scenario).requested].join('，');
  const money=label=>{
@@ -69,6 +70,11 @@ export function sourcingIntent(text){
  const retail=money('预计售价|目标售价|零售价|售价');
  const expenses=money('单件其他成本|每件其他成本|其他成本');
  const basis={query:(category||'').slice(0,60),retail,expenses};
+ const season=demandPeriod(text);
+ const demandRequest=/畅销|热销|卖得(?:比较)?好|卖得出去|卖出去|销量|动销|需求旺|好卖|卖得动|适销/.test(text);
+ if(season)basis.season=season;
+ if(demandRequest||season)basis.demandGoal=true;
+ if(basis.demandGoal&&/利润|盈利|毛利|收益|赚钱/.test(text))basis.compareProfit=true;
  if(/(?:优先(?:考虑|看|比较)?|侧重|看重)(?:复购|回购)|(?:回购|复购)(?:率)?(?:优先|为主)/.test(text))basis.repeatFirst=true;
  if(/小批量(?:测款|试卖|试单)|低起订|优先小批量/.test(text))basis.smallTrial=true;
  if(/稳定(?:补货|供货|货源)|长期(?:补货|供货|供应)/.test(text))basis.stableSupply=true;
@@ -133,21 +139,22 @@ export function sourcingURL(query){
 // 1688 offer photography is served from the ibank directories on these CDNs.
 export function offerPhoto(value){return normalizeOfferPhoto(value);}
 export function offerFacts(values){
- const field=/^(?:镜框材质|镜架材质|镜片材质|镜架颜色|镜片颜色|镜框形状|镜框款式|镜架款式|镜片款式|镜框颜色|框架材质|眼镜结构|镜架结构|材质|颜色|款式|型号|规格|尺寸|风格|镜宽|镜腿长度|镜框宽度|重量|包装|表面工艺|适用人群|形状|光源类型|供电方式|接口|安装方式)[：:]\s*[^<>\n：:]{1,48}$/;
+ const field=/^(?:镜框材质|镜架材质|镜片材质|镜架颜色|镜片颜色|镜框形状|镜框款式|镜架款式|镜片款式|镜框颜色|框架材质|眼镜结构|镜架结构|材质|容量|净含量|额定容量|材质等级|内胆材质|执行标准|保温时长|保温时间|颜色|款式|型号|规格|尺寸|风格|镜宽|镜腿长度|镜框宽度|重量|包装|表面工艺|适用人群|形状|光源类型|供电方式|接口|安装方式)[：:]\s*[^<>\n：:]{1,48}$/;
  return [...new Set((Array.isArray(values)?values:[]).filter(v=>typeof v==='string').map(v=>v.trim()).filter(v=>field.test(v)&&!/(?:待确认|未知|全网最低|100%|顶级|国家级)/.test(v)))].slice(0,8);
 }
-export function selectedOffer(rows,criteria,text){
- return decisionOrder(cleanOffers(rows),criteria,text).find(row=>row.eligibility==='eligible');
+export function selectedOffer(rows,criteria,text,investigation){
+ return decisionOrder(cleanOffers(rows),criteria,text,investigation).find(row=>row.eligibility==='eligible');
 }
 export function sourcingPriority(criteria,text){
  if(['unitMargin','periodMargin','minimumOrder','repeat','supply'].includes(criteria?.decisionPriority))return criteria.decisionPriority;
  if(criteria?.repeatFirst)return 'repeat';
  if(criteria?.stableSupply)return 'supply';
  if(criteria?.smallTrial)return 'minimumOrder';
- if(criteria?.periodGoal)return 'periodMargin';
+ if(criteria?.periodGoal&&!criteria.season)return 'periodMargin';
+ if(criteria?.demandGoal)return 'marketDemand';
  return /利润|毛利|收益|盈利|赚/.test(text)?'unitMargin':'quote';
 }
-export function decisionOrder(rows,criteria,text){
+export function decisionOrder(rows,criteria,text,investigation){
  const ranked=rankedOffers(rows,criteria);
  const priority=sourcingPriority(criteria,text);
  // A quote which fails a purchase condition can never become the fallback winner.
@@ -165,9 +172,10 @@ export function decisionOrder(rows,criteria,text){
   feasible.sort((a,b)=>a.minimumOrder.count-b.minimumOrder.count);
  }else if(priority==='periodMargin'&&comparablePeriods(feasible)){
   feasible.sort((a,b)=>b.periodMargin-a.periodMargin);
- }else if(priority==='unitMargin'){
+ }else if(priority==='unitMargin'||priority==='marketDemand'&&criteria.compareProfit){
   feasible.sort((a,b)=>(b.margin??-Infinity)-(a.margin??-Infinity));
  }
+ if(investigation&&['marketDemand','unitMargin','quote'].includes(priority))marketComparisons(feasible,criteria,investigation,scenarioExpenses,priority);
  return feasible.concat(rest);
 }
 export function cleanOffers(rows){
@@ -289,18 +297,27 @@ export function rankedOffers(rows,criteria){
  return scored.sort((a,b)=>priority[a.eligibility]-priority[b.eligibility]||Number(a.cost===null)-Number(b.cost===null)||Number(b.shortlist)-Number(a.shortlist)||(a.cost??a.price)-(b.cost??b.price)||(b.repurchase??-1)-(a.repurchase??-1));
 }
 
+export function comparisonSummary(rows,winner,criteria){
+ return describeComparison(rows,winner,criteria);
+}
+
+export function goalSelection(goal,nodes=goal.flow?.nodes||[]){
+ const brief=businessBrief(goal),criteria=sourcingIntent(brief);
+ const pick=nodes.find(node=>node.capability==='sourcing.1688'&&node.status==='succeeded');
+ const research=nodes.find(node=>node.capability==='research.compare'&&node.status==='succeeded');
+ const rows=pick&&criteria?decisionOrder(cleanOffers(pick.offers),criteria,brief,research?.investigation):[];
+ const lockedSku=research?.selection?.sku||pick?.selection?.sku||nodes.find(node=>node.capability.startsWith('image.')&&node.status==='succeeded'&&node.preparation?.candidate)?.preparation.candidate.sku;
+ const winner=rows.find(row=>row.eligibility==='eligible'&&(!lockedSku||row.sku===lockedSku));
+ return {pick,research,criteria,rows,winner};
+}
+
 // Derive the report from this version's saved offers and delivered files.
 export function sourcingReport(g){
- const pick=g.flow?.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='succeeded');
- const brief=businessBrief(g),criteria=sourcingIntent(brief);
- if(!pick?.offers?.length||!criteria)return null;
- const rows=decisionOrder(cleanOffers(pick.offers),criteria,brief);
- if(!rows.length)return null;
+ const {pick,research,criteria,rows,winner:selected}=goalSelection(g);
+ if(!selected)return null;
+ const brief=businessBrief(g);
  const eligible=rows.filter(row=>row.eligibility==='eligible');
  const completedImages=g.flow.nodes.filter(n=>n.capability.startsWith('image.')&&n.status==='succeeded');
- const lockedSku=pick.selection?.sku||completedImages.find(n=>n.preparation?.candidate)?.preparation.candidate.sku;
- const selected=lockedSku?eligible.find(row=>row.sku===lockedSku):eligible[0];
- if(!selected)return null;
  const imageSteps=completedImages.filter(n=>n.preparation?.candidate?.sku===selected.sku);
  const prep=imageSteps[0]?.preparation;
  const current=(g.artifacts||[]).filter(a=>a.version===g.version&&a.status!=='superseded');
@@ -314,6 +331,8 @@ export function sourcingReport(g){
  const priority=sourcingPriority(criteria,brief);
  const unverified=rows.filter(r=>r.eligibility==='unverified');
  const needsEvidence={
+  marketDemand:()=>eligible.length<2||eligible.some(r=>!r.market?.sample||r.market.sample.strength==='lead'||
+   criteria.compareProfit&&(!r.market.contribution||r.margin==null)),
   repeat:()=>eligible.some(r=>r.repurchase==null),
   supply:()=>true,
   minimumOrder:()=>!trialComparable(eligible),
@@ -323,7 +342,7 @@ export function sourcingReport(g){
  };
  const provisional=unverified.length>0||needsEvidence[priority]();
  const verdict=provisional?'初筛候选，优先核实':'推荐商品';
- const lines=['从 '+rows.length+' 款'+criteria.query+'里，'+(provisional?'建议优先核实':'我推荐')+'「'+selected.title+'」。','采购页展示价 ¥'+selected.price+'；'+(selected.repurchase===null?'页面未披露回购率。':'页面回购率 '+selected.repurchase+'%。')+(selected.margin===null?'销售规格、售价或成本尚未齐全，利润待核算。':(criteria.grams?'按每单 '+criteria.grams+' 克折算采购成本 ¥'+selected.cost+'，':'')+'按售价 ¥'+selected.retail+'、'+expenseDescription({...criteria,expenses:selected.expenses})+'，估算单件收益 ¥'+selected.margin.toFixed(2)+'。'),'卖点建议：'+pitch];
+ const lines=['从 '+rows.length+' 款'+criteria.query+'里，'+(provisional?'建议优先核实':'我推荐')+'「'+selected.title+'」。','采购页展示价 ¥'+selected.price+'；'+(selected.repurchase===null?'页面未披露回购率。':'页面回购率 '+selected.repurchase+'%。')+(selected.margin===null?(selected.market?.margin?'已按零售展示价另作情景估算，实际单件收益待确认。':'销售规格、售价或成本尚未齐全，利润待核算。'):(criteria.grams?'按每单 '+criteria.grams+' 克折算采购成本 ¥'+selected.cost+'，':'')+'按售价 ¥'+selected.retail+'、'+expenseDescription({...criteria,expenses:selected.expenses})+'，估算单件收益 ¥'+selected.margin.toFixed(2)+'。'),'卖点建议：'+pitch];
  if(selected.margin!=null&&quoteUnit(selected.terms)==null)lines.push('这项试算暂按一份展示报价对应一件销售商品。页面尚未注明报价单位，需核实实际包装及适用阶梯价。');
  if(g.scenario?.answer)lines.push('本次使用场景：'+g.scenario.answer+'。');
  if(selected.salesBasis)lines.push('店铺口径：'+selected.salesBasis.period+'，实际销售 '+selected.salesBasis.units+' 件，成交均价 ¥'+selected.salesBasis.price+'。来源：'+selected.salesBasis.source+'。');
@@ -355,7 +374,10 @@ export function sourcingReport(g){
   if(gap===0)lines.push('「'+runner.title+'」的预计单件收益相同。可优先核实两款起订量和实际成交价。');
   if(gap>0&&share>0&&selected.retail-gap/share>0)lines.push('对比备选「'+runner.title+'」，首选每件多 ¥'+gap.toFixed(2)+'。仅首选售价变动、其余条件相同时，首选降到约 ¥'+(selected.retail-gap/share).toFixed(2)+'，两款收益持平。');
  }
- if(pick.decisionCheck)lines.push(pick.decisionCheck);
+ const comparison=comparisonSummary(rows,selected,criteria);
+ if(comparison)lines.push(comparison);
+ else if(priority==='marketDemand')lines.push('本次还缺少同款'+(criteria.season||'同期间')+'的零售动销记录，1688 采购端的数据只用于初筛。');
+ if(pick.decisionCheck&&(!research?.selection||research.selection.sku===pick.selection?.sku))lines.push(pick.decisionCheck);
  const compositions={'白底商品展示':'白底居中，突出完整商品轮廓','卖点特写主图':'右侧展示商品，左侧呈现特点与局部细节','淘宝商品封面':'大幅商品实拍搭配短标题与底部信息栏','活动价格主图':'上方展示商品，下方信息带突出已确认的促销文案'};
  const conflicts=rows.filter(r=>r.quoteNotes?.length);
  if(conflicts.length)lines.push('询价后再决策：'+conflicts.map(r=>'「'+r.title+'」记录到不同报价或单位（'+r.quoteNotes.join(' / ')+'），收益待核算。').join(' '));

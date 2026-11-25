@@ -28,6 +28,30 @@ try{
  await page.waitForFunction(()=>document.querySelector('#connection-state').textContent.includes('已'));await page.locator('#main [data-new]:visible').first().click();assert.equal(await page.locator('#goal-advanced').isVisible(),false);await page.locator('#goal').fill('为水龙头制作标题和卖点');assert.equal(await page.locator('#create-engine').inputValue(),'flow');assert.equal(await page.locator('#manual-team-options').isVisible(),false);await page.locator('#submit-task').click();await page.locator('#task-dialog').waitFor({state:'hidden'});await page.locator('.chat-log').waitFor();await page.locator('.goal-tabs [data-tab=tasks]').click();await page.locator('[data-flow-node=summary]').waitFor();
  await page.locator('.goal-tabs [data-tab=discussion]').click();const human=await page.locator('.chat-message.human .avatar').first().boundingBox(),ai=await page.locator('.chat-message.coordinator .avatar').first().boundingBox();assert(human.x>ai.x+100);await page.locator('#chat-input').fill('保留这条尚未发送的输入');await page.waitForTimeout(2200);assert.equal(await page.locator('#chat-input').inputValue(),'保留这条尚未发送的输入');
  await page.locator('.goal-tabs [data-tab=tasks]').click();await page.screenshot({path:'/tmp/taskflows-desktop.png'});
+ if(!offline){
+  await page.locator('.sidebar-create').click();
+  await page.locator('#goal').fill('请帮我处理一下这个');
+  await page.locator('#submit-task').click();
+  await page.locator('#task-dialog').waitFor({state:'hidden'});
+  const question=page.locator('.discussion-task[data-task-destination="reply"]');
+  await question.waitFor();
+  assert.match(await question.innerText(),/处理什么对象/);
+  await question.click();
+  assert(await page.locator('#chat-input').evaluate(input=>document.activeElement===input));
+  await page.locator('#chat-input').fill('比较两套 CRM 方案。重点看迁移成本与权限，给出采购建议。');
+  await page.locator('#chat-form button[type=submit]').click();
+  const missing=page.locator('.discussion-task').filter({hasText:'查看缺少的资料'});
+  await missing.waitFor({timeout:20000});
+  await missing.click();
+  const action=page.locator('[data-flow-intervention]').filter({hasText:'补充比较资料'});
+  assert(await action.getByRole('button',{name:'从此步继续'}).isEnabled());
+  assert.equal(await action.getByRole('button',{name:'选择分析模型'}).count(),0);
+  const researchStep=page.locator('[data-flow-node][data-status=succeeded]').filter({hasText:'本次调查尚未取得可引用的来源'});
+  await researchStep.locator('summary').click();
+  assert(await researchStep.getByText('本次调查尚未取得可引用的来源。').isVisible());
+  await action.getByRole('button',{name:'补充比较资料'}).click();
+  await page.getByRole('heading',{name:'知识库',exact:true}).waitFor();
+ }
  await page.locator('.sidebar [data-view=flows]').click();await page.getByRole('heading',{name:'任务流与总控',exact:true}).waitFor();assert.equal(await page.locator('#flow-settings-form').count(),1);await page.locator('[name=parallel]').fill('2');await page.locator('#flow-settings-form button[type=submit]').click();await page.waitForTimeout(400);assert.equal(await page.locator('[name=parallel]').inputValue(),'2');
  await page.locator('.sidebar-create').click();await page.locator('#goal').fill('找一款划算的水龙头，选品后直接上架');await page.locator('#submit-task').click();await page.locator('#task-dialog').waitFor({state:'hidden'});
  const quoteAction=page.locator('.discussion-task[data-task-destination="intervention"]');

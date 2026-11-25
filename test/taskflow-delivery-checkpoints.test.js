@@ -120,3 +120,47 @@ test('a missing external job leaves the image at an explicit checkpoint until th
  await restored.action(goal.id,{...retry,confirmUnknown:true});await drive(restored,goal);
  assert.equal(imageRequests.length,1);
 });
+
+test('a research-backed comparison resumes from the evidence gap after a document is added, without a chat model',async t=>{
+ const {p}=await setup(t);
+ const goal=await create(p,'只使用知识库比较自建和托管 CRM 方案，关注迁移成本。');
+ for(let i=0;i<6;i++)await p.pump();
+ const blocked=state(p,goal),analysis=step(blocked,'analysis.reason');
+ assert.equal(analysis.status,'needs_input');
+ assert.match(analysis.error,/依据|来源/);
+ const firstRun=step(blocked,'evidence.collect').runId;
+ const document=await p.knowledge.saveDocument(null,{baseId:'kb-default',title:'CRM 迁移成本实测',source:'CRM 迁移实施记录',sku:'',
+  body:'自建 CRM 需要单独迁移历史附件；托管 CRM 方案已包含导入服务。试点时配置迁移范围。',enabled:true,confirmed:true,size:700,overlap:100});
+ await p.action(goal.id,{kind:'retry',expectedVersion:1,nodeId:analysis.id});
+ const done=await drive(p,goal);
+ const research=step(done,'research.compare');
+ assert(research.recall.hits.some(hit=>hit.documentId===document.id));
+ assert(done.messages.at(-1).text.includes('CRM'));
+ assert.equal(step(done,'evidence.collect').runId,firstRun);
+ await p.knowledge.deleteDocument(document.id,{revision:document.revision,confirmed:true});
+ await assert.rejects(p.action(goal.id,{kind:'complete',expectedVersion:1}),/不存在|更新|停用/);
+});
+
+test('a v1 profit and photo plan adds comparison research before acceptance and reuses a matching paid image',async t=>{
+ const {dir,p,options,imageRequests}=await setup(t);
+ const goal=await create(p,'在1688找露营灯，比较单件利润，单件其他成本 2 元，交付淘宝主图。');
+ const ready=await drive(p,goal),research=step(ready,'research.compare'),image=step(ready,'image.main');
+ const path=dir+'/platform.json',data=JSON.parse(await readFile(path,'utf8')),saved=data.goals.find(row=>row.id===goal.id);
+ const pick=step(saved,'sourcing.1688');
+ for(const nodes of [saved.flow.nodes,saved.flow.plan.nodes]){
+  nodes.splice(nodes.findIndex(n=>n.id===research.id),1);
+  for(const n of nodes)n.dependsOn=n.dependsOn.map(id=>id===research.id?pick.id:id);
+ }
+ saved.flow.plan.contract.version=1;
+ saved.flow.plan.contract.requirements=saved.flow.plan.contract.requirements.filter(r=>r.capability!=='research.compare');
+ saved.artifacts=saved.artifacts.filter(file=>!research.artifactIds.includes(file.id));
+ await writeFile(path,JSON.stringify(data));
+ const restored=await createPlatform(dir,options);
+ await assert.rejects(restored.action(goal.id,{kind:'complete',expectedVersion:1}),/缺少/);
+ await restored.pump();
+ const current=await drive(restored,goal);
+ assert.equal(step(current,'research.compare').selection.sku,pick.selection.sku);
+ assert.equal(step(current,'image.main').imageJobId,image.imageJobId);
+ assert.equal(imageRequests.length,1);
+ await restored.action(goal.id,{kind:'complete',expectedVersion:1});
+});

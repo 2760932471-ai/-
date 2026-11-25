@@ -13,7 +13,7 @@ test('the platform maps requested outputs to a common selection and profit decis
  const contract=build('在1688选猫粮，小批量试单，最多进10袋，比较各款利润，做淘宝主图并告诉我卖点');
  assert.equal(contract.criteria.query,'猫粮');
  assert.deepEqual(contract.criteria.maxMinimumOrder,{count:10,unit:'袋'});
- assert.deepEqual(step(contract,'sourcing.profit').dependsOn,['sourcing.1688']);
+ assert.deepEqual(step(contract,'sourcing.profit').dependsOn,['research.compare']);
  for(const cap of ['image.main','copy.selling_points'])assert.deepEqual(step(contract,cap).dependsOn,['sourcing.profit']);
  assert.match(contract.pending.join(' '),/实际成交价/);
  assert.equal(contract.question,null);
@@ -70,9 +70,31 @@ test('non-sourcing outputs keep independent checks, and unsupported deliverables
  assert.deepEqual(step(goal,'inventory.coverage').dependsOn,['evidence.collect']);
  assert.deepEqual(new Set(step(goal,'result.compile').dependsOn),new Set(['price.break_even','inventory.coverage']));
  assert.deepEqual(goal.unresolvedRequests,['另外导出 Excel']);
- assert.deepEqual(capabilities(build('对比两套 CRM 私域运营方案的实施风险')),['evidence.collect','analysis.reason','result.compile']);
+ assert.deepEqual(capabilities(build('对比两套 CRM 私域运营方案的实施风险')),['evidence.collect','research.compare','analysis.reason','result.compile']);
  const employee={assignedEmployeeId:'flow-sourcing'};
  assert.equal(build('水龙头',employee).criteria.query,'水龙头');
  assert.equal(build('美团联盟找货并铺到闲鱼',employee).criteria,null);
  assert.equal(build('按现有采购单测算保本价',employee).criteria,null);
+});
+
+test('a two-sentence winter sourcing goal is actionable and carries the selection into public deliverables',()=>{
+ const request='在1688上找卖得好的杯子，选完品给我清单，并且选一个最有利润、最能在冬天卖出去的产品，帮我做能上架到淘宝的主图、告诉我卖点';
+ const result=build(request),brief=result.decision;
+ assert.equal(result.question,null);assert.equal(brief.season,'冬季');assert.equal(brief.channel,'淘宝');
+ assert.equal(brief.subject,'杯子');assert.equal(brief.kind,'sourcing');
+ assert.ok(brief.questions.find(q=>q.kind==='retail'&&/杯子/.test(q.query)));
+ assert.ok(brief.questions.find(q=>q.kind==='demand'&&/冬季/.test(q.query)));
+ assert.deepEqual(step(result,'research.compare').dependsOn,['sourcing.1688']);
+ assert.deepEqual(step(result,'delivery.review').dependsOn.sort(),['copy.selling_points','image.main']);
+ assert.deepEqual(step(result,'result.compile').dependsOn,['delivery.review']);
+ assert.equal(build('帮我处理一下').question?.includes('什么对象'),true);
+});
+
+test('comparison criteria can come from the user and respect workspace-only investigation',()=>{
+ const result=build('比较飞书和钉钉，关注知识迁移和权限颗粒度，不用联网');
+ assert.equal(result.question,null);assert.equal(result.decision.sources,'workspace');
+ assert.ok(result.decision.criteria.includes('知识迁移'));
+ assert.ok(result.decision.questions.some(q=>q.kind==='criterion'&&q.query.includes('权限颗粒度')));
+ assert.deepEqual(step(result,'analysis.reason').dependsOn,['research.compare']);
+ assert.equal(step(result,'delivery.review'),undefined);
 });

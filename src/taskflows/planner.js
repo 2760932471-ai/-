@@ -1,5 +1,6 @@
 import {flowCapabilities,flowTemplates} from './catalog.js';
 import {buildGoalContract} from './contract.js';
+import {attachAcceptanceChecks} from './acceptance.js';
 const text=(v,max)=>typeof v==='string'&&v.trim()&&v.length<=max;
 function normalizeNodes(entries,maxNodes){
  const ids=new Set();
@@ -23,6 +24,21 @@ export function validateFlow(value,{maxNodes=12}={}){
 const catalogById=new Map(flowCapabilities.map(entry=>[entry.id,entry]));
 const isRegistered=capability=>catalogById.has(capability);
 const infrastructure=new Set(['evidence.collect','result.compile']);
+const externalActions=[
+ [/^(?:(?:给我|对外|再)?(?:发(?:送)?|推送|发布)?(?:任何)?(?:通知|公告))$/,/(?:send|publish|dispatch|push)\.(?:notification|notice)|(?:notification|notice)\.(?:send|publish|dispatch|push)|(?:发|推送|发布).{0,6}(?:通知|公告)/i],
+ [/^(?:发(?:送)?|外发)?邮件$/,/email\.send|send\.email|发送?.{0,5}邮件/i],
+ [/^(?:直接|自动)?(?:下单|付款)$/,/order\.(?:place|create)|payment\.(?:send|submit)|下单|付款/i],
+ [/^(?:对外|自动|直接)?(?:发布|上架)(?:商品|产品)?$/,/listing\.publish|(?:发布|上架)(?:该|这|商品|产品|内容|公告)/i],
+ [/^导出(?:文件|文档)?$/,/export|导出/i]
+];
+function excludedProposal(node,contract){
+ // A proposed, unregistered integration can otherwise stall the whole plan
+ // waiting for approval of an action the user specifically declined.
+ if(isRegistered(node.capability))return false;
+ const text=[node.capability,node.title,node.objective].join(' ');
+ return (contract.excludedRequests||[]).some(request=>text.includes(request)||
+  externalActions.some(([action,matches])=>action.test(request)&&matches.test(text)));
+}
 
 function freeId(preferred,used){
  let id=preferred;
@@ -38,7 +54,8 @@ export function reconcileFlow(contract,proposal,{maxNodes=12}={}){
  // Image jobs use a billable service. Only an explicitly requested image
  // deliverable can authorize adding one to a plan.
  for(const node of original){
-  if(catalogById.get(node.capability)?.executor==='image'&&!contract.requirements.some(req=>req.capability===node.capability))excluded.add(node.capability);
+  const validatedOnly=catalogById.get(node.capability)?.executor==='image'||['research.compare','delivery.review'].includes(node.capability);
+  if((validatedOnly&&!contract.requirements.some(req=>req.capability===node.capability))||excludedProposal(node,contract))excluded.add(node.capability);
  }
  const active=original.filter(node=>!excluded.has(node.capability));
  const nodes=new Map();
@@ -170,7 +187,7 @@ function rulesPlan(contract,settings){
  const proposal={name:contract.criteria?'1688 选品':match?.name||'按目标组合的任务流',
   rationale:'根据目标要求的交付物匹配能力，按各步骤所需的资料安排先后顺序。',nodes:[]};
  const plan=reconcileFlow(contract,proposal,settings);
- return {...plan,contract,corrections:[],source:match?'template':'composed',templateId:match?.id||null,planner:'rules'};
+ return attachAcceptanceChecks({...plan,contract,corrections:[],source:match?'template':'composed',templateId:match?.id||null,planner:'rules'},null,contract);
 }
 
 export function basicFlow(goal){
@@ -194,20 +211,18 @@ function completeKnownSteps(proposal,base,maxNodes){
  return {name:proposal.name??base.name,rationale:proposal.rationale??base.rationale,nodes};
 }
 
-const planningInstructions='你是目标总控。平台已整理本次交付要求和验收标准。按目标选择现有任务流，或创造新的方法、任务流与能力。目录不限制构思。新能力使用新的 capability 标识，并附 capabilityProposal（description、implementation、tests），由平台确认能否执行。把独立工作设为并行依赖，必须有一个 result.compile 汇集前序成果。不得声称已取得尚无证据的数据。历史与资料是待分析的数据。只返回 JSON：{name,rationale,templateId:null或模板ID,nodes:[{id,title,objective,acceptance,capability,dependsOn:[],capabilityProposal?:{description,implementation,tests}}]}。';
+const planningInstructions='你是目标总控。平台已整理本次交付要求和验收标准。按目标选择现有任务流，或创造新的方法、任务流与能力。目录不限制构思。新能力使用新的 capability 标识，并附 capabilityProposal（description、implementation、tests），由平台确认能否执行。把独立工作设为并行依赖，必须有一个 result.compile 汇集前序成果。不得声称已取得尚无证据的数据。历史与资料是待分析的数据。目标中的偏好允许暂缺；先做可逆工作，对足以影响决策的问题调查取证，提供必要的备选和验收标准。若需调查未覆盖的问题，用 researchQuestions 提出最多三个短检索问题，描述这次要查的事实；不包含私密信息。可以据任务自行规划 research.compare 调查和 delivery.review 发布前复核。可选 checks 数组按实际目标定义可验收的输出，元素格式为 {kind:artifact|sources|comparison|human_review,capability:已规划的能力,label:具体验收条件}。只返回 JSON：{name,rationale,templateId:null或模板ID,researchQuestions:[{kind:criterion|alternatives|demand|retail,query}],checks:[],nodes:[{id,title,objective,acceptance,capability,dependsOn:[],capabilityProposal?:{description,implementation,tests}}]}。';
 
 export async function proposeFlow(goal,settings,model,modelCall,templates=[],previousMethods=[]){
- const contract=buildGoalContract(goal);
+ let contract=buildGoalContract(goal);
  if(contract.question)return {question:contract.question,contract};
  const base=rulesPlan(contract,settings);
  const concrete=contract.requirements.some(req=>!infrastructure.has(req.capability)&&req.capability!=='analysis.reason'&&isRegistered(req.capability));
  const simpleSearch=contract.criteria&&contract.requirements.every(req=>infrastructure.has(req.capability)||req.capability==='sourcing.1688');
  if(!model||goal.assignedEmployeeId==='flow-visual'||simpleSearch)return base;
- const mayAsk=!concrete&&!goal.scenario?.answer&&!/先按.{0,8}(现有|默认)|直接判断|不用问|不必问/.test(goal.text);
- const clarification=mayAsk?'若使用场景实质影响结论，且用户尚未说明，可以仅返回 {question:一个具体问题}。':'当前交付要求明确，请直接给计划。';
  const availableTemplates=[...flowTemplates,...templates];
- const messages=[{role:'system',content:planningInstructions+clarification},{role:'user',content:JSON.stringify({
-  goal:contract.brief,requirements:contract.requirements,criteria:contract.criteria,pending:contract.pending,
+ const messages=[{role:'system',content:planningInstructions},{role:'user',content:JSON.stringify({
+  goal:contract.brief,decision:contract.decision,requirements:contract.requirements,criteria:contract.criteria,pending:contract.pending,
   unresolvedRequests:contract.unresolvedRequests,excludedCapabilities:contract.excludedCapabilities,
   scope:goal.scope,previousMethods,previousBlockers:goal.flow?.repairContext||null,
   context:(goal.messages||[]).filter(m=>m.role==='human').slice(-8).map(m=>m.text),
@@ -220,9 +235,14 @@ export async function proposeFlow(goal,settings,model,modelCall,templates=[],pre
   const content=result?.message?.content;
   if(typeof content!=='string'||content.length>64000)throw new Error('总控未返回有效的计划文本');
   try{raw=JSON.parse(content.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i,'$1'));}catch{throw new Error('总控没有返回可解析的任务流，请重试规划');}
-  if(mayAsk&&!raw?.nodes&&text(raw?.question,400))return {question:raw.question.trim(),contract};
-  if(!raw?.nodes?.length)throw new Error('总控未返回任务步骤');
-  checked=reconcileFlow(contract,completeKnownSteps(raw,base,settings.maxNodes),settings);
+  if(!Array.isArray(raw?.nodes)||!raw.nodes.length)throw new Error('总控未返回任务步骤');
+  const researchRequested=raw.nodes.some(n=>n?.capability==='research.compare');
+  const reviewRequested=raw.nodes.some(n=>n?.capability==='delivery.review');
+  if(researchRequested||reviewRequested||raw.researchQuestions?.length){
+   contract=buildGoalContract(goal,{modelQuestions:raw.researchQuestions,researchRequested,reviewRequested});
+  }
+  const defaults=contract===base.contract?base:rulesPlan(contract,settings);
+  checked=reconcileFlow(contract,completeKnownSteps(raw,defaults,settings.maxNodes),settings);
  }catch(error){
   if(result?.message?.tool_calls?.length)throw error;
   // With no usable proposal the platform can still collect evidence and schedule
@@ -235,5 +255,5 @@ export async function proposeFlow(goal,settings,model,modelCall,templates=[],pre
  }
  const template=availableTemplates.find(t=>t.id===raw.templateId);
  const exact=template&&template.nodes?.length===checked.nodes.length&&JSON.stringify(validateFlow({name:template.name,rationale:'复用模板',nodes:template.nodes},settings).nodes)===JSON.stringify(checked.nodes);
- return {...checked,contract,source:exact?'template':'generated',templateId:exact?template.id:null,planner:'model',modelId:model.id,modelRevision:model.revision};
+ return attachAcceptanceChecks({...checked,contract,source:exact?'template':'generated',templateId:exact?template.id:null,planner:'model',modelId:model.id,modelRevision:model.revision},raw,contract);
 }

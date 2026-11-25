@@ -1,6 +1,24 @@
 export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal}){
- const labels={awaiting_context:'等你补充使用场景',planning:'正在规划',planning_running:'模型规划中',planning_failed:'规划未完成',running:'执行中',pending:'等待前置任务',succeeded:'已完成',failed:'执行失败',needs_input:'需要处理',needs_capability:'新能力待验证',waiting_external:'等待图片结果',blocked:'存在阻塞',review:'待验收',completed:'已验收'};
+ const labels={awaiting_context:'等你补充任务信息',planning:'正在规划',planning_running:'模型规划中',planning_failed:'规划未完成',running:'执行中',pending:'等待前置任务',succeeded:'已完成',failed:'执行失败',needs_input:'需要处理',needs_capability:'新能力待验证',waiting_external:'等待图片结果',blocked:'存在阻塞',review:'待验收',completed:'已验收'};
  const label=s=>labels[s]||s;
+ function researchProgress(n){
+  const data=n?.investigation;
+  if(!data)return null;
+  if(n.capability==='research.compare'){
+   const questions=(data.nextQuestions||[]).map(q=>q.query).filter(Boolean);
+   if(data.phase==='followup')return {label:'正在补查比较依据',detail:questions.join('；')};
+   if(data.phase==='complete'){
+    const sources=new Set((data.observations||[]).map(o=>o.url||o.source).filter(Boolean));
+    return {label:'已完成调查',detail:sources.size?'本次调查取得 '+sources.size+' 个来源。':'本次调查尚未取得可引用的来源。'};
+   }
+  }
+  if(data.phase==='search'||data.phase==='assess')return {label:data.phase==='search'?'正在补查资料':'正在复核判断',detail:[data.query,data.why].filter(Boolean).join(' · ')};
+  return null;
+ }
+ function needsResearchSources(g,n){
+  return n?.capability==='analysis.reason'&&n.status==='needs_input'&&g.flow.nodes.some(step=>
+   step.capability==='research.compare'&&step.status==='succeeded'&&!step.investigation?.observations?.length);
+ }
  function nodeIssue(n){
   const missing=(n.missing||[]).filter(Boolean);
   if(missing.length)return missing.join('；');
@@ -18,7 +36,8 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   if(n.detailDeadline&&n.error?.includes('正在读取所选商品'))return '<small>工作台正在收集属性，完成后会继续。</small>';
   if(n.error?.includes('所选商品的参考图'))return '<small role="status">'+esc(pickBrowser.photoStatus(g,n)||'正在尝试获取白底图或商品图，取到后会继续生图。')+'</small><button class="secondary" data-flow-retry="'+id+'" data-goal="'+goal+'">立即重新取图</button><button class="text-button" data-product-upload="'+goal+'">使用我自己的底图</button>';
   if(n.imageJobId)return `<button class="primary" data-flow-retry="${id}" data-goal="${goal}" data-previous-image="${esc(n.imageJobId)}">从生图步骤继续</button><button class="text-button" data-view="ai-config/images">查看生图配置</button>`;
-  if(n.capability==='analysis.reason'&&!g.flow.model){
+  if(needsResearchSources(g,n))return '<button class="primary" data-view="knowledge">补充比较资料</button>'+retry;
+  if(n.capability==='analysis.reason'&&!g.flow.model&&!g.flow.nodes.some(step=>step.capability==='research.compare'&&step.status==='succeeded')){
    if(state.flows?.modelReady)return retry;
    return '<button class="primary" data-view="flows">选择分析模型</button><small>选择后回到这里，可继续当前步骤。</small>';
   }
@@ -39,7 +58,7 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   if(g.paused){
    current=card('后续执行已暂停','恢复后会从当前进度继续。','<button class="primary" data-action="pause">恢复执行</button>');
   }else if(f.status==='awaiting_context'){
-   current=card('补充使用场景',f.question,'<button class="primary" data-tab="discussion">在讨论中回复</button>');
+   current=card('补充任务信息',f.question,'<button class="primary" data-tab="discussion" data-task-destination="reply">回复问题</button>');
   }else if(f.status==='planning_failed'){
    current=card('规划未完成',f.error,`<button class="primary" data-flow-retry data-goal="${esc(g.id)}">重试规划</button><button class="text-button" data-view="flows">查看总控设置</button>`);
   }else if(blocked.length){
@@ -57,16 +76,17 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
    current=g.stage==='review'?card('交付物待验收',`本轮共有 ${delivered} 份交付物，可逐项核对后确认。`,'<button class="primary" data-tab="review">查看并验收</button>'+files):card('任务已验收','',files);
   }else{
    const next=active.length?active:nodes.filter(n=>n.status==='pending'&&n.dependsOn.every(id=>nodes.some(parent=>parent.id===id&&parent.status==='succeeded')));
-   const title=!nodes.length?'正在规划执行步骤':active.length?'正在执行':'等待调度';
-   current=card(title,next.map(n=>n.title).join('、'),pause);
+   const researching=next.length===1&&researchProgress(next[0]);
+   const title=researching?.label||(!nodes.length?'正在规划执行步骤':active.length?'正在执行':'等待调度');
+   current=card(title,researching?.detail||next.map(n=>n.title).join('、'),pause);
   }
   const steps=nodes.map((n,i)=>{
    const waiting=n.dependsOn.map(id=>nodes.find(x=>x.id===id)).filter(x=>x&&x.status!=='succeeded');
-   const checking=['pending','running'].includes(n.status)&&n.investigation;
+   const research=researchProgress(n);
    const assignment=n.assignment;
    const owner=assignment?'<p>'+esc(assignment.employeeName)+' · '+esc(assignment.reason)+'</p>':'';
-   const stateLabel=checking?(n.investigation.phase==='search'?'正在补查资料':'正在复核判断'):n.status==='pending'&&!waiting.length?'等待调度':label(n.status);
-   return `<li class="flow-node" data-flow-node="${esc(n.id)}" data-status="${esc(n.status)}" tabindex="-1"><span class="step-mark" aria-hidden="true">${n.status==='succeeded'?'✓':i+1}</span><div class="step-body"><details ${disclosure(g.id+'/'+g.version+'/step/'+n.id)}><summary aria-label="${esc(n.title)} · ${esc(stateLabel)} · 执行详情"><strong>${esc(n.title)}</strong>${badge(stateLabel,active.includes(n))}</summary>${waiting.length?`<p>等待「${waiting.map(x=>esc(x.title)).join('、')}」完成</p>`:''}${owner}${checking?`<p>${esc(n.investigation.query)} · ${esc(n.investigation.why)}</p>`:''}<p>${esc(n.objective)} · ${esc(n.acceptance)}</p><small>${esc(state.flows?.capabilities.find(c=>c.id===n.capability)?.name||n.capability)} · 已执行 ${n.attempts||0} 次</small>${n.runId?`<button class="text-button" data-run="${esc(n.runId)}">查看本步运行记录</button>`:''}${n.capabilityProposal?`<p>${esc(n.capabilityProposal.description)}</p><pre>${esc(n.capabilityProposal.implementation)}</pre><p>验证要求：${esc(n.capabilityProposal.tests)}</p>`:''}</details></div></li>`;
+   const stateLabel=research&&['pending','running'].includes(n.status)?research.label:n.status==='pending'&&!waiting.length?'等待调度':label(n.status);
+   return `<li class="flow-node" data-flow-node="${esc(n.id)}" data-status="${esc(n.status)}" tabindex="-1"><span class="step-mark" aria-hidden="true">${n.status==='succeeded'?'✓':i+1}</span><div class="step-body"><details ${disclosure(g.id+'/'+g.version+'/step/'+n.id)}><summary aria-label="${esc(n.title)} · ${esc(stateLabel)} · 执行详情"><strong>${esc(n.title)}</strong>${badge(stateLabel,active.includes(n))}</summary>${waiting.length?`<p>等待「${waiting.map(x=>esc(x.title)).join('、')}」完成</p>`:''}${owner}${research?.detail?`<p>${esc(research.detail)}</p>`:''}<p>${esc(n.objective)} · ${esc(n.acceptance)}</p><small>${esc(state.flows?.capabilities.find(c=>c.id===n.capability)?.name||n.capability)} · 已执行 ${n.attempts||0} 次</small>${n.runId?`<button class="text-button" data-run="${esc(n.runId)}">查看本步运行记录</button>`:''}${n.capabilityProposal?`<p>${esc(n.capabilityProposal.description)}</p><pre>${esc(n.capabilityProposal.implementation)}</pre><p>验证要求：${esc(n.capabilityProposal.tests)}</p>`:''}</details></div></li>`;
   }).join('');
   return `<section class="flow-panel" aria-label="任务流执行"><header class="flow-overview"><h2>${esc(f.plan?.name||'任务执行')}</h2>${badge(status,true)}</header>
    ${current}
@@ -163,5 +183,5 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
  function facts(g){return `<div class="tab-scroll"><h3>目标上下文与资料</h3><p>优先读取已接入的知识和来源；补充资料是可选入口，不要求重复整理卖点或受众。</p>${knowledgeUI.goal(g)}${sourcesUI.goal(g)}<details><summary>补充结构化业务数据（高级）</summary><form id="flow-data-form" data-goal="${g.id}"><label>业务数据 JSON<textarea name="data" rows="8" spellcheck="false">${esc(JSON.stringify(g.skillData||{},null,2))}</textarea></label><p class="field-hint">用于已有账单、候选商品等结构化数据。保存后会新建计划版本。</p><p class="form-error" role="alert"></p><button class="secondary" type="submit">保存并重新规划</button></form></details></div>`;}
  document.addEventListener('submit',async e=>{if(!['flow-settings-form','flow-data-form'].includes(e.target.id))return;e.preventDefault();const f=e.target,b=e.submitter;b.disabled=true;try{const values=Object.fromEntries(new FormData(f));if(f.id==='flow-settings-form')await api('flows/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:state.flows.settings.revision,modelId:values.modelId,parallel:Number(values.parallel),maxNodes:Number(values.maxNodes),maxCalls:Number(values.maxCalls)})});else await act('inputs',{data:JSON.parse(values.data)},f.dataset.goal);await refresh();toast('已保存');}catch(error){f.querySelector('.form-error').textContent=error.message;}finally{b.disabled=false;}});
  document.addEventListener('click',async e=>{const start=e.target.closest('[data-product-demo]');if(start){start.disabled=true;try{const g=await api('goals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({executionMode:'flow',requestId:globalThis.crypto?.randomUUID?.()||'product-demo-'+Date.now(),text:'为一款银色台盆水龙头制作商品主图和详情图。概念设计：圆柱形主体、短弯出水嘴、单杆把手，白灰背景和少量蓝色点缀；主图突出商品，详情图片模块展示外观细节和台盆搭配。全渠道通用，明确标注概念图，不添加未经确认的材质、尺寸、性能、认证、售价或保修声明。'})});receive(g);openGoal(g.id);}catch(error){toast(error.message);}finally{start.disabled=false;}return;}const b=e.target.closest('[data-flow-replan],[data-flow-retry],[data-flow-save],[data-flow-template]');if(!b)return;b.disabled=true;try{if(b.dataset.flowTemplate){const t=state.flows.templates.find(t=>t.id===b.dataset.flowTemplate);openCreate('按“'+t.name+'”的方法，完成：');return;}const id=b.dataset.flowReplan||b.dataset.flowSave||b.dataset.goal;if(b.dataset.previousImage&&!window.confirm('将重新提交一次生图，可能产生用量。已有选品结果会保留。确认继续？'))return;if(b.dataset.flowSave){await api(`flows/goals/${id}/template`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:state.goals.find(g=>g.id===id).version})});await refresh();toast('已沉淀为可复用任务流');}else await act(b.dataset.flowReplan?'replan':'retry',b.dataset.flowRetry?{nodeId:b.dataset.flowRetry,previousImageJob:b.dataset.previousImage,confirmUnknown:!!b.dataset.previousImage}:{},id);}catch(error){toast(error.message);}finally{b.disabled=false;}});
- return {panel,page,discussion,remakeAction,context,facts,showcase,label,nodeIssue};
+ return {panel,page,discussion,remakeAction,context,facts,showcase,label,nodeIssue,researchProgress,needsResearchSources};
 }
