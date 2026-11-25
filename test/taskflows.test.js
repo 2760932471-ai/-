@@ -119,3 +119,49 @@ test('analysis can choose a missing fact, persist the investigation across resta
  const finished=get(p,g);assert.equal(finished.stage,'review');
  assert.match(finished.artifacts.at(-1).body,/每单按7元/);assert.match(finished.artifacts.at(-1).body,/补查问题：活动运费协议/);
 });
+
+test('a material choice of use case survives restart and affects the business recommendation',async t=>{
+ const offers=['101','102'].map((sku,i)=>({sku,title:'猫粮'+sku,price:i?18:10,repurchase:i?70:20,url:'https://detail.1688.com/offer/'+sku+'.html'}));
+ const options={offerSearch:async()=>offers,offerDetail:async()=>null};
+ let {p,dir}=await make(t,options);
+ const g=await create(p,'在1688找猫粮，推荐最有利润的品');
+ await p.pump();assert.equal(get(p,g).flow.status,'awaiting_context');
+ await p.pump();assert.equal(get(p,g).messages.filter(m=>m.text.includes('这次选猫粮是给谁')).length,1);
+ p=await createPlatform(dir,options);
+ await act(p,g,'message',{text:'给老客补货，优先考虑复购，售价30元，其他成本2元'});
+ for(let i=0;i<4;i++)await p.pump();
+ const goal=get(p,g),report=goal.artifacts.find(a=>a.title==='选品交付报告');
+ assert.equal(goal.stage,'review');assert.match(report.body,/我推荐「猫粮102」/);assert.match(report.body,/单件收益 ¥10.00/);assert.match(report.body,/采购方行为/);
+ assert.equal(goal.version,1);
+});
+
+test('a model can clarify a business decision once then plan with the answer',async()=>{
+ const goal={text:'评估是否开分店',messages:[],scope:{}},settings=flowDefaults();
+ const question=await proposeFlow(goal,settings,{id:'m'},async()=>({message:{content:JSON.stringify({question:'这次开分店优先验证客群还是回收投资？'})}}));
+ assert.match(question.question,/回收投资/);
+ const decided=await proposeFlow({...goal,scenario:{answer:'优先回收投资'}},settings,{id:'m'},async(m,chat)=>{
+  assert.match(JSON.parse(chat[1].content).goal,/优先回收投资/);return {message:{content:JSON.stringify(basicFlow(goal))}};
+ });
+ assert(decided.nodes.length>0);
+});
+
+test('discussion links unblock sourcing without an extension and only matching quotes count',async t=>{
+ const ids=[];
+ const {p}=await make(t,{offerSearch:async()=>[],offerDetail:async sku=>{
+  ids.push(sku);return {sku,quote:{title:sku==='333'?'门把手':'猫粮'+sku,price:12,url:'https://detail.1688.com/offer/'+sku+'.html'}};
+ }});
+ const g=await create(p,'在1688找猫粮');await p.pump();await p.pump();
+ assert.equal(get(p,g).flow.status,'blocked');
+ await act(p,g,'message',{text:['111','222','333'].map(i=>'https://detail.1688.com/offer/'+i+'.html').join('\n')});
+ for(let i=0;i<3;i++)await p.pump();
+ const pick=get(p,g).flow.nodes.find(n=>n.capability==='sourcing.1688');
+ assert.equal(pick.status,'succeeded');assert.deepEqual(pick.offers.map(o=>o.sku),['111','222']);assert.match(pick.offerSource,/讨论中提供/);assert(ids.includes('333'));
+});
+
+test('trial orders compare confirmed minimum quantities only in the same unit',async()=>{
+ const {sourcingIntent,decisionOrder}=await import('../public/sourcing.js');
+ const text='在1688找猫粮，新店小批量测款',criteria=sourcingIntent(text);
+ const rows=[{sku:'A',price:10,terms:'20袋起订',repurchase:20},{sku:'B',price:15,terms:'起订量：2袋',repurchase:20}];
+ assert.equal(decisionOrder(rows,criteria,text)[0].sku,'B');
+ assert.equal(decisionOrder([rows[0],{...rows[1],terms:'2箱起订'}],criteria,text)[0].sku,'A');
+});

@@ -1,5 +1,5 @@
 export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal}){
- const labels={planning:'正在规划',planning_running:'模型规划中',planning_failed:'规划未完成',running:'执行中',pending:'等待前置任务',succeeded:'已完成',failed:'执行失败',needs_input:'需要处理',needs_capability:'新能力待验证',waiting_external:'等待图片结果',blocked:'存在阻塞',review:'待验收',completed:'已验收'};
+ const labels={awaiting_context:'等你补充使用场景',planning:'正在规划',planning_running:'模型规划中',planning_failed:'规划未完成',running:'执行中',pending:'等待前置任务',succeeded:'已完成',failed:'执行失败',needs_input:'需要处理',needs_capability:'新能力待验证',waiting_external:'等待图片结果',blocked:'存在阻塞',review:'待验收',completed:'已验收'};
  const label=s=>labels[s]||s;
  function nodeIssue(n){
   const missing=(n.missing||[]).filter(Boolean);
@@ -24,7 +24,9 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   return (images?'<button class="primary" data-view="ai-config/images">打开连接配置</button>':'<button class="secondary" data-tab="facts">查看与补充资料</button>')+retry;
  }
  function panel(g){
-  const f=g.flow,nodes=f.nodes,done=nodes.filter(n=>n.status==='succeeded').length;
+  const f=g.flow;
+  if(f.status==='awaiting_context')return `<section class="flow-panel"><h2>确认使用场景</h2><p>${esc(f.question)}</p><button class="secondary" data-tab="discussion">在讨论里回复</button></section>`;
+  const nodes=f.nodes,done=nodes.filter(n=>n.status==='succeeded').length;
   const blocked=nodes.filter(n=>['failed','needs_input','needs_capability'].includes(n.status));
   const active=nodes.find(n=>['running','waiting_external'].includes(n.status));
   const status=g.paused?'已暂停':blocked.length?blocked.length+' 步待处理':label(f.status);

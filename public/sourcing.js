@@ -1,4 +1,7 @@
 import {offerPhoto as normalizeOfferPhoto,offerPhotos} from './offer-photos.js';
+export function businessBrief(goal){
+ return goal.scenario?.answer ? goal.text+'；使用场景：'+goal.scenario.answer : goal.text;
+}
 // Shared by goal creation and the task runner so that both search the same category.
 export function sourcingIntent(text){
  if(typeof text!=='string'||!/1688|阿里巴巴/.test(text)||!/选品|筛选|找|搜|挑|选购|推荐|比价|挑选|选一|选几/.test(text))return null;
@@ -14,6 +17,8 @@ export function sourcingIntent(text){
  const retail=money('预计售价|目标售价|零售价|售价');
  const expenses=money('单件其他成本|每件其他成本|其他成本');
  const basis={query:(parts[0]||'').slice(0,60),retail,expenses};
+ if(/(?:优先(?:考虑|看|比较)?|侧重|看重)(?:复购|回购)|(?:回购|复购)(?:率)?(?:优先|为主)/.test(text))basis.repeatFirst=true;
+ if(/小批量测款|小批量试卖|低起订(?:量)?优先|优先(?:低起订|小批量)/.test(text))basis.smallTrial=true;
  if(/月利润|月度收益|总利润|总收益|总贡献|一个月.*赚/.test(text))basis.periodGoal=true;
  const pack=text.match(/(?:每(?:单|袋|包)|折算(?:为|成)?|统一按)\s*(\d+(?:\.\d+)?)\s*(公斤|千克|kg|斤|克|g)/i);
  if(pack&&Number(pack[1])>0)basis.grams=weightInGrams(pack[1],pack[2]);
@@ -66,6 +71,9 @@ export function selectedOffer(rows,criteria,text){
 export function decisionOrder(rows,criteria,text){
  const ranked=rankedOffers(rows,criteria);
  const period=criteria.periodGoal&&ranked.length&&ranked.every(r=>r.periodMargin!==null);
+ if(criteria.repeatFirst&&ranked.some(r=>r.repurchase!==null))
+  return ranked.sort((a,b)=>(b.repurchase??-1)-(a.repurchase??-1));
+ if(criteria.smallTrial&&trialComparable(ranked))return ranked.sort((a,b)=>a.minimumOrder.count-b.minimumOrder.count);
  if(period)return ranked.sort((a,b)=>b.periodMargin-a.periodMargin);
  if(/利润|毛利|收益|盈利|赚/.test(text)&&ranked.some(r=>r.margin!==null))ranked.sort((a,b)=>(b.margin??-Infinity)-(a.margin??-Infinity));
  return ranked;
@@ -99,6 +107,9 @@ export function cleanOffers(rows){
  return out.slice(0,40);
 }
 
+function trialComparable(rows){
+ return rows.length>0&&rows.every(row=>row.minimumOrder&&row.minimumOrder.unit===rows[0].minimumOrder.unit);
+}
 export function rankedOffers(rows,criteria){
  // Among comparable listings a lower price and a higher observed repeat
  // purchase rate are preferable. Unknown rates form a separate price-only list.
@@ -112,7 +123,10 @@ export function rankedOffers(rows,criteria){
   const expenses=scenarioExpenses(criteria,retail);
   const margin=cost!==null&&retail>0&&expenses!=null?Math.round((retail-cost-expenses)*100)/100:null;
   const periodMargin=margin!==null&&r.salesBasis?Math.round(margin*r.salesBasis.units*100)/100:null;
-  return {...r,cost,retail,expenses,margin,periodMargin};
+  const terms=String(r.terms||'');
+  const lot=terms.match(/(?:起订量|起批量)\s*[:：]?\s*(\d+)\s*(件|个|套|箱|只|袋|包)/)||terms.match(/(\d+)\s*(件|个|套|箱|只|袋|包)\s*起(?:订|批)/);
+  const minimumOrder=lot&&Number.isSafeInteger(Number(lot[1]))&&Number(lot[1])>0?{count:Number(lot[1]),unit:lot[2]}:null;
+  return {...r,cost,retail,expenses,margin,periodMargin,minimumOrder};
  });
  for(const r of scored)r.shortlist=r.cost!==null&&r.repurchase!==null&&!scored.some(o=>o.cost!==null&&o.repurchase!==null&&o.cost<=r.cost&&o.repurchase>=r.repurchase&&(o.cost<r.cost||o.repurchase>r.repurchase));
  return scored.sort((a,b)=>Number(a.cost===null)-Number(b.cost===null)||Number(b.shortlist)-Number(a.shortlist)||(a.cost??a.price)-(b.cost??b.price)||(b.repurchase??-1)-(a.repurchase??-1));
@@ -121,9 +135,9 @@ export function rankedOffers(rows,criteria){
 // Derive the report from this version's saved offers and delivered files.
 export function sourcingReport(g){
  const pick=g.flow?.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='succeeded');
- const criteria=sourcingIntent(g.text);
+ const brief=businessBrief(g),criteria=sourcingIntent(brief);
  if(!pick?.offers?.length||!criteria)return null;
- const rows=decisionOrder(cleanOffers(pick.offers),criteria,g.text);
+ const rows=decisionOrder(cleanOffers(pick.offers),criteria,brief);
  if(!rows.length)return null;
  const imageSteps=g.flow.nodes.filter(n=>n.capability.startsWith('image.')&&n.status==='succeeded');
  const prep=imageSteps.find(n=>n.preparation?.candidate)?.preparation;
@@ -137,14 +151,20 @@ export function sourcingReport(g){
  const draft=copyStep&&g.artifacts.find(a=>a.version===g.version&&copyStep.artifactIds?.includes(a.id));
  const tagline=draft?.body.match(/^推荐文案：(.+)$/m)?.[1];
  const pitch=tagline|| (facts.length?facts.slice(0,3).join('；'):terms.length?'供应商标题提到'+terms.map(t=>'「'+t+'」').join('、')+'，建议核对实物后用于详情文案。':'当前报价只列出了商品名称；建议先展示外观，性能卖点待核实。');
- const profitGoal=/利润|毛利|收益|盈利|赚/.test(g.text);
+ const profitGoal=/利润|毛利|收益|盈利|赚/.test(brief);
  const comparable=rows.every(r=>(criteria.periodGoal?r.periodMargin:r.margin)!==null);
- const verdict=profitGoal&&!comparable?'初筛候选，优先核实':'推荐商品';
- const lines=['从 '+rows.length+' 款'+criteria.query+'里，'+(profitGoal&&!comparable?'建议优先核实':'我推荐')+'「'+selected.title+'」。','采购页展示价 ¥'+selected.price+'；'+(selected.repurchase===null?'页面未披露回购率。':'页面回购率 '+selected.repurchase+'%。')+(selected.margin===null?'销售规格、售价或成本尚未齐全，利润待核算。':(criteria.grams?'按每单 '+criteria.grams+' 克折算采购成本 ¥'+selected.cost+'，':'')+'按售价 ¥'+selected.retail+'、'+expenseDescription({...criteria,expenses:selected.expenses})+'，估算单件收益 ¥'+selected.margin.toFixed(2)+'。'),'卖点建议：'+pitch];
+ const provisional=criteria.repeatFirst?rows.some(r=>r.repurchase===null):criteria.smallTrial?!trialComparable(rows):profitGoal&&!comparable;
+ const verdict=provisional?'初筛候选，优先核实':'推荐商品';
+ const lines=['从 '+rows.length+' 款'+criteria.query+'里，'+(provisional?'建议优先核实':'我推荐')+'「'+selected.title+'」。','采购页展示价 ¥'+selected.price+'；'+(selected.repurchase===null?'页面未披露回购率。':'页面回购率 '+selected.repurchase+'%。')+(selected.margin===null?'销售规格、售价或成本尚未齐全，利润待核算。':(criteria.grams?'按每单 '+criteria.grams+' 克折算采购成本 ¥'+selected.cost+'，':'')+'按售价 ¥'+selected.retail+'、'+expenseDescription({...criteria,expenses:selected.expenses})+'，估算单件收益 ¥'+selected.margin.toFixed(2)+'。'),'卖点建议：'+pitch];
+ if(g.scenario?.answer)lines.push('本次使用场景：'+g.scenario.answer+'。');
  if(selected.salesBasis)lines.push('店铺口径：'+selected.salesBasis.period+'，实际销售 '+selected.salesBasis.units+' 件，成交均价 ¥'+selected.salesBasis.price+'。来源：'+selected.salesBasis.source+'。');
  const runner=rows.find(r=>r.sku!==selected.sku&&r.margin!==null);
  const unitGoal=!criteria.periodGoal&&profitGoal;
- if(criteria.periodGoal){
+ if(criteria.repeatFirst){
+  lines.push(selected.repurchase===null?'本次优先考虑复购，但供应商页面未提供可比较的回购率，建议先做小样测试。':'按你优先考虑复购的要求，先比较可见的供应商回购率。该指标反映 1688 采购方行为，店铺消费者的复购仍需用实际订单验证。');
+ }else if(criteria.smallTrial){
+  lines.push(trialComparable(rows)?'这次先小批量测款；同单位报价里，所选款起订量最低，为 '+selected.minimumOrder.count+' '+selected.minimumOrder.unit+'。下单前应核对首批采购额和运费。':'小批量测款需要可比较的起订量。现有报价缺少数量或单位不一致，建议先向供应商询最小试单量及样品运费。');
+ }else if(criteria.periodGoal){
   if(rows.every(r=>r.periodMargin!==null))lines.push('按同期间历史销量试算，首选款贡献 ¥'+selected.periodMargin.toFixed(2)+'。销量变化会影响排序。');
   else lines.push('期间总收益仍待核算：需要各款同期间销量与单件收益。目前只能给出初筛候选。');
  }else if(unitGoal&&runner&&selected.margin!==null){

@@ -1,4 +1,4 @@
-import {cleanOffers, expenseDescription, scenarioExpenses, rankedOffers, selectedOffer, sourcingIntent, sourcingReport} from '../../public/sourcing.js';
+import {businessBrief,cleanOffers, expenseDescription, scenarioExpenses, rankedOffers, selectedOffer, sourcingIntent, sourcingReport} from '../../public/sourcing.js';
 
 // Rebuild from the persisted checkpoint so older goals, retries and superseded
 // images use the same evidence as the runner. Never serialize model credentials.
@@ -14,11 +14,11 @@ export function taskMemory(goal, nodes = goal.flow?.nodes || []) {
  }));
  const memory = {version: goal.version, steps};
  const pick = nodes.find(n => n.capability === 'sourcing.1688' && n.status === 'succeeded');
- const basis = sourcingIntent(goal.text);
+ const basis = sourcingIntent(businessBrief(goal));
  if (!pick || !basis) return memory;
  const offers = cleanOffers(pick.offers);
  const deliveredSku=nodes.find(n=>n.capability.startsWith('image.')&&n.status==='succeeded'&&n.preparation?.candidate)?.preparation.candidate.sku;
- const best = deliveredSku ? rankedOffers(offers,basis).find(row=>row.sku===deliveredSku) : selectedOffer(offers, basis, goal.text);
+ const best = deliveredSku ? rankedOffers(offers,basis).find(row=>row.sku===deliveredSku) : selectedOffer(offers, basis, businessBrief(goal));
  if (!best) return memory;
  memory.selection = {
   count: offers.length, grams:basis.grams, category: basis.query, asOf: pick.finishedAt, method: pick.offerSource,
@@ -38,7 +38,7 @@ export function taskMemory(goal, nodes = goal.flow?.nodes || []) {
 // Reuse successful methods across comparable goals in this workspace, never
 // carry an old supplier quote or store-specific financial assumption into a new one.
 export function relatedMethods(goal, goals, capabilities = []) {
- const category = sourcingIntent(goal.text)?.query;
+ const category = sourcingIntent(businessBrief(goal))?.query;
  const comparable = capabilities.filter(c=>!['evidence.collect','result.compile','analysis.reason'].includes(c));
  if (!category && !comparable.length) return [];
  return goals.filter(other => other.id !== goal.id && other.mode === 'flow' &&

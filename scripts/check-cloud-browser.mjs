@@ -7,11 +7,11 @@ const simulated=process.argv.includes('--simulate-extension-api');
 const dir=await mkdtemp('/tmp/cloud-check-'),ext=dir+'/extension';
 let ctx,secondTarget,additionalSources;
 try{
- await cp('browser-connector',ext,{recursive:true});
+ await cp('browser-connector',ext,{recursive:true,dereference:true});
  const manifest=JSON.parse(await readFile(ext+'/manifest.json'));
  manifest.host_permissions=[...manifest.host_permissions,...manifest.optional_host_permissions,'http://127.0.0.1/*'];delete manifest.optional_host_permissions;
  await writeFile(ext+'/manifest.json',JSON.stringify(manifest));
- ctx=await chromium.launchPersistentContext(dir+'/profile',{executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox',...(simulated?[]:['--disable-extensions-except='+ext,'--load-extension='+ext])]});
+ ctx=await chromium.launchPersistentContext(dir+'/profile',{executablePath:'/usr/bin/chromium',headless:true,ignoreDefaultArgs:simulated?[]:['--disable-extensions'],args:['--no-sandbox',...(simulated?[]:['--disable-extensions-except='+ext,'--load-extension='+ext])]});
  const sw=simulated?null:ctx.serviceWorkers()[0]||await ctx.waitForEvent('serviceworker',{timeout:10000});
  const page=await ctx.newPage(),source=await ctx.newPage(),target=await ctx.newPage();
  await page.route('http://127.0.0.1/**',r=>r.fulfill({contentType:'text/html; charset=utf-8',path:'deliverables/ai-platform-preview.html'}));
@@ -66,7 +66,7 @@ try{
   await page.getByText('当前浏览器已连接',{exact:true}).waitFor();
  }
  assert.equal(await page.locator('[data-cloud-workspace] [data-new]').count(),0);
- assert(await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.1'}).isVisible());
+ assert(!await page.getByRole('link',{name:'下载 Chrome 扩展 v1.7.1'}).isVisible());
  await page.locator('.sidebar-create').click();assert.equal(await page.locator('#goal').inputValue(),'');await page.locator('#close-dialog').click();
  assert.equal(await page.locator('#cloud-source').count(),0);
  await page.getByText('读取这件商品',{exact:true}).click();

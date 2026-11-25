@@ -1,5 +1,5 @@
 import {offerPhoto,offerPhotos} from '../../public/offer-photos.js';
-import {decisionOrder,selectedOffer,offerFacts,sourcingReport,sourcingIntent,cleanOffers,rankedOffers} from '../../public/sourcing.js';
+import {businessBrief,decisionOrder,selectedOffer,offerFacts,sourcingReport,sourcingIntent,cleanOffers,rankedOffers} from '../../public/sourcing.js';
 import {searchPublicOffers,fetchOfferDetail} from './offer-search.js';
 import {analyzeDecision,withSalesEvidence} from './decision.js';
 import {taskMemory,relatedMethods,recalledReply} from './memory.js';
@@ -29,7 +29,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  }
  function sync(g){
   const f=g.flow;g.tasks=f.nodes.map(n=>({id:n.id,goalId:g.id,title:n.title,owner:'任务实例',dependsOn:n.dependsOn,status:n.status==='succeeded'?'completed':n.status==='running'||n.status==='waiting_external'?'active':['failed','needs_input','needs_capability'].includes(n.status)?'waiting':'pending'}));
-  if(f.status==='planning'||f.status==='planning_running'||f.status==='planning_failed'){g.stage='plan';g.runtime.status=f.status;return;}
+  if(f.status==='awaiting_context'||f.status==='planning'||f.status==='planning_running'||f.status==='planning_failed'){g.stage='plan';g.runtime.status=f.status;return;}
   const done=f.nodes.length&&f.nodes.every(n=>n.status==='succeeded');g.stage=done?'review':'draft';f.status=done?'review':f.nodes.some(n=>['running','waiting_external'].includes(n.status))?'running':f.nodes.some(n=>['failed','needs_input','needs_capability'].includes(n.status))?'blocked':'running';g.runtime={status:done?'completed':f.status==='blocked'?'needs_input':'running',completed:f.nodes.filter(n=>n.status==='succeeded').map(n=>n.id)};
  }
  function reset(g){
@@ -54,6 +54,9 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  }
  async function routeMessage(g,input){
   const text=typeof input.text==='string'?input.text.trim():'';if(!text||text.length>2000||input.intent&&input.intent!=='auto')return input;
+  if(g.flow.status==='awaiting_context')return {...input,intent:'scenario',routedVersion:g.version};
+  const blockedPick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='needs_input');
+  if(blockedPick&&/https:\/\/detail\.1688\.com\/offer\/\d{1,24}\.html/.test(text)&&!/[？?]/.test(text.replace(/https:\/\/\S+/g,'')))return {...input,intent:'offerLinks',routedVersion:g.version};
   let route=messageRoute(g,text);
   const model=currentModel();
   if(route==='discussion'&&recalledReply(g,text))return {...input,intent:'discussion',routedVersion:g.version};
@@ -105,7 +108,18 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const m={id:randomUUID(),role:'human',author:'你',text:input.text.trim(),intent:input.intent||'discuss',replyTo:input.replyTo||null,at:now()};g.messages.push(m);
    if(input.routedVersion&&input.routedVersion!==g.version)fail('目标刚刚更新，请重新发送这条消息');
    const target=imageTarget(g.flow.nodes,m.text);
-   if(m.intent==='image'&&!target&&g.flow.status.startsWith('planning')&&imageOutputs(g.text).length){
+   if(m.intent==='offerLinks'){
+    const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='needs_input');
+    if(!pick||g.stage==='completed')fail('选品任务状态已更新。');
+    const ids=[...m.text.matchAll(/https:\/\/detail\.1688\.com\/offer\/(\d{1,24})\.html/g)].map(match=>match[1]);
+    pick.submittedSkus=[...new Set(ids)].slice(0,4);
+    if(!pick.submittedSkus.length)fail('请提供 1688 商品详情链接。');
+    pick.status='pending';pick.error=null;pick.missing=[];sync(g);event(g,'已收到商品链接，会核对详情页中的商品编号、品类和报价。');
+   }else if(m.intent==='scenario'){
+    if(g.flow.status!=='awaiting_context')fail('使用场景已收到，请刷新讨论。');
+    g.scenario={question:g.flow.question,answer:m.text};g.flow.status='planning';delete g.flow.question;
+    event(g,'已收到。我会结合这次用途比较方案，并在交付时说明依据和仍需核实的条件。');sync(g);
+   }else if(m.intent==='image'&&!target&&g.flow.status.startsWith('planning')&&imageOutputs(g.text).length){
     (g.flow.earlyImageEdits??=[]).push(m.text);event(g,'已把修改要求加入本次制图。');
    }else if(target&&(m.intent==='image'||m.intent==='change'&&messageRoute(g,m.text)==='image')){
     if(g.stage==='completed')fail('已结束的目标请新建下一轮');
@@ -116,6 +130,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     const additive=/新增|增加|追加|同时|另外|也要|再加/.test(m.text);
     const updated=additive?g.text+'；'+m.text:m.text;
     if(updated.length>2000)fail('合并后的目标超过 2000 字，请缩短修改说明');
+    if(!additive)delete g.scenario;
     g.text=updated;reset(g);
     if(oldPick&&previousQuery&&sourcingIntent(updated)?.query===previousQuery)g.flow.pickCheckpoint={sourceAttempts:oldPick.sourceAttempts,offers:oldPick.offers,offerSource:oldPick.offerSource,downloadedPhoto:oldPick.downloadedPhoto,discovery:oldPick.discovery};
     event(g,'变更要求已记录，总控会结合最新讨论重新规划。旧版本结果保留，不自动重试旧外部请求。');}
@@ -227,6 +242,10 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   let proposed,error;try{if(settings().modelId&&!snapshot.flow.model&&!sourcingIntent(snapshot.text))throw new Error('总控模型未就绪，请测试连接或选择基础组合');proposed=await proposeFlow(snapshot,snapshot.flow.policy,snapshot.flow.model,modelCall,getData().flowTemplates||[],previousMethods);}catch(e){error=String(e.message).slice(0,800);}
   await transaction(d=>{const g=find(d,id);if(g.version!==snapshot.version)return;
    if(error){g.flow.status='planning_failed';g.flow.error=error;event(g,'任务流规划未完成：'+error);sync(g);return;}
+   if(proposed.question){
+    g.flow.question=proposed.question;g.flow.status='awaiting_context';
+    event(g,proposed.question+' 如果希望我先按现有信息判断，直接告诉我即可。');sync(g);return;
+   }
    g.flow.previousMethods=previousMethods;g.flow.plan=proposed;g.flow.nodes=proposed.nodes.map(n=>({...n,status:'pending',attempts:0,artifactIds:[]}));const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
    if(pick&&g.flow.pickCheckpoint)Object.assign(pick,g.flow.pickCheckpoint);
    for(const text of g.flow.earlyImageEdits||[]){
@@ -254,14 +273,30 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   const steps=g.flow.nodes.filter(step=>upstream.has(step.id));
   const files=new Set(steps.flatMap(step=>step.artifactIds));
   const observations=g.artifacts.filter(a=>a.version===g.version&&a.status!=='superseded'&&files.has(a.id));
+  const brief=businessBrief(g);
   const input={...inputs(g),observations,taskMemory:taskMemory(g,steps),question:n.objective,knowledgeRecall:g.flow.nodes.find(x=>x.recall)?.recall};
   if(n.capability==='sourcing.1688'){
-   const criteria=sourcingIntent(g.text);
+   const criteria=sourcingIntent(brief);
    if(!criteria?.query)return blocked('请在目标中说明想找的品类，例如水龙头或露营灯');
    if(n.discovery)assertResearch(d,n.discovery);
    let offers=n.offers,source=n.offerSource||'公开搜索页',reason='';
    const attempts=new Set(n.sourceAttempts||[]);
    const preferDetail=g.flow.previousMethods?.[0]?.method?.includes('搜索命中的');
+   async function collectDetails(ids,label){
+    const checked=await Promise.all([...ids].slice(0,4).map(async sku=>{
+     try{const detail=await offerDetail(sku);const quote=cleanOffers([detail?.quote])[0];
+      if(detail?.sku===sku&&quote?.sku===sku&&quote.title.includes(criteria.query))return mergeDetail(quote,detail);
+     }catch{}
+    }));
+    const verified=checked.filter(Boolean);
+    attempts.add(label+'回查 '+checked.length+' 个商品详情页，取得 '+verified.length+' 条本品类人民币报价');
+    if(verified.length){
+     const pageSource=label==='搜索线索'?'搜索命中的 1688 商品详情页':label+'的 1688 商品详情页';
+     source=offers?.length?source+'与'+pageSource:pageSource;
+     offers=cleanOffers([...(offers||[]),...verified]);
+    }
+   }
+   if(n.submittedSkus?.length)await collectDetails(n.submittedSkus,'讨论中提供');
    async function useDetailLeads(){
     let web=g.flow.nodes.find(step=>step.web)?.web;
     if(!web&&integrations.view().search.ready){
@@ -274,17 +309,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
      const match=link.url.match(/^https:\/\/detail\.1688\.com\/offer\/(\d{1,24})\.html(?:[?#].*)?$/);
      if(match&&!offers?.some(row=>row.sku===match[1]))ids.add(match[1]);
     }
-    const checked=await Promise.all(Array.from(ids).slice(0,4).map(async sku=>{
-     try{const detail=await offerDetail(sku);const quote=cleanOffers([detail?.quote])[0];
-      if(detail?.sku===sku&&quote?.sku===sku&&quote.title.includes(criteria.query))return mergeDetail(quote,detail);
-     }catch{}
-    }));
-    const verified=checked.filter(Boolean);
-    attempts.add('搜索线索回查 '+checked.length+' 个商品详情页，取得 '+verified.length+' 条本品类人民币报价');
-    if(verified.length){
-     source=offers?.length?source+'与搜索命中的商品详情页':'搜索命中的 1688 商品详情页';
-     offers=cleanOffers([...(offers||[]),...verified]);
-    }
+    await collectDetails(ids,'搜索线索');
    }
    if(preferDetail&&(offers?.length||0)<2)await useDetailLeads();
    if((offers?.length||0)<2){
@@ -308,8 +333,8 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(!offers||offers.length<2)return {...blocked([...sourceAttempts,quoteWait(offers?.length||0)].join('。')),offers:offers||[],offerSource:source,sourceAttempts,discovery};
    offers=withSalesEvidence(offers.map(({salesBasis,...row})=>row),g.skillData?.commerce,criteria);
    let decisionCheck='';
-   if(/利润|收益|盈利|赚/.test(g.text)){
-    const finalists=decisionOrder(offers,criteria,g.text).slice(0,2);
+   if(/利润|收益|盈利|赚/.test(brief)){
+    const finalists=decisionOrder(offers,criteria,brief).slice(0,2);
     const details=await Promise.all(finalists.map(async row=>{
      try{return await offerDetail(row.sku);}catch{return null;}
     }));
@@ -320,7 +345,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     });
     offers=offers.map(row=>updates.get(row.sku)||row);
     const matched=details.filter((d,i)=>d?.sku===finalists[i].sku&&cleanOffers([d.quote])[0]?.sku===d.sku).length;
-    const chosen=selectedOffer(offers,criteria,g.text);
+    const chosen=selectedOffer(offers,criteria,brief);
     decisionCheck='复查前两款的供应商详情页，取得 '+matched+' 条对应商品的结构化详情报价。'+(chosen.sku!==finalists[0].sku?'复核后首选由「'+finalists[0].title+'」调整为「'+chosen.title+'」。':'');
     if(!matched)decisionCheck+='本轮沿用已存报价，订货前需询价。';
     if(!chosen.salesBasis&&integrations.view().search.ready){
@@ -333,11 +358,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     }
    }
    if(g.flow.nodes.some(n=>n.capability.startsWith('copy.')||n.capability.startsWith('image.'))){
-    const selected=selectedOffer(offers,criteria,g.text);
+    const selected=selectedOffer(offers,criteria,brief);
     const detail=await enrich(selected);
     offers=offers.map(o=>o.sku===detail.sku?detail:o);
    }
-   const ranked=decisionOrder(offers,criteria,g.text);
+   const ranked=decisionOrder(offers,criteria,brief);
    const body=ranked.map((r,i)=>[(i+1)+'. '+r.title,'展示报价 ¥'+r.price,r.terms,criteria.grams&&r.cost!==null?'按每单 '+criteria.grams+' 克折合 ¥'+r.cost:'',r.quoteNotes?.length?'报价口径待核对：'+r.quoteNotes.join(' / '):'',r.repurchase!==null?'页面回购率 '+r.repurchase+'%':'回购率未披露',r.salesBasis?r.salesBasis.period+' 成交均价 ¥'+r.salesBasis.price+' · '+r.salesBasis.units+' 件 · '+r.salesBasis.source:'',r.margin!==null?'估算单件收益 ¥'+r.margin.toFixed(2):'',r.url].filter(Boolean).join(' · ')).join('\n');
    return {...output('1688 选品清单 · '+criteria.query,body+'\n按展示价和可见回购率初筛。阶梯报价、规格及起订条件需核对。'+(ranked[0].margin===null?'销售规格、售价或成本尚未齐全，利润待算。':'收益按各款适用售价和单件成本测算，历史均价来自同 SKU 账单。'),source),offers,offerSource:source,decisionCheck,sourceAttempts,discovery,detailChecked:true};
   }
@@ -354,14 +379,14 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   }
   if(n.capability==='evidence.collect'){
    const recall=await knowledge.search({...g.knowledge,query:g.text,sku:''});let web=null,notice='';
-   if(integrations.view().search.ready){try{web=await integrations.query({query:g.text.slice(0,500),site:/1688/.test(g.text)?'1688.com':''});}catch{notice='外部搜索失败，本次只保留可读取的本地来源。';}}
+   if(integrations.view().search.ready){try{web=await integrations.query({query:g.text.slice(0,500),site:/1688/.test(brief)?'1688.com':''});}catch{notice='外部搜索失败，本次只保留可读取的本地来源。';}}
    const discovery=collectResearch(getData(),g),body=[...recall.hits.map(h=>`[${h.id}] ${h.title} v${h.revision}\n${h.text}\n来源：${h.source}`),...(web?.results||[]).map((r,i)=>`[web-${i}] ${r.title}\n${r.snippet}\n${r.url}（未核验网页线索）`),...discovery.candidates.map(c=>`${c.name||c.sku}：${c.price} 元；${c.source}`)].join('\n\n');
    return {...output('证据收集记录',body||'当前没有匹配资料；后续任务必须明确缺口，不能虚构事实。'),recall,discovery,notice,web};
   }
   const pick=g.flow.nodes.find(x=>x.capability==='sourcing.1688'&&x.status==='succeeded');
-  const criteria=sourcingIntent(g.text);
-  const ranked=pick&&criteria?decisionOrder(cleanOffers(pick.offers),criteria,g.text):[];
-  const byProfit=ranked.length>0&&ranked[0].margin!==null&&/利润|毛利|收益|盈利|赚/.test(g.text);
+  const criteria=sourcingIntent(brief);
+  const ranked=pick&&criteria?decisionOrder(cleanOffers(pick.offers),criteria,brief):[];
+  const byProfit=ranked.length>0&&ranked[0].margin!==null&&/利润|毛利|收益|盈利|赚/.test(brief);
 
   if((n.capability.startsWith('copy.')||n.capability.startsWith('image.'))&&pick&&!pick.detailChecked&&ranked.length)ranked[0]=await enrich(ranked[0]);
   const rankedCandidates=ranked.map(r=>({sku:r.sku,name:r.title,price:r.price,source:r.url,facts:r.facts,photo:r.photo}));
@@ -372,7 +397,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    return analyzeDecision({goal:g,node:n,input:{...input,goalData:g.skillData},modelCall,knowledge,integrations});
   }
   if(n.capability.startsWith('copy.')&&ranked.length){
-   const prep=prepareContent(d,{...g,research:discovery},{rankedCandidates});
+   const prep=prepareContent(d,{...g,text:brief,research:discovery},{rankedCandidates});
    if(!n.detailDeadline&&n.capability==='copy.selling_points'&&prep.facts.every(f=>f.startsWith('商品品类：'))){
     return {...blocked('正在读取所选商品的 1688 详情属性。读取完毕后自动整理卖点。'),preparation:prep,detailDeadline:Date.now()+15000};
    }
@@ -381,11 +406,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   }
   if(n.capability.startsWith('image.')){
    const kind=n.capability.split('.')[1];if(!imageOutputs(g.text).includes(kind))return blocked('本目标未要求这类图片；请明确画面交付后再执行。');
-   const selectionReason=criteria?.periodGoal&&ranked.length&&ranked.every(r=>r.periodMargin!==null)?'按各 SKU 同期间历史销量与估算单件收益比较贡献。':byProfit?'按目标售价和其他单件成本估算，优先选取预计单件收益最高的候选。':'按 1688 展示报价和可见回购率优先选款。'+(ranked[0]?.margin===null?'售价或其他单件成本缺失，实际利润待核算。':'');
-   const prep=prepareContent(d,{...g,research:discovery},ranked.length?{rankedCandidates,selectionReason}:undefined);if(prep.missing.length)return blocked(prep.missing.join('；'));
-   if(/找|搜|选品/.test(g.text)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
+   const selectionReason=criteria?.repeatFirst?'按目标优先比较供应商页面可见回购率，店铺消费者复购待验证。':criteria?.smallTrial?'优先比较同单位的起订量；信息不齐时需询价确认试单条件。':criteria?.periodGoal&&ranked.length&&ranked.every(r=>r.periodMargin!==null)?'按各 SKU 同期间历史销量与估算单件收益比较贡献。':byProfit?'按目标售价和其他单件成本估算，优先选取预计单件收益最高的候选。':'按 1688 展示报价和可见回购率优先选款。'+(ranked[0]?.margin===null?'售价或其他单件成本缺失，实际利润待核算。':'');
+   const prep=prepareContent(d,{...g,text:brief,research:discovery},ranked.length?{rankedCandidates,selectionReason}:undefined);if(prep.missing.length)return blocked(prep.missing.join('；'));
+   if(/找|搜|选品/.test(brief)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
    const config=images.view().config;if(!config.enabled||!config.credentialConfigured)return {...blocked('图片服务未就绪，请在 AI基础能力配置连接图片模型。'),preparation:prep};
-   const listing=ranked.length&&/上架|淘宝|天猫/.test(g.text)&&!/概念图|概念稿/.test(g.text);
+   const listing=ranked.length&&/上架|淘宝|天猫/.test(brief)&&!/概念图|概念稿/.test(brief);
    if(pick&&!prep.referenceId&&(listing||n.requireReference||prep.offerPhoto)){
     const sku=prep.candidate?.sku;
     let saved=[pick.downloadedPhoto,n.preparation?.downloadedPhoto].find(file=>file&&file.sku===sku);
@@ -411,7 +436,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     }
     prep.offerPhoto=saved.url;prep.downloadedPhoto=saved;
    }
-   const j=await images.create({editNotes:n.imageEdits,requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+g.text].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
+   const j=await images.create({editNotes:n.imageEdits,requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+brief].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
    return {status:'waiting_external',summary:'图片请求已提交，等待真实图片结果',imageJobId:j.id,preparation:prep,artifacts:[]};
   }
   if(n.capability==='result.compile'){

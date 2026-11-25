@@ -46,10 +46,11 @@ export function createCloudBrowser({esc,render,currentWorkspace,post,refresh}){
   const receipts=fills();
   const sources=candidates('source'),targets=candidates('target');
   return `<section class="panel browser-connector" data-cloud-workspace="${esc(workspace)}"><div class="section-title"><div><h2>浏览器连接器</h2><p>连接当前 Chrome 窗口，识别已打开的搜索结果、商品详情和发布表单。</p></div><span class="badge">${connected?'当前浏览器已连接':installed?'扩展已安装':'等待连接'}</span></div>
-  <a class="secondary browser-download" href="/cloud-browser.zip" download="cloud-browser.zip">下载 Chrome 扩展 v1.7.1</a>
   <div class="section-title"><h3>当前窗口</h3><button class="text-button" data-cloud="tabs" ${pending?'disabled':''}>刷新连接状态</button></div>
   ${connected?`<p class="field-hint">${[tabs.filter(t=>t.role==='sourcing').length+' 个搜索页',sources.length+' 个商品页',targets.length+' 个发布表单'].join(' · ')}</p>${tabChoice('source',source,'选择要读取的商品','cloud-source')}${source?`<div class="action-buttons"><button class="secondary" data-cloud="read">读取这件商品</button><small>${esc(tabs.find(t=>String(t.id)===source)?.title||'')}</small></div>`:sources.length?'':'<p>打开商品详情页后，这里会显示可读取的商品。</p>'}`:'<p class="field-hint">连接后可直接读取已打开的商品。</p>'}
-  <details class="cloud-setup" ${!connected||setupExpanded?'open':''}><summary>安装、更新与连接</summary>
+  <details class="cloud-setup" ${!installed&&!connected||setupExpanded?'open':''}><summary>安装、更新与连接</summary>
+  <p>已安装的扩展可供后续目标复用。断开时，在 Chrome 工具栏选择「连接此工作台」。</p>
+  <a class="secondary browser-download" href="/cloud-browser.zip" download="cloud-browser.zip">下载 Chrome 扩展 v1.7.1</a>
   <p><strong>更新已有扩展</strong>　解压下载包，把里面的文件复制到上次加载的扩展文件夹，替换同名文件。在 Chrome 地址栏输入 <code>chrome://extensions</code>，找到「电商工作台 · 云电脑连接器」，点击卡片上的重新加载按钮（↻），核对版本为 1.7.1。</p>
   <p><strong>首次安装</strong>　在同一扩展管理页打开「开发者模式」，点击「加载已解压的扩展程序」，选择包含 <code>manifest.json</code> 的文件夹。</p>
   <p>安装或更新后，刷新此工作台页面，点 Chrome 工具栏中的连接器图标，选择「连接此工作台」。</p>${connected?'<button class="text-button" data-cloud="disconnect">断开工作空间连接</button>':''}</details>
