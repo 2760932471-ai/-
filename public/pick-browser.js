@@ -1,5 +1,5 @@
 import {offerPhoto,offerPhotos} from './offer-photos.js';
-import {sourcingIntent,sourcingURL,rankedOffers,selectedOffer} from './sourcing.js';
+import {sourcingIntent,sourcingURL,decisionOrder,selectedOffer} from './sourcing.js';
 import {readOfferCards} from './offer-cards.js';
 
 export function createPickBrowser({state,act,esc,render}){
@@ -77,9 +77,9 @@ export function createPickBrowser({state,act,esc,render}){
   const intent=sourcingIntent(g.text),n=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
   if(!intent?.query||!n)return '';
   if(n.status==='succeeded'){
-   const basis=estimates.get(storageKey(g))||intent,sorted=rankedOffers(n.offers||[],basis);
+   const basis=estimates.get(storageKey(g))||intent,sorted=decisionOrder(n.offers||[],basis,g.text);
    const prep=g.flow.nodes.find(step=>step.capability.startsWith('image.')&&step.preparation?.candidate)?.preparation;
-   return `<section class="pick-results"><h3>${esc(intent.query)} · ${sorted.length} 个候选</h3>${prep?`<p><strong>本次制图商品</strong> · ${esc(prep.productName)}<br>${esc(prep.selectionReason)}</p>`:''}<p>有回购率的商品，优先展示报价和回购率未被其他候选同时超越的款式；其余按报价升序。规格和起订量以详情页为准。</p><details><summary>按我的售价试算收益</summary><form novalidate data-pick-estimate="${esc(g.id)}"><div class="data-fields"><label>预计售价（元）<input name="retail" type="number" min="0.01" step="0.01" value="${basis.retail??''}"></label><label>每件其他成本（元）<input name="expenses" type="number" min="0" step="0.01" value="${basis.expenses??''}"></label></div><p>其他成本包括运费、平台费等。试算只更新当前页面。</p><button class="secondary">计算单件收益</button><span role="status"></span></form></details>${sorted.map(r=>`<article><div><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)} ↗</a><small>${esc(r.terms)} · ${r.repurchase===null?'回购率未披露':'回购率 '+r.repurchase+'%'}</small></div><div><strong>¥${esc(r.price)}</strong><small>${r.margin===null?'利润待算':'估算单件收益 ¥'+r.margin.toFixed(2)}</small></div></article>`).join('')}</section>`;
+   return `<section class="pick-results"><h3>${esc(intent.query)} · ${sorted.length} 个候选</h3>${prep?`<p><strong>本次制图商品</strong> · ${esc(prep.productName)}<br>${esc(prep.selectionReason)}</p>`:''}<p>按本目标的比较口径排列。报价规格与起订量可在商品详情页核对。</p><details><summary>按我的售价试算收益</summary><form novalidate data-pick-estimate="${esc(g.id)}"><div class="data-fields"><label>预计售价（元）<input name="retail" type="number" min="0.01" step="0.01" value="${basis.retail??''}"></label><label>每件其他成本（元）<input name="expenses" type="number" min="0" step="0.01" value="${basis.expenses??''}"></label></div><p>其他成本包括运费、平台费等。试算只更新当前页面。</p><button class="secondary">计算单件收益</button><span role="status"></span></form></details>${sorted.map(r=>`<article><div><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)} ↗</a><small>${esc(r.terms)} · ${r.repurchase===null?'回购率未披露':'回购率 '+r.repurchase+'%'}</small></div><div><strong>¥${esc(r.price)}</strong><small>${r.margin===null?'利润待算':'估算单件收益 ¥'+r.margin.toFixed(2)}</small></div></article>`).join('')}</section>`;
   }
   if(n.status!=='needs_input'||g.paused)return '';
   const key=storageKey(g);if(!jobs.has(key))jobs.set(key,{last:0});const entry=jobs.get(key);

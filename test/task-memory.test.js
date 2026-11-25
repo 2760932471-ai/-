@@ -82,3 +82,26 @@ test('per-jin and per-kilogram quotes use the explicit sale weight, and a missin
  const detail={'@type':'Product',url:url('101'),name:'猫粮',offers:{priceSpecification:{price:12,priceCurrency:'CNY',referenceQuantity:{value:1,unitCode:'KGM'}}}};
  assert.match(publicOfferDetail('<script type="application/ld+json">'+JSON.stringify(detail)+'</script>','101').quote.terms,/元\/1公斤/);
 });
+
+test('per-SKU sales evidence distinguishes unit margin from period contribution',async()=>{
+ const {withSalesEvidence}=await import('../src/taskflows/decision.js');
+ const {decisionOrder,sourcingIntent,sourcingReport}=await import('../public/sourcing.js');
+ const goal='在1688找猫粮，比较月利润，其他成本2元';
+ const basis=sourcingIntent(goal);
+ const ledger={period:'十月',source:'店铺已结算订单',csv:'sku,netSales,units\n123,100,2\n456,300,10'};
+ const offers=withSalesEvidence(cleanOffers([product('123',10),product('456',15)]),ledger,basis);
+ const ranked=decisionOrder(offers,basis,goal);
+ assert.equal(ranked[0].sku,'456');assert.equal(ranked[0].periodMargin,130);assert.equal(ranked[1].margin,38);
+ assert.match(sourcingReport({text:goal,flow:{nodes:[{capability:'sourcing.1688',status:'succeeded',offers}]},artifacts:[]}).text,/十月.*10 件/);
+ assert.equal(withSalesEvidence(offers.map(({salesBasis,...r})=>r),ledger,{...basis,grams:5000})[0].salesBasis,undefined);
+});
+
+test('investigating a competing supplier quote can change the selection before final delivery',async t=>{
+ const dir=await mkdtemp('/tmp/recheck-');t.after(()=>rm(dir,{recursive:true,force:true}));
+ const p=await createPlatform(dir,{offerSearch:async()=>[product('123',12),product('456',15)],offerDetail:async sku=>({sku,quote:product(sku,sku==='123'?18:15)})});
+ const g=await p.create({executionMode:'flow',requestId:randomUUID(),text:'在1688找高利润的猫粮，售价30元，其他成本2元'});
+ for(let i=0;i<3;i++)await p.pump();
+ const done=p.goals().find(x=>x.id===g.id);
+ assert.match(done.artifacts.at(-1).body,/首选由「猫粮 123」调整为「猫粮 456」/);
+ assert.equal(taskMemory(done).selection.selected.sku,'456');
+});

@@ -23,12 +23,12 @@ export function taskMemory(goal, nodes = goal.flow?.nodes || []) {
  memory.selection = {
   count: offers.length, grams:basis.grams, category: basis.query, asOf: pick.finishedAt, method: pick.offerSource,
   selected: {sku: best.sku, name: best.title, url: best.url, price: best.price, cost: best.cost, terms: best.terms, quoteNotes: best.quoteNotes},
-  retail: basis.retail, expenses: basis.expenses, fees: basis.fees, estimatedMargin: best.margin,
+  retail: best.retail, expenses: best.expenses, fees: basis.fees, estimatedMargin: best.margin,
   openQuestions: [
    ...offers.filter(row=>row.quoteNotes?.length).map(row=>row.title+' 报价或单位待核对：'+row.quoteNotes.join(' / ')),
    ...(best.cost===null&&!best.quoteNotes?.length?['销售规格与报价单位尚未对应']:[]),
-   ...(basis.retail === null ? ['待确认零售价'] : []),
-   ...(basis.expenses === null && !basis.fees ? ['待确认其他单件成本'] : []),
+   ...(best.retail === null ? ['待确认零售价'] : []),
+   ...(best.expenses === null && !basis.fees ? ['待确认其他单件成本'] : []),
    '展示报价对应的规格、计价单位和起订量需向供应商核对'
   ]
  };

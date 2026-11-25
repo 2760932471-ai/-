@@ -97,3 +97,25 @@ test('a chained task, final report and later discussion can recall evidence from
  assert.match(response.messages.at(-1).text,/纸袋包装记录/);
  assert.equal(response.version,1);
 });
+
+test('analysis can choose a missing fact, persist the investigation across restart and ground a final decision',async t=>{
+ const raw=basicFlow({text:'分析活动'});
+ const options={modelCall:async(model,messages)=>{
+  if(messages.length===1)return {message:{content:'连接正常'}};
+  const payload=JSON.parse(messages[1].content);
+  if(payload.templates)return {message:{content:JSON.stringify(raw)}};
+  if(!payload.followUp)return {message:{content:JSON.stringify({conclusion:'活动收益需要核对运费',query:'活动运费协议',why:'运费影响保本价'})}};
+  assert(payload.followUp.documents.some(d=>d.text.includes('每单7元')));
+  return {message:{content:JSON.stringify({conclusion:'根据运费协议，每单按7元运费重算。'})}};
+ }};
+ let {p,dir}=await make(t,options);
+ await connectModel(t,p);
+ await p.knowledge.saveDocument(null,{baseId:'kb-default',title:'活动运费协议',source:'运费表',sku:'',body:'活动运费协议规定运费每单7元。',enabled:true,confirmed:true,size:700,overlap:100});
+ const g=await create(p,'分析促销活动收益');
+ for(let i=0;i<3;i++)await p.pump();
+ assert.equal(get(p,g).flow.nodes.find(n=>n.capability==='analysis.reason').investigation.phase,'assess');
+ p=await createPlatform(dir,options);
+ for(let i=0;i<2;i++)await p.pump();
+ const finished=get(p,g);assert.equal(finished.stage,'review');
+ assert.match(finished.artifacts.at(-1).body,/每单按7元/);assert.match(finished.artifacts.at(-1).body,/补查问题：活动运费协议/);
+});
