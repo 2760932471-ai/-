@@ -1,6 +1,5 @@
 export function createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowledgeUI,sourcesUI,state,api,esc,badge,toast,refresh,render,openRun,navigate,legacyPage}){
  const $=s=>document.querySelector(s),post=(route,data)=>api(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});
- let configMenuOpen=false;
  let roleFilter='',statusFilter='',query='',editing=null,editingModel=null;
  const data=()=>state.workforce||{employees:[],roles:[],capabilities:[],skills:[],models:[]};
  const roleName=id=>data().roles.find(r=>r.id===id)?.name||id;
@@ -14,6 +13,106 @@ export function createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowled
   const connected=m.lastTest?.status==='succeeded'&&env.enabled&&env.sdkInstalled;
   return `<div class="bridge-check"><strong>${esc(env.host)}环境检查</strong><ul><li>官方 SDK · ${env.sdkInstalled?'已安装':'待安装'}</li><li>桥接开关 · ${env.enabled?'已启用':'待启用'}</li><li>账号调用 · ${connected?'上次测试成功':m.lastTest?.status==='failed'?'上次测试失败':'待测试'}</li></ul><details ${connected?'':'open'}><summary>连接当前服务端</summary><p>在运行工作台的同一个终端操作。Codespaces 请将 3000 端口设为 Private。</p><ol><li>安装项目依赖 <code>npm run setup:codex</code></li><li>检查登录 <code>npx --no-install codex login status</code>。需要登录时执行 <code>npx --no-install codex login --device-auth</code>，按终端提示完成授权。</li><li>停止旧服务，在 Bash 中执行 <code>ENABLE_CODEX_LOCAL=1 npm start</code>，刷新此页并测试连接。</li></ol></details></div>`;
  }
+ let directorySection='staff',employeeSearch='',employeeFilter='all';
+
+ function employeeMode(e){
+  if(e.mode==='flow')return '任务流岗位';
+  if(e.mode==='model')return '模型驱动';
+  return (e.skillIds||[]).some(id=>id.startsWith('external_'))?'外部能力编排':'本地代码';
+ }
+ function employeeSkills(e){
+  if(e.mode==='flow')return (e.skillIds||[]).map(id=>state.flows?.capabilities?.find(c=>c.id===id)||{id,name:id});
+  return (e.skillIds||[]).map(id=>data().skills.find(s=>s.id===id)||{id,name:id});
+ }
+ function employeeWork(e){
+  return state.goals.filter(g=>g.assignedEmployeeId===e.id||(g.members||[]).includes(e.id)||(g.tasks||[]).some(t=>t.owner===e.id)||(g.artifacts||[]).some(a=>a.agent===e.id));
+ }
+ function employeeOutputs(e,goals,runs){
+  return goals.flatMap(g=>(g.artifacts||[]).slice().reverse().filter(a=>(e.mode==='flow'&&g.assignedEmployeeId===e.id)||a.agent===e.id).map(a=>({g,a,at:runs.get(a.runId)||a.createdAt||g.createdAt||''}))).sort((x,y)=>y.at.localeCompare(x.at));
+ }
+ function employeeLink(e,tab='work'){
+  return '#employees/'+encodeURIComponent(e.id)+(tab==='work'?'':'/'+tab);
+ }
+ function employeeAssignment(e){
+  return '<button class="primary emp-assign" data-employee-goal="'+esc(e.id)+'" '+(e.readiness?.ready?'':'disabled')+'>交办任务</button>';
+ }
+ function employeeMark(e){
+  const paths={selection:'m4 8 8-4 8 4-8 4-8-4Zm0 0v8l8 4 8-4V8m-8 4v8',creative:'M3.5 5.5h17v13h-17z M5 16l4-4 4 3 3-4 4 5 M8 9h.1',profit:'M3 19h18 M5 15l4-4 4 2 6-8 M16 5h3v3',coordination:'M9 3h6v5H9z M3 16h6v5H3z M15 16h6v5h-6z M12 8v4H6v4 M12 12h6v4',default:'M4 5h16v15H4z M8 9h8 M8 13h6 M8 16h4'};
+  return '<span class="emp-mark '+(e.roleId==='creative'?'emp-violet':'')+'" aria-hidden="true"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="'+(paths[e.roleId]||paths.default)+'"/></svg></span>';
+ }
+ function matchesEmployee(mode,search){
+  return (employeeFilter==='all'||mode===employeeFilter)&&search.includes(employeeSearch.trim().toLowerCase());
+ }
+ function employeeSearchText(e){
+  return [e.name,e.instructions,employeeMode(e),...employeeSkills(e).map(s=>s.name)].join(' ').toLowerCase();
+ }
+ function employeeCard(e,runs){
+  const work=employeeWork(e),latest=employeeOutputs(e,work,runs)[0],search=employeeSearchText(e);
+  return '<article class="staff-card" data-staff-card '+(matchesEmployee(employeeMode(e),search)?'':'hidden')+' data-staff-mode="'+esc(employeeMode(e))+'" data-staff-search="'+esc(search)+'"><div class="emp-card-line">'+employeeMark(e)+'<span class="emp-method">'+esc(employeeMode(e))+'</span></div>'+
+   '<h2><a href="'+employeeLink(e)+'">'+esc(e.name)+'</a></h2><p class="emp-description">'+esc(e.instructions||employeeSkills(e).map(s=>s.name).join('、'))+'</p>'+
+   (latest?'<button class="emp-latest" data-preview="'+esc(latest.a.id)+'" data-parent="'+esc(latest.g.id)+'">最近交付 · '+esc(latest.a.title)+'</button>':'')+
+   (!e.readiness?.ready?'<p class="emp-muted">当前无法交办 · '+esc((e.readiness?.blockers||[]).join('、'))+'</p>':'')+
+   '<div class="emp-actions">'+employeeAssignment(e)+'<a href="'+employeeLink(e)+'">查看岗位 <span aria-hidden="true">→</span></a></div></article>';
+ }
+ function employeeDetails(e,runs){
+  const work=employeeWork(e),outputs=employeeOutputs(e,work,runs),tab=state.employeeTab||'work',skills=employeeSkills(e);
+  const nav=[['work','工作'],['deliveries','交付记录'],['settings','岗位设置']].map(([key,label])=>'<a href="'+employeeLink(e,key)+'" '+(key===tab?'aria-current="page"':'')+'>'+label+'</a>').join('');
+  let content;
+  if(tab==='work'){
+   content='<section class="emp-section"><h2>负责的任务</h2>'+(work.length?'<div class="emp-rows">'+work.map(g=>'<button data-open="'+esc(g.id)+'" data-open-tab="discussion"><span>'+esc(g.text)+'</span><span>查看任务 →</span></button>').join('')+'</div>':'<div class="emp-empty">还没有负责的任务。点「交办任务」开始第一项工作。</div>')+'</section>';
+   const pack=(data().contentPacks||[]).find(p=>p.employeeId===e.id&&e.mode==='skills'&&e.readiness?.ready&&e.skillIds?.length===1&&p.skillId===e.skillIds[0]);
+   if(pack)content+='<section class="emp-section"><h2>制作'+esc(pack.name)+'</h2><div class="emp-box"><p>'+esc(pack.output)+'</p><div class="emp-actions"><button class="secondary" data-content-start="'+esc(pack.id)+'">填写商品资料</button></div></div></section>';
+  }else if(tab==='deliveries'){
+   content='<section class="emp-section"><h2>'+ (e.mode==='flow'?'负责的任务交付':'岗位交付')+'</h2>'+(outputs.length?'<div class="emp-rows">'+outputs.map(({g,a})=>'<button data-preview="'+esc(a.id)+'" data-parent="'+esc(g.id)+'"><span><b>'+esc(a.title)+'</b><small>'+esc(g.text)+'</small></span><span>查看交付 →</span></button>').join('')+'</div>':'<div class="emp-empty">完成工作后，可在这里查看交付内容。</div>')+'</section>';
+  }else{
+   const model=data().models.find(m=>m.id===e.modelId);
+   const settings=e.mode==='flow'?'':'<div class="emp-actions"><button class="secondary" data-employee-edit="'+esc(e.id)+'">编辑岗位</button><button class="secondary" data-employee-test="'+esc(e.id)+'" '+(e.readiness?.ready?'':'disabled')+'>试运行</button><button class="text-button" data-employee-clone="'+esc(e.id)+'">复制员工</button></div>';
+   content='<section class="emp-section"><h2>执行方式</h2><div class="emp-box"><strong>'+esc(employeeMode(e))+'</strong><p>'+esc(e.mode==='flow'?'按照任务目标编排步骤，执行进展和阻塞原因在任务中展示。':e.mode==='model'?(model?.name||'待配置模型')+' · 最多 '+e.maxSteps+' 轮调用':e.readiness?.blockers?.join('、')||'按配置的顺序执行已装配的能力。')+'</p>'+settings+'</div></section>'+
+    '<section class="emp-section"><h2>岗位能力</h2><div class="emp-rows">'+(skills.length?skills.map(s=>'<div><span><b>'+esc(s.name||s.id)+'</b><small>'+esc(s.description||s.scope||'')+'</small></span>'+(e.mode==='flow'||!data().skills.some(item=>item.id===s.id)?'':'<button class="text-button" data-skill-test="'+esc(s.id)+'">测试能力</button>')+'</div>').join(''):'<p class="emp-muted">尚未装配能力。</p>')+'</div></section>';
+  }
+  return '<div class="staff-view"><a class="emp-back" href="#employees">← 数字员工</a><div class="emp-head"><div class="emp-detail-id">'+employeeMark(e)+'<div><h1>'+esc(e.name)+'</h1><p>'+esc(employeeMode(e))+'</p></div></div>'+employeeAssignment(e)+'</div><p class="emp-intro">'+esc(e.instructions)+'</p><nav class="emp-tabs" aria-label="岗位详情">'+nav+'</nav>'+content+'</div>';
+ }
+ function employeesPage(){
+  const d=data(),staff=[...(state.flows?.employees||[]),...d.employees];
+  const runs=new Map((state.runs||[]).map(r=>[r.id,r.finishedAt||r.createdAt]));
+  if(state.employeeId){
+   const e=staff.find(item=>item.id===state.employeeId);
+   return e?employeeDetails(e,runs):'<div class="staff-view"><h1>找不到这位员工</h1><p>当前工作空间中没有这项岗位。</p><a class="text-button" href="#employees">返回数字员工</a></div>';
+  }
+  const tabs=[['staff','员工目录'],['roles','岗位模板'],['recipes','业务工作包']].map(([key,label])=>'<button data-staff-section="'+key+'" aria-pressed="'+String(key===directorySection)+'">'+label+'</button>').join('');
+  let body;
+  if(directorySection==='roles'){
+   body='<div class="staff-grid">'+d.roles.map(r=>'<article class="staff-card"><h2>'+esc(r.name)+'</h2><p>'+esc(r.responsibility)+'</p><div class="emp-actions"><button class="secondary" data-role-new="'+esc(r.id)+'">从此岗位创建</button></div></article>').join('')+'</div>';
+  }else if(directorySection==='recipes'){
+   body='<div class="staff-grid">'+(d.recipes||[]).map(r=>'<article class="staff-card"><h2>'+esc(r.employeeName||r.name)+'</h2><p>'+esc(r.name)+'</p><p class="emp-muted">需要 '+esc(r.input)+'</p><p>交付 '+esc(r.output)+'</p><div class="emp-actions"><button class="secondary" data-recipe="'+esc(r.id)+'">'+(r.employeeId?'使用工作包':'添加并交办')+'</button></div></article>').join('')+'</div>';
+  }else{
+   const methods=[...new Set(staff.map(employeeMode))];
+   if(!methods.includes(employeeFilter))employeeFilter='all';
+   const anyMatch=staff.some(e=>matchesEmployee(employeeMode(e),employeeSearchText(e)));
+   body='<div class="emp-tools"><label>搜索员工<input type="search" id="employee-search" value="'+esc(employeeSearch)+'" placeholder="搜索员工或能力"></label><label>执行方式<select id="employee-filter"><option value="all">全部方式</option>'+methods.map(method=>'<option '+(method===employeeFilter?'selected':'')+'>'+esc(method)+'</option>').join('')+'</select></label></div><div class="staff-grid">'+staff.map(e=>employeeCard(e,runs)).join('')+'</div><p class="emp-empty" id="employee-empty" '+(anyMatch?'hidden':'')+'>没有匹配的员工，请调整搜索或筛选。</p>';
+  }
+  return '<div class="staff-view"><div class="emp-head"><div><h1>数字员工</h1><p>按专长交办任务，查看每位员工负责的工作和交付。</p></div><button class="primary" data-employee-new>＋ 创建员工</button></div><nav class="emp-tabs" aria-label="数字员工目录">'+tabs+'</nav>'+body+'</div>';
+ }
+ function filterEmployeeCards(){
+  const area=$('.staff-grid'),empty=$('#employee-empty');
+  if(!area||!empty)return;
+  let hits=0;
+  for(const card of area.querySelectorAll('[data-staff-card]')){
+   const visible=matchesEmployee(card.dataset.staffMode,card.dataset.staffSearch);
+   card.hidden=!visible;if(visible)hits++;
+  }
+  empty.hidden=hits>0;
+ }
+ document.addEventListener('input',event=>{
+  if(event.target.id==='employee-search'){employeeSearch=event.target.value;filterEmployeeCards();}
+ });
+ document.addEventListener('change',event=>{
+  if(event.target.id==='employee-filter'){employeeFilter=event.target.value;filterEmployeeCards();}
+ });
+ document.addEventListener('click',event=>{
+  const section=event.target.closest('[data-staff-section]')?.dataset.staffSection;
+  if(section){directorySection=section;render(true);filterEmployeeCards();}
+ });
  function applicationsPage(){return head('工作应用','选择要完成的工作，提供资料，交给数字员工处理。')+'<div class=applications-page>'+imagesUI.card()+contentUI.page()+businessUI.page()+'</div>';}
  function knowledgePage(){return knowledgeUI.page();}
  function capabilityPage(){const d=data(),tab=state.configTab||'models';let body='';
@@ -29,14 +128,25 @@ export function createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowled
  body=`<div class="catalog-filters"><label>搜索能力<input id="cap-search" type="search" placeholder="如：上架、利润、库存" value="${esc(query)}"></label><label>岗位<select id="cap-role"><option value="">全部岗位</option>${d.roles.map(r=>`<option value="${r.id}" ${r.id===roleFilter?'selected':''}>${esc(r.name)}</option>`).join('')}</select></label><label>实现状态<select id="cap-status"><option value="">全部状态</option>${Object.entries(statusName).map(([v,n])=>`<option value="${v}" ${v===statusFilter?'selected':''}>${n}</option>`).join('')}</select></label></div><p class="field-hint">匹配 ${entries.length} / ${d.capabilities.length} 项 · 对应 V2.4 §3.3，未去重</p><div class="catalog-list">${entries.map(c=>`<article class="catalog-row"><div><span class="eyebrow">${esc(c.id)} · ${esc(roleName(c.roleId))}</span><h3>${esc(c.name)}</h3><p>${esc(c.description)}</p></div><div>${badge(statusName[c.state],c.state==='implemented')}<p>${esc(c.scope)}</p>${c.skillIds.map(id=>`<button class="text-button" data-skill-test="${id}">测试相关 Skill →</button>`).join('')}</div></article>`).join('')||'<div class="note">没有匹配的能力，请调整筛选。</div>'}</div>`;
  }else if(tab==='skills')body=`<div class="note">本地代码与已配置的外部能力分开标注。外部能力需要测试并核验只读性后才能执行。与方案能力的完整实现范围不同，查看目录中的限制说明。</div><div class="employee-grid">${d.skills.map(s=>`<article class="panel"><div class="artifact-top"><h2>${esc(s.name)}</h2>${badge((s.type==='external'?'外部协议 · v':'代码 · v')+s.version,true)}</div><p>${esc(s.description)}</p><p class="field-hint">输入：${esc(s.requires.join(' / '))}</p><div class="action-buttons"><button class="secondary" data-skill-test="${s.id}">输入数据并测试</button></div></article>`).join('')}</div>`;
  else body=`<div class="section-title"><div><h2>模型连接</h2><p class="field-hint">支持兼容 API，以及在个人电脑使用 ChatGPT 套餐登录的 Codex。</p></div><button class="primary" data-model-new>＋ 添加模型连接</button></div><div class="note">API 模式需要服务器密钥；本机 Codex 模式使用你在电脑上登录的 ChatGPT 套餐内 Codex 配额，不是 API 余额。两种方式都需测试后才能装配。GitHub Pages 预览不能调用模型。</div>${d.models.length?`<div class="employee-grid">${d.models.map(m=>`<article class="panel"><div class="artifact-top"><h2>${esc(m.name)}</h2>${badge(m.lastTest?.status==='succeeded'?'上次测试成功':m.lastTest?.status==='failed'?'上次测试失败':'待测试',m.lastTest?.status==='succeeded')}</div><p>${esc(m.model||'Codex默认模型')}</p><p class="field-hint">${m.provider==='codex-local'?'本机 Codex · ChatGPT 套餐':esc(m.endpoint)}</p><p class="field-hint">配置 v${m.revision} · ${m.provider==='codex-local'?'本机桥接':'密钥'}${m.credentialConfigured?'已配置':'未配置'}</p>${bridgeCard(m)}<div class="action-buttons"><button class="secondary" data-model-edit="${m.id}">编辑连接</button><button class="primary" data-model-test="${m.id}">测试连接</button></div></article>`).join('')}</div>`:'<div class="empty-state"><h2>还没有模型连接</h2><p>先添加连接，再选择员工的“模型驱动”模式。</p></div>'}`;
- const groups=[
-  ['模型与工具',[['models','模型连接'],['images','图片生成'],['search','网络搜索'],['skills','Skill 配置'],['external','外部 Agent']]],
-  ['业务连接',[['market','跨平台连接器'],['stores','店铺连接'],['sources','供应商接入']]],
-  ['维护',[['catalog','建设进度'],['legacy','旧版适配器']]]
- ];
- const section=groups.flatMap(group=>group[1]).find(item=>item[0]===tab)?.[1]||'模型连接';
+ const sections=[['models','模型连接'],['images','图片生成'],['search','网络搜索'],['skills','Skill 配置'],['external','外部 Agent'],['market','跨平台连接器'],['stores','店铺连接'],['sources','供应商接入'],['catalog','建设进度'],['legacy','旧版适配器']];
+ const previous=$('.config-section-nav');
+ const sameTab=previous?.dataset.active===tab&&previous.dataset.positioned==='true';
+ const left=previous?.scrollLeft||0;
+ const focused=previous?.contains(document.activeElement);
+ requestAnimationFrame(()=>{
+  const nav=$('.config-section-nav');
+  if(!nav||nav.dataset.active!==tab)return;
+  nav.dataset.positioned='true';
+  const button=nav.querySelector('[aria-pressed=true]');
+  if(focused)button.focus({preventScroll:true});
+  if(sameTab){nav.scrollLeft=left;return;}
+  const bounds=nav.getBoundingClientRect(),item=button.getBoundingClientRect();
+  if(item.right>bounds.right)nav.scrollLeft+=item.right-bounds.right+8;
+  else if(item.left<bounds.left)nav.scrollLeft+=item.left-bounds.left-8;
+ });
  const progress=tab==='catalog'?`<div class="note">查看能力的实现进度，或前往 <button class="text-button" data-view="flows">任务流 →</button></div><div class="workforce-metrics">${metric('规划能力条目',d.capabilities.length)}${metric('限定能力已实现',d.capabilities.filter(c=>c.state==='implemented').length)}${metric('部分实现',d.capabilities.filter(c=>c.state==='partial').length)}${metric('仍在规划',d.capabilities.filter(c=>c.state==='planned').length)}</div>`:'';
- return head('AI基础能力配置','配置模型、执行工具与业务数据连接。')+`<div class="settings-layout"><aside class="settings-index"><button class="settings-switch" data-cap-menu aria-expanded="${configMenuOpen}" aria-controls="settings-links">配置项目 · ${section}<span aria-hidden="true">⌄</span></button><nav id="settings-links" class="${configMenuOpen?'expanded':''}" aria-label="AI基础能力配置分类">${groups.map(([title,items])=>`<section><h2>${title}</h2>${items.map(([id,name])=>`<button data-cap-tab="${id}" aria-pressed="${tab===id}">${name}</button>`).join('')}</section>`).join('')}</nav></aside><div class="settings-body">${progress}${body}</div></div>`;
+ return head('AI基础能力配置','配置模型、执行工具与业务数据连接。')+`<div class="config-sections"><nav class="config-section-nav" data-active="${esc(tab)}" aria-label="AI基础能力配置分类">${sections.map(([id,name])=>`<button type="button" data-cap-tab="${id}" aria-pressed="${tab===id}">${name}</button>`).join('')}</nav><div class="settings-body">${progress}${body}</div></div>`;
+
 
  }
  function memberOptions(kind,only){return data().employees.map(e=>`<label class="agent-option"><input type="checkbox" name="agents" value="${e.id}" ${e.readiness.ready?'':'disabled'} ${(only?e.id===only:kind==='analysis'?['profit','analysis','coordination'].includes(e.roleId):['employee-merchandise','employee-creative','employee-profit','employee-coordination'].includes(e.id))&&e.readiness.ready?'checked':''}><span>${esc(e.name)}<small>${esc(e.readiness.label)}${e.readiness.blockers.length?' · '+e.readiness.blockers.map(esc).join('；'):''}</small></span></label>`).join('');}
@@ -66,8 +176,7 @@ export function createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowled
  if(b.hasAttribute('data-employee-new')){await initialize();openEmployee(null);}
  if(b.dataset.roleNew){await initialize();openEmployee(null,b.dataset.roleNew);}
  if(b.dataset.employeeEdit||b.dataset.employeeClone){await initialize();openEmployee(data().employees.find(x=>x.id===(b.dataset.employeeEdit||b.dataset.employeeClone)),null,!!b.dataset.employeeClone);}
- if(b.hasAttribute('data-cap-menu')){configMenuOpen=!configMenuOpen;render(true);document.querySelector('[data-cap-menu]')?.focus();}
- if(b.dataset.capTab){configMenuOpen=false;navigate('ai-config/'+b.dataset.capTab);if(matchMedia('(max-width: 900px)').matches)document.querySelector('[data-cap-menu]')?.focus();}
+ if(b.dataset.capTab)navigate('ai-config/'+b.dataset.capTab);
  if(b.hasAttribute('data-model-new')||b.dataset.modelEdit){await initialize();openModel(data().models.find(m=>m.id===b.dataset.modelEdit));}
  if(b.dataset.skillTest){await initialize();skillId=b.dataset.skillTest;const s=data().skills.find(s=>s.id===skillId);$('#skill-title').textContent=s.name+' · 测试';$('#skill-input').value=JSON.stringify(s.sample,null,2);$('#skill-error').textContent='';$('#skill-dialog').showModal();}
  if(b.dataset.employeeTest||b.dataset.modelTest){b.disabled=true;try{const route=b.dataset.employeeTest?'employees/'+b.dataset.employeeTest:'models/'+b.dataset.modelTest;const r=await post(route+'/test');await refresh();await openRun(r.id);}finally{b.disabled=false;}}
@@ -97,5 +206,5 @@ export function createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowled
   }catch(err){$('#skill-data-error').textContent=err.message;}finally{b.disabled=false;}
  });
 
- return {applicationsPage,knowledgePage,capabilityPage,memberOptions,businessFacts};
+ return {employeesPage,filterEmployeeCards,applicationsPage,knowledgePage,capabilityPage,memberOptions,businessFacts};
 }

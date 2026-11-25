@@ -4,7 +4,7 @@ import {searchPublicOffers,fetchOfferDetail} from './offer-search.js';
 import {analyzeDecision,withSalesEvidence} from './decision.js';
 import {taskMemory,relatedMethods,recalledReply} from './memory.js';
 import {randomUUID} from 'node:crypto';
-import {flowDefaults,flowTemplates,flowCapabilities} from './catalog.js';
+import {flowDefaults,flowTemplates,flowCapabilities,flowEmployees} from './catalog.js';
 import {basicFlow,validateFlow,proposeFlow} from './planner.js';
 import {publicModel} from '../workforce/model.js';
 import {executeSkill} from '../workforce/skills.js';
@@ -21,11 +21,17 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  const settings=()=>({...flowDefaults(),...getData().flowSettings});
  const find=(d,id)=>d.goals.find(g=>g.id===id&&g.mode==='flow')||fail('任务流目标不存在');
  const currentModel=()=>{const id=settings().modelId,m=getData().models.find(m=>m.id===id);return m&&publicModel(m).credentialConfigured&&m.lastTest?.status==='succeeded'&&m.lastTest.revision===m.revision?m:null;};
- const view=()=>({settings:settings(),modelReady:!!currentModel(),templates:[...flowTemplates,...(getData().flowTemplates||[])],capabilities:flowCapabilities,limits:{codeExecution:'新能力设计可保存；任意生成代码的隔离执行器尚未接通',externalWrites:'任务流当前不直接写入店铺；请使用已授权的店铺操作入口'}});
+ const view=()=>({settings:settings(),modelReady:!!currentModel(),employees:flowEmployees,templates:[...flowTemplates,...(getData().flowTemplates||[])],capabilities:flowCapabilities,limits:{codeExecution:'新能力设计可保存；任意生成代码的隔离执行器尚未接通',externalWrites:'任务流当前不直接写入店铺；请使用已授权的店铺操作入口'}});
  function create(d,input){
   if(typeof input.text!=='string'||!input.text.trim()||input.text.length>2000)throw new Error('请填写 1–2000 字目标');
   const id=randomUUID(),text=input.text.trim(),g={id,roomId:randomUUID(),text,kind:'analysis',mode:'flow',members:[],participants:[],createdAt:now(),updatedAt:now(),version:1,stage:'plan',paused:false,repliesPaused:false,scope:{store:'未关联店铺',sku:'目标范围',product:'',platform:'按目标选择资料来源'},criterion:'交付符合各任务验收标准的实际结果；说明来源、假设与限制',permission:'draft',owner:'你',coordinator:'目标总控',facts:{confirmed:false},proposal:null,messages:[{id:randomUUID(),role:'human',author:'你',text,at:now()}],queue:[],artifacts:[],audit:[],tasks:[],skillData:{},knowledge:{baseIds:d.knowledge.bases.filter(b=>b.enabled).map(b=>b.id),mode:'bm25',topK:8},runtime:{status:'idle',completed:[]},flow:{status:'planning',version:1,plan:null,nodes:[],calls:0,planningAttempts:0,history:[]}};
-  event(g,'目标已建立。总控将选择或创建任务流，直接调度执行实例；无需先选择数字员工。');return g;
+  if(input.assignedEmployeeId){
+   const assignee=flowEmployees.find(e=>e.id===input.assignedEmployeeId);
+   if(!assignee)throw new Error('该岗位无法接收流程任务');
+   g.assignedEmployeeId=assignee.id;g.assignedEmployeeName=assignee.name;
+   event(g,'任务已交给'+assignee.name+'。总控将组织资料、专业步骤与交付。');
+  }else event(g,'目标已建立。总控将选择或创建任务流，直接调度执行实例；无需先选择数字员工。');
+  return g;
  }
  function sync(g){
   const f=g.flow;g.tasks=f.nodes.map(n=>({id:n.id,goalId:g.id,title:n.title,owner:'任务实例',dependsOn:n.dependsOn,status:n.status==='succeeded'?'completed':n.status==='running'||n.status==='waiting_external'?'active':['failed','needs_input','needs_capability'].includes(n.status)?'waiting':'pending'}));
@@ -46,7 +52,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  function messageRoute(g,text){
   if(/(?:暂不|先不|不要|不用)(?:改图|修改|重做|重新生成)|^(?:为什么|怎么会|请解释)|(?:了吗|了没|到哪|怎么样)[？?]?$/.test(text))return 'discussion';
   if(/换(?:一款|个商品|品类)|重新选品|改选/.test(text))return 'change';
-  const image=imageTarget(g.flow.nodes,text)||g.flow.status?.startsWith('planning')&&imageOutputs(g.text).length;
+  const image=imageTarget(g.flow.nodes,text)||g.flow.status?.startsWith('planning')&&imageOutputs(businessBrief(g)).length;
   if(image&&/改|换成|换为|去掉|移除|删掉|别写|不要写|加上|加个|加一|添加|重新[做画]|重做|重画|重出|调亮|放大|缩小|不好看|太丑|有点丑/.test(text)&&
    (/图|画面|颜色|背景|底下|底部|字体|排版|构图|海报|色调|角标/.test(text)||image.status==='succeeded'&&/再改|重做|换成/.test(text)))return 'image';
   if(/^(?:请|帮我|麻烦)?(?:改为|改成|新增|增加|取消|重新规划|调整目标|目标改|换成)/.test(text))return 'change';
@@ -119,20 +125,20 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     if(g.flow.status!=='awaiting_context')fail('使用场景已收到，请刷新讨论。');
     g.scenario={question:g.flow.question,answer:m.text};g.flow.status='planning';delete g.flow.question;
     event(g,'已收到。我会结合这次用途比较方案，并在交付时说明依据和仍需核实的条件。');sync(g);
-   }else if(m.intent==='image'&&!target&&g.flow.status.startsWith('planning')&&imageOutputs(g.text).length){
+   }else if(m.intent==='image'&&!target&&g.flow.status.startsWith('planning')&&imageOutputs(businessBrief(g)).length){
     (g.flow.earlyImageEdits??=[]).push(m.text);event(g,'已把修改要求加入本次制图。');
    }else if(target&&(m.intent==='image'||m.intent==='change'&&messageRoute(g,m.text)==='image')){
     if(g.stage==='completed')fail('已结束的目标请新建下一轮');
     (g.flow.imageEdits??=[]).push({nodeId:target.id,text:m.text});applyImageEdits(g);
     event(g,'已收到修改要求，将沿用当前商品和参考图，更新「'+target.title+'」。');
-   }else if(input.intent==='change'){if(g.stage==='completed')fail('已结束的目标请新建下一轮');const previousQuery=sourcingIntent(g.text)?.query;
+   }else if(input.intent==='change'){if(g.stage==='completed')fail('已结束的目标请新建下一轮');const previousQuery=sourcingIntent(businessBrief(g))?.query;
     const oldPick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.offers?.length);
     const additive=/新增|增加|追加|同时|另外|也要|再加/.test(m.text);
     const updated=additive?g.text+'；'+m.text:m.text;
     if(updated.length>2000)fail('合并后的目标超过 2000 字，请缩短修改说明');
     if(!additive)delete g.scenario;
     g.text=updated;reset(g);
-    if(oldPick&&previousQuery&&sourcingIntent(updated)?.query===previousQuery)g.flow.pickCheckpoint={sourceAttempts:oldPick.sourceAttempts,offers:oldPick.offers,offerSource:oldPick.offerSource,downloadedPhoto:oldPick.downloadedPhoto,discovery:oldPick.discovery};
+    if(oldPick&&previousQuery&&sourcingIntent(businessBrief(g))?.query===previousQuery)g.flow.pickCheckpoint={sourceAttempts:oldPick.sourceAttempts,offers:oldPick.offers,offerSource:oldPick.offerSource,downloadedPhoto:oldPick.downloadedPhoto,discovery:oldPick.discovery};
     event(g,'变更要求已记录，总控会结合最新讨论重新规划。旧版本结果保留，不自动重试旧外部请求。');}
    else{
     event(g,recalledReply(g,m.text)||input[discussionReply]||'已将这条消息记入目标上下文。');
@@ -174,7 +180,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const node=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
    if(!node||node.status!=='needs_input'||g.stage==='completed')fail('选品步骤状态已更新');
    if(g.flow.calls>=g.flow.policy.maxCalls)fail('已达到调用上限，请重新规划');
-   const query=sourcingIntent(g.text)?.query;
+   const query=sourcingIntent(businessBrief(g))?.query;
    if(!query||query!==input.query)fail('品类已经变化，请重新打开搜索页');
    const rows=cleanOffers(input.rows).map(({salesBasis,...row})=>row);
    if(!rows.length)throw new Error('未识别有效报价，请复制含名称、价格和 1688 详情链接的商品卡片');
@@ -239,7 +245,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  async function plan(id){
   const snapshot=await transaction(d=>{const g=find(d,id);if(g.paused||g.flow.status!=='planning')return null;g.flow.status='planning_running';g.flow.planningAttempts++;g.flow.policy=structuredClone(settings());g.flow.model=currentModel()?structuredClone(currentModel()):null;sync(g);return g;});if(!snapshot)return;
   const previousMethods=relatedMethods(snapshot,getData().goals,basicFlow(snapshot).nodes.map(n=>n.capability));
-  let proposed,error;try{if(settings().modelId&&!snapshot.flow.model&&!sourcingIntent(snapshot.text))throw new Error('总控模型未就绪，请测试连接或选择基础组合');proposed=await proposeFlow(snapshot,snapshot.flow.policy,snapshot.flow.model,modelCall,getData().flowTemplates||[],previousMethods);}catch(e){error=String(e.message).slice(0,800);}
+  let proposed,error;try{if(settings().modelId&&!snapshot.flow.model&&snapshot.assignedEmployeeId!=='flow-visual'&&!sourcingIntent(businessBrief(snapshot)))throw new Error('总控模型未就绪，请测试连接或选择基础组合');proposed=await proposeFlow(snapshot,snapshot.flow.policy,snapshot.flow.model,modelCall,getData().flowTemplates||[],previousMethods);}catch(e){error=String(e.message).slice(0,800);}
   await transaction(d=>{const g=find(d,id);if(g.version!==snapshot.version)return;
    if(error){g.flow.status='planning_failed';g.flow.error=error;event(g,'任务流规划未完成：'+error);sync(g);return;}
    if(proposed.question){
@@ -405,7 +411,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    return {...result,preparation:prep};
   }
   if(n.capability.startsWith('image.')){
-   const kind=n.capability.split('.')[1];if(!imageOutputs(g.text).includes(kind))return blocked('本目标未要求这类图片；请明确画面交付后再执行。');
+   const kind=n.capability.split('.')[1];if(!imageOutputs(businessBrief(g)).includes(kind))return blocked('本目标未要求这类图片；请明确画面交付后再执行。');
    const selectionReason=criteria?.repeatFirst?'按目标优先比较供应商页面可见回购率，店铺消费者复购待验证。':criteria?.smallTrial?'优先比较同单位的起订量；信息不齐时需询价确认试单条件。':criteria?.periodGoal&&ranked.length&&ranked.every(r=>r.periodMargin!==null)?'按各 SKU 同期间历史销量与估算单件收益比较贡献。':byProfit?'按目标售价和其他单件成本估算，优先选取预计单件收益最高的候选。':'按 1688 展示报价和可见回购率优先选款。'+(ranked[0]?.margin===null?'售价或其他单件成本缺失，实际利润待核算。':'');
    const prep=prepareContent(d,{...g,text:brief,research:discovery},ranked.length?{rankedCandidates,selectionReason}:undefined);if(prep.missing.length)return blocked(prep.missing.join('；'));
    if(/找|搜|选品/.test(brief)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
@@ -462,7 +468,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   // Resume only the legacy placeholder-SKU failure before an image job existed.
   return n.status==='needs_input'&&n.capability.startsWith('image.')&&!n.imageJobId&&
    g.scope?.sku==='目标范围'&&['尚未找到有来源的候选商品记录，不能虚构在售商品图片。','尚未识别具体商品，请说明品类或商品名称'].includes(n.error)&&
-   sourcingIntent(g.text)&&g.flow.nodes.some(p=>p.capability==='sourcing.1688'&&p.status==='succeeded'&&cleanOffers(p.offers).length>0);
+   sourcingIntent(businessBrief(g))&&g.flow.nodes.some(p=>p.capability==='sourcing.1688'&&p.status==='succeeded'&&cleanOffers(p.offers).length>0);
  }
  async function execute(id,nodeId){
   const snapshot=await transaction(d=>{const g=find(d,id),n=g.flow.nodes.find(n=>n.id===nodeId);if(g.paused||!n||!runnable(g,n)||n.dependsOn.some(id=>g.flow.nodes.find(n=>n.id===id)?.status!=='succeeded'))return null;

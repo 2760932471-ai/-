@@ -1,5 +1,5 @@
 import {createPickBrowser} from './pick-browser.js';
-import {sourcingReport,sourcingIntent} from './sourcing.js';
+import {businessBrief,sourcingReport,sourcingIntent} from './sourcing.js';
 import {createFlowsUI} from './flows.js';
 import {createImagesUI} from './images.js';
 import {initializeSelects} from './selects.js';
@@ -20,9 +20,9 @@ document.querySelectorAll('[data-icon]').forEach(e=>e.innerHTML=icon(e.dataset.i
 const stageNames={facts:'等待资料',plan:'待确认计划',draft:'待准备草案',approval:'待我审批',ready:'待提交',submitted:'待核验',observing:'观察中',review:'待验收',completed:'已结束'};
 const taskNames={completed:'已完成',pending:'待开始',active:'进行中',approval:'待审批',waiting:'等待资料',paused:'已暂停',observing:'观察中',confirmation:'待确认',acceptance:'待验收'};
 const artNames={draft:'草案',accepted:'已验收',verified:'已模拟核验',superseded:'已替代'};
-const viewNames={overview:'任务',tasks:'执行明细',knowledge:'知识库','ai-config':'AI基础能力配置',runs:'运行记录',flows:'任务流',artifacts:'交付物'};
-const tabNames={discussion:'讨论',tasks:'任务',artifacts:'交付物',review:'复盘',facts:'资料'};
-let state={flows:null,images:null,workspaces:[],integrations:null,knowledge:null,sources:null,workforce:null,goals:[],agents:[],runs:[],view:'overview',configTab:'models',goal:sessionStorage.getItem('selectedGoal'),tab:'discussion',filter:'all',details:false};
+const viewNames={overview:'任务',employees:'数字员工',tasks:'执行明细',knowledge:'知识库','ai-config':'AI基础能力配置',runs:'运行记录',flows:'任务流',artifacts:'交付物'};
+const tabNames={discussion:'讨论',tasks:'任务',artifacts:'交付物',review:'复盘',facts:'资料',details:'详情'};
+let state={flows:null,images:null,workspaces:[],integrations:null,knowledge:null,sources:null,workforce:null,goals:[],agents:[],runs:[],view:'overview',configTab:'models',goal:sessionStorage.getItem('selectedGoal'),tab:'discussion',filter:'all'};
 let fingerprint='',drafts={},targets={},intents={},positions={},sending=new Set(),busy=false,createStep=1,preview=null,sourceGoal=null,createPermission='draft',changeEpoch=0;
 sessionStorage.removeItem('platformToken');
 async function api(route, options) { const res=await fetch('/api/'+route,{...options,credentials:'same-origin',headers:{'X-Workspace-ID':sessionStorage.getItem('workspaceId')||'default',...options?.headers}});const data=await res.json();if(!res.ok)throw new Error(data.error||'请求失败');return data; }
@@ -50,8 +50,8 @@ function toast(text){$('#toast').textContent=text;$('#toast').classList.add('vis
 function heading(title,desc){return `<div class="page-heading"><div><h1>${title}</h1><p>${desc}</p></div><button class="primary" data-new>＋ 新建任务</button></div>`;}
 function empty(text,desc){return `<div class="empty-state"><h2>${text}</h2><p>${desc}</p><button class="primary" data-new>新建目标 ↗</button></div>`;}
 function scopeRow(label,value){return `<div class="scope-row"><span>${label}</span><strong>${esc(value)}</strong></div>`;}
-function context(g){if(g.mode==='flow')return flowsUI.context(g);const done=g.tasks.filter(t=>t.status==='completed').length;return `<aside class="goal-context"><button class="secondary details-toggle details-close" data-details>← 返回协作</button><section class="context-section"><div class="context-title"><h3>目标进展</h3>${badge(g.paused?'已暂停':stageNames[g.stage],true)}</div><progress class="progress-bar" value="${done}" max="${g.tasks.length}" aria-label="已完成任务">${done} / ${g.tasks.length}</progress><p>${done} / ${g.tasks.length} 项任务完成 · 计划 v${g.version}</p><p>当前进度代表任务步骤，不代表经营收益。</p></section><section class="context-section"><h3 class="context-heading">业务范围</h3>${scopeRow('店铺',g.scope.store)}${scopeRow('平台',g.scope.platform)}${scopeRow('SKU',g.scope.sku)}${scopeRow('执行边界',g.permission==='approval'?'发布前审批':'只准备草案')}<p>${esc(g.criterion)}</p></section><section class="context-section"><h3 class="context-heading">协作成员</h3><div class="member"><span class="avatar">你</span><div><strong>你</strong><small>目标负责人 · 审批与验收</small></div></div><div class="member"><span class="avatar">AI</span><div><strong>${esc(g.coordinator)}</strong><small>统一协调目标与任务</small></div></div>${discussionUI.people(g).map(id=>`<button class="member" data-mention="${id}"><span class="avatar">${esc(shortName(id).slice(0,1))}</span><div><strong>${esc(agentName(id))}</strong><small>${g.mode==='team'?esc(state.workforce?.employees.find(e=>e.id===id)?.readiness.label||'员工'):g.mode==='platform'?'代码 / HTTP 能力':'历史演示能力'}</small></div><span>@</span></button>`).join('')}</section><section class="context-section"><h3>运行控制</h3><p>暂停目标会阻止后续推进；已提交的动作不能撤回。群聊可继续。</p>${g.stage!=='completed'?`<button class="secondary" data-action="pause">${g.paused?'恢复目标推进':'暂停目标推进'}</button>`:'<p>目标已结束，历史成果已保留。</p>'}</section></aside>`;}
-let inboxFilter='all', historySearch='', newestFirst=true, historyReturn=null;
+function context(g){if(g.mode==='flow')return flowsUI.context(g);const done=g.tasks.filter(t=>t.status==='completed').length;return `<div class="tab-scroll task-detail-view"><section class="context-section"><div class="context-title"><h3>目标进展</h3>${badge(g.paused?'已暂停':stageNames[g.stage],true)}</div><progress class="progress-bar" value="${done}" max="${g.tasks.length||1}" aria-label="已完成任务">${done} / ${g.tasks.length}</progress><p>${done} / ${g.tasks.length} 项任务完成 · 计划 v${g.version}</p><p>当前进度代表任务步骤，不代表经营收益。</p></section><section class="context-section"><h3 class="context-heading">业务范围</h3>${scopeRow('店铺',g.scope.store)}${scopeRow('平台',g.scope.platform)}${scopeRow('SKU',g.scope.sku)}${scopeRow('执行边界',g.permission==='approval'?'发布前审批':'只准备草案')}<p>${esc(g.criterion)}</p></section><section class="context-section"><h3 class="context-heading">协作成员</h3><div class="member"><span class="avatar">你</span><div><strong>你</strong><small>目标负责人 · 审批与验收</small></div></div><div class="member"><span class="avatar">AI</span><div><strong>${esc(g.coordinator)}</strong><small>统一协调目标与任务</small></div></div>${discussionUI.people(g).map(id=>`<button class="member" data-mention="${id}"><span class="avatar">${esc(shortName(id).slice(0,1))}</span><div><strong>${esc(agentName(id))}</strong><small>${g.mode==='team'?esc(state.workforce?.employees.find(e=>e.id===id)?.readiness.label||'员工'):g.mode==='platform'?'代码 / HTTP 能力':'历史演示能力'}</small></div><span>@</span></button>`).join('')}</section><section class="context-section"><h3>运行控制</h3><p>暂停目标会阻止后续推进；已提交的动作不能撤回。群聊可继续。</p>${g.stage!=='completed'?`<button class="secondary" data-action="pause">${g.paused?'恢复目标推进':'暂停目标推进'}</button>`:'<p>目标已结束，历史成果已保留。</p>'}</section></div>`;}
+let inboxFilter='all', historySearch='', historySort='updated', historyReturn=null;
 const blockedStep=n=>['needs_input','failed','needs_capability'].includes(n.status);
 function goalInboxState(g){
  const status=g.flow?.status||g.stage;
@@ -62,7 +62,7 @@ function goalInboxState(g){
  if(['blocked','planning_failed','approval','facts'].includes(status)||g.flow?.nodes?.some(blockedStep)||['needs_input','failed'].includes(g.runtime?.status)||(!g.flow&&g.tasks?.some(t=>['approval','waiting','confirmation'].includes(t.status))))return {label:'待处理',group:'attention',tab:'tasks',action:'去处理'};
  return {label:'进行中',group:'active',tab:'tasks',action:'查看进度'};
 }
-const inboxFilters=[['all','全部'],['attention','待处理'],['review','待验收'],['active','进行中'],['done','已完成'],['paused','已暂停']];
+const inboxFilters=[['all','全部任务'],['attention','待处理'],['review','待验收'],['active','进行中'],['done','已完成'],['paused','已暂停']];
 function historyDetail(g,status){
  if(status.group==='done'||status.group==='review')return g.artifacts?.filter(a=>a.status!=='superseded'&&a.version===g.version).at(-1)?.title||'';
  if(g.flow?.question)return g.flow.question;
@@ -80,15 +80,15 @@ function historyRow({g,status,detail}){
  const tasks=g.tasks||[];
  const done=tasks.filter(t=>t.status==='completed').length;
  const updated=g.updatedAt||g.createdAt;
- return `<li><button class="inbox-row" data-open="${esc(g.id)}" data-open-tab="${status.tab}">
-  <span class="history-name"><strong>${esc(g.text)}</strong>${detail?`<small title="${esc(detail)}">${esc(detail)}</small>`:''}</span>
+ const mark=g.mode==='team'?'users':g.kind==='listing'?'photo':g.kind==='analysis'?'chart':'layers';
+ return `<li><button class="inbox-row" data-open="${esc(g.id)}" data-open-tab="discussion">
+  <span class="history-title"><span class="history-icon ${mark}">${icon(mark)}</span><span class="history-name"><strong>${esc(g.text)}</strong>${detail?`<small title="${esc(detail)}">${esc(detail)}</small>`:''}</span></span>
   <span class="history-state ${status.group}">${status.label}</span>
   <span class="history-progress">${tasks.length?`<progress max="${tasks.length}" value="${done}" aria-label="步骤完成进度"></progress><small>${done} / ${tasks.length} 步</small>`:'待规划'}</span>
   <time class="history-time" datetime="${esc(updated)}">${updated?date(updated):'—'}</time>
-  <span class="history-open">${status.action} ${icon('arrow')}</span>
- </button></li>`;
+ </button><button class="history-open" data-open="${esc(g.id)}" data-open-tab="${status.tab}" aria-label="${esc(g.text)}：${status.action}">${status.action} ${icon('arrow')}</button></li>`;
 }
-function historyPanel(){
+function historyParts(){
  const rows=state.goals.map(g=>{
   const status=goalInboxState(g);
   return {g,status,detail:historyDetail(g,status)};
@@ -96,23 +96,59 @@ function historyPanel(){
  const filters=inboxFilters.filter(([key])=>key!=='paused'||inboxFilter===key||rows.some(r=>r.status.group===key));
  const query=historySearch.trim().toLocaleLowerCase();
  const matching=rows.filter(({g,detail})=>!query||[g.text,detail].some(v=>v.toLocaleLowerCase().includes(query)));
- const visible=matching.filter(r=>inboxFilter==='all'||r.status.group===inboxFilter).sort(({g:a},{g:b})=>(newestFirst?1:-1)*(Date.parse(b.updatedAt||b.createdAt)-Date.parse(a.updatedAt||a.createdAt)));
- return `<div class="history-controls"><nav class="history-filters" aria-label="按任务状态筛选">${filters.map(([key,label])=>{
+ const visible=matching.filter(r=>inboxFilter==='all'||r.status.group===inboxFilter).sort(({g:a},{g:b})=>{
+  if(historySort==='name')return a.text.localeCompare(b.text,'zh-CN');
+  if(historySort==='created')return Date.parse(b.createdAt)-Date.parse(a.createdAt);
+  const difference=Date.parse(b.updatedAt||b.createdAt)-Date.parse(a.updatedAt||a.createdAt);
+  return historySort==='oldest'?-difference:difference;
+ });
+ const filtersHTML=filters.map(([key,label])=>{
   const count=key==='all'?matching.length:matching.filter(r=>r.status.group===key).length;
   return `<button data-inbox-filter="${key}" aria-pressed="${inboxFilter===key}">${label} <span>${count}</span></button>`;
- }).join('')}</nav><button class="history-sort" data-history-sort aria-label="切换更新时间排序，当前${newestFirst?'从新到旧':'从旧到新'}">${newestFirst?'最近更新 ↓':'最早更新 ↑'}</button></div>
- ${visible.length?`<div class="history-columns" aria-hidden="true"><span>任务名称 / 当前事项</span><span>状态</span><span>执行进度</span><span>更新时间</span><span>操作</span></div><ul class="history-rows">${visible.map(historyRow).join('')}</ul>`:`<div class="history-empty">${icon('layers')}<h2>${query?'没有找到匹配的任务':rows.length?'没有符合此状态的任务':'还没有任务'}</h2>${query?'<button class="text-button" data-clear-search>清除搜索</button>':rows.length?'<button class="text-button" data-inbox-filter="all">查看全部任务</button>':'<p>新建任务后，可以在这里跟进执行、查看交付物。</p>'}</div>`}`;
+ }).join('');
+ const rowsHTML=visible.length?`<div class="history-columns" aria-hidden="true"><span>任务名称</span><span>状态</span><span>执行进度</span><span>更新时间</span><span>操作</span></div><ul class="history-rows">${visible.map(historyRow).join('')}</ul>`:`<div class="history-empty">${icon('layers')}<h2>${query?'没有找到匹配的任务':rows.length?'没有符合此状态的任务':'还没有任务'}</h2>${query?'<button class="text-button" data-clear-search>清除搜索</button>':rows.length?'<button class="text-button" data-inbox-filter="all">查看全部任务</button>':'<p>新建任务后，可以在这里跟进执行、查看交付物。</p>'}</div>`;
+ return {filtersHTML,rowsHTML};
 }
 function workspaceHome(){
- return `<section class="task-history" aria-labelledby="history-title"><header class="history-heading">
-  <h1 id="history-title">任务</h1><label class="history-search"><span aria-hidden="true">${icon('search')}</span><input type="search" id="history-search" aria-label="搜索任务或当前事项" placeholder="搜索任务或当前事项" value="${esc(historySearch)}" maxlength="200"></label><button class="primary" data-new>＋ 新建任务</button>
-  </header><div class="history-panel">${historyPanel()}</div></section>`;
+ const {filtersHTML,rowsHTML}=historyParts();
+ return `<section class="task-history" aria-labelledby="history-title">
+  <header class="history-heading"><div><h1 id="history-title">任务</h1><p>查看任务进展，继续讨论并验收交付物。</p></div><button class="primary" data-new>＋ 新建任务</button></header>
+  <nav class="history-filters" aria-label="按任务状态筛选">${filtersHTML}</nav>
+  <div class="history-controls">
+   <label class="history-search"><span aria-hidden="true">${icon('search')}</span><input type="search" id="history-search" aria-label="搜索任务或当前事项" placeholder="搜索任务或当前事项" value="${esc(historySearch)}" maxlength="200"></label>
+   <div class="history-sort-field"><select id="history-sort" aria-label="任务排序">${[['updated','最近更新'],['created','最近创建'],['name','名称排序'],['oldest','最早更新']].map(([value,label])=>`<option value="${value}" ${historySort===value?'selected':''}>${label}</option>`).join('')}</select></div>
+  </div>
+  <div class="history-panel">${rowsHTML}</div></section>`;
 }
 function workspace(){
  const g=current();
  if(state.home||!g)return workspaceHome();
- return `<div class="workbench ${state.details?'details-open':''}"><section class="goal-space"><header class="goal-header"><button class="back-to-goals" data-inbox-home>${icon('back')} 返回任务列表</button><div class="goal-header-top"><h2>${esc(g.text)}</h2>${badge(g.paused?'已暂停':g.mode==='flow'?flowsUI.label(g.flow.status):stageNames[g.stage],true)}<button class="secondary details-toggle" data-details>目标详情</button></div><p>${esc(g.scope.store)} · ${esc(g.scope.sku)} · 计划 v${g.version} · ${g.mode==='flow'?'任务流 · '+g.flow.nodes.length+' 项任务':g.mode==='team'?'执行 '+g.members.length+' 人 / 讨论 '+discussionUI.people(g).length+' 人':g.members.length+2+' 位成员'}</p></header><div class="goal-tabs" role="group" aria-label="目标工作区">${Object.entries(tabNames).map(([k,n])=>`<button class="${state.tab===k?'active':''}" data-tab="${k}" aria-pressed="${state.tab===k}">${n}${k==='artifacts'&&g.artifacts.length?' '+g.artifacts.length:''}</button>`).join('')}</div><div class="goal-content">${({discussion:discussion,tasks:goalTasks,artifacts:goalArtifacts,review:reviewView,facts:factsView}[state.tab])(g)}</div></section>${context(g)}</div>`;
+ const sections={discussion,tasks:goalTasks,artifacts:goalArtifacts,review:reviewView,facts:factsView,details:context};
+ const status=g.paused?'已暂停':g.mode==='flow'?flowsUI.label(g.flow.status):stageNames[g.stage];
+ const tabs=Object.entries(tabNames).map(([key,label])=>{
+  const selected=state.tab===key;
+  return `<button role="tab" id="task-tab-${key}" aria-selected="${selected}" tabindex="${selected?0:-1}" aria-controls="task-section" class="${selected?'active':''}" data-tab="${key}">${label}${key==='artifacts'&&g.artifacts.length?' '+g.artifacts.length:''}</button>`;
+ }).join('');
+ return `<div class="workbench"><section class="goal-space">
+  <header class="goal-header"><button class="back-to-goals" data-inbox-home>${icon('back')} 返回任务列表</button>
+   <div class="goal-header-top"><h2>${esc(g.text)}</h2>${badge(status,true)}</div>
+   ${g.assignedEmployeeId?`<button class="text-button goal-lead" data-view="employees/${esc(encodeURIComponent(g.assignedEmployeeId))}">负责人 · ${esc(g.assignedEmployeeName)} ↗</button>`:''}
+  </header>
+  <div class="goal-tabs" role="tablist" aria-label="任务内容">${tabs}</div>
+  <div class="goal-content" role="tabpanel" id="task-section" aria-labelledby="task-tab-${state.tab}" tabindex="0">${sections[state.tab](g)}</div>
+ </section></div>`;
 }
+document.addEventListener('keydown',e=>{
+ const tab=e.target.closest('.goal-tabs [role=tab]');
+ if(!tab)return;
+ const tabs=Array.from(tab.parentElement.children);
+ const index=tabs.indexOf(tab);
+ const next={ArrowRight:(index+1)%tabs.length,ArrowLeft:(index+tabs.length-1)%tabs.length,Home:0,End:tabs.length-1}[e.key];
+ if(next===undefined)return;
+ e.preventDefault();
+ tabs[next].click();
+});
+
 function messageView(m,g){const source=g.messages.find(x=>x.id===m.replyTo);
  const report=m.reportVersion===g.version&&g.mode==='flow'?sourcingReport(g):null;
  const currentReport=report&&m.text===report.text;
@@ -133,7 +169,7 @@ function collaborationPanel(g){
  ${g.stage==='plan'?`${missing.length?`<p class="field-hint">${g.research?'总控会先查找已有来源。若缺少目标条件，请在群里说明品类与预算。':'待补：'+esc([...new Set(missing.flatMap(x=>x.missing))].join('；'))}</p>`:''}<div class="action-buttons">${!c?actionButton('kickoff','检查分工与资料',false,disabled):`<button class="secondary" data-tab="facts">查看业务资料</button>${actionButton('kickoff','重新检查',true,disabled)}${g.planProposal?'<button class="primary" data-tab="tasks">确认分工草案</button>':actionButton('plan',missing.length?'按当前资料开始执行':'确认分工并开始',false,executeDisabled)}`}</div>`:g.stage==='review'?`<button class="primary" data-tab="artifacts">查看全部交付物</button>`:['failed','needs_input'].includes(g.runtime?.status)?`<p>${esc(g.runtime.error||'请检查业务资料')}</p><button class="secondary" data-tab="facts">${g.research?'查看已有资料':'补齐资料'}</button>${actionButton('retry','重试当前员工',true,disabled)}`:''}
  <p class="field-hint">前序成果会传给后续员工。当前按已装配能力执行；没有数据的步骤会停下并说明原因。</p></section></details>`;
 }
-function discussion(g){if(g.mode==='flow')return flowsUI.discussion(g,messageView,sourcingReport);const target=targets[g.id]||'coordinator',intent=intents[g.id]||'discuss';return `${discussionUI.toolbar(g)}${imagesUI.goalAction(g)}<div class="discussion-next"><span>${g.paused?'目标已暂停':stageNames[g.stage]} <strong>${esc(g.tasks.find(t=>t.status!=='completed')?.title||'全部任务已完成')}</strong></span><button class="text-button" data-tab="${g.stage==='facts'?'facts':g.stage==='completed'?'review':'tasks'}">${g.stage==='completed'?'查看复盘':'查看并处理'} →</button></div><div class="chat-area"><div class="chat-log" tabindex="0" aria-label="群聊消息记录">${g.messages.map(m=>messageView(m,g)).join('')}${collaborationPanel(g)}<div class="chat-queue" role="status">${g.repliesPaused?`AI 回复已暂停 · ${g.queue.length} 条待处理`:g.queue.length?`数字员工正在协调回复 · ${g.queue.length} 条待处理`:g.mode==='team'?'模型成员按问题选择Skill；规则成员仅重跑已有校验或计算。':'可以继续讨论；消息不会自动触发发布操作。'}</div></div><form id="chat-form" class="chat-composer" data-goal="${g.id}">${discussionUI.composer(g)}<label class="sr-only" for="chat-input">群聊消息</label><textarea id="chat-input" rows="1" required maxlength="2000" placeholder="说点什么… 输入 @ 可选员工或所有员工" aria-describedby="chat-input-help">${esc(drafts[g.id]||'')}</textarea><div class="composer-bottom"><div class="composer-shortcuts"><button type="button" class="text-button" data-chat-choose aria-label="在消息中插入提及" title="在消息中插入 @">@</button><span>输入 @ 提及员工或所有员工</span><span class="sr-only" id="chat-input-help">Enter 发送，Shift + Enter 换行</span></div><button class="primary" type="submit" ${sending.has(g.id)?'disabled':''}>${sending.has(g.id)?'发送中…':'发送 ↗'}</button></div><details class="chat-options"><summary>消息设置</summary><div class="composer-tools"><label for="chat-target">发送给</label><select id="chat-target"><option value="coordinator">数字员工协调</option>${discussionUI.people(g).map(id=>`<option value="${id}" ${target===id?'selected':''}>@${esc(shortName(id))}</option>`).join('')}</select><label class="sr-only" for="chat-intent">消息用途</label><select id="chat-intent">${[['discuss','讨论 / 提问'],['context','补充背景'],['change','请求变更']].map(([v,n])=>`<option value="${v}" ${intent===v?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="text-button reply-pause" data-action="pauseReplies">${g.repliesPaused?'恢复 AI 回复':'暂停 AI 回复'}</button></div></details><p id="chat-error" role="alert"></p></form></div>`;}
+function discussion(g){if(g.mode==='flow')return flowsUI.discussion(g,messageView,sourcingReport);const target=targets[g.id]||'coordinator',intent=intents[g.id]||'discuss';return `${discussionUI.toolbar(g)}${imagesUI.goalAction(g)}<div class="discussion-next"><span>${g.paused?'目标已暂停':stageNames[g.stage]} <strong>${esc(g.tasks.find(t=>t.status!=='completed')?.title||'全部任务已完成')}</strong></span><button class="text-button" data-tab="${g.stage==='facts'?'facts':g.stage==='completed'?'review':'tasks'}">${g.stage==='completed'?'查看复盘':'查看并处理'} →</button></div><div class="chat-area"><div class="chat-log" tabindex="0" aria-label="群聊消息记录">${g.messages.map(m=>messageView(m,g)).join('')}${collaborationPanel(g)}<div class="chat-queue" role="status">${g.repliesPaused?`AI 回复已暂停 · ${g.queue.length} 条待处理`:g.queue.length?`数字员工正在协调回复 · ${g.queue.length} 条待处理`:g.mode==='team'?'模型成员按问题选择Skill；规则成员仅重跑已有校验或计算。':'可以继续讨论；消息不会自动触发发布操作。'}</div></div><form id="chat-form" class="chat-composer" data-goal="${g.id}">${discussionUI.composer(g)}<label class="sr-only" for="chat-input">群聊消息</label><textarea id="chat-input" rows="1" required maxlength="2000" placeholder="说点什么… 输入 @ 可选员工或所有员工" aria-describedby="chat-input-help">${esc(drafts[g.id]||'')}</textarea><div class="composer-bottom"><div class="composer-shortcuts">${discussionUI.uploadButton(g)}<button type="button" class="text-button" data-chat-choose aria-label="在消息中插入提及" title="在消息中插入 @">@</button><span>输入 @ 提及员工或所有员工</span><span class="sr-only" id="chat-input-help">Enter 发送，Shift + Enter 换行</span></div><button class="primary" type="submit" ${sending.has(g.id)?'disabled':''}>${sending.has(g.id)?'发送中…':'发送 ↗'}</button></div><details class="chat-options"><summary>消息设置</summary><div class="composer-tools"><label for="chat-target">发送给</label><select id="chat-target"><option value="coordinator">数字员工协调</option>${discussionUI.people(g).map(id=>`<option value="${id}" ${target===id?'selected':''}>@${esc(shortName(id))}</option>`).join('')}</select><label class="sr-only" for="chat-intent">消息用途</label><select id="chat-intent">${[['discuss','讨论 / 提问'],['context','补充背景'],['change','请求变更']].map(([v,n])=>`<option value="${v}" ${intent===v?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="text-button reply-pause" data-action="pauseReplies">${g.repliesPaused?'恢复 AI 回复':'暂停 AI 回复'}</button></div></details><p id="chat-error" role="alert"></p></form></div>`;}
 function actionButton(kind,text,secondary=false,extra=''){return `<button class="${secondary?'secondary':'primary'}" data-action="${kind}" ${extra}>${text}</button>`;}
 function actionCard(g){if(g.paused)return `<section class="action-card"><h3>目标推进已暂停</h3><p>讨论和查看历史不受影响；恢复后从当前检查点继续。</p><div class="action-buttons">${actionButton('pause','恢复目标推进')}</div></section>`;
  if(g.production)return imagesUI.productionCard(g);
@@ -175,37 +211,56 @@ function globalTasks(){const rows=state.goals.map(g=>tasksRows(g,true)).join('')
 function globalArtifacts(){return heading('交付物','目标内与全局视图共享成果，版本和来源始终可追溯。')+`<div class="artifact-grid">${state.goals.flatMap(g=>g.artifacts.map(a=>artifactCard(a,g))).join('')||'<div class="panel"><h2>等待第一份成果</h2><p>从目标的任务计划生成草案后，这里会同步展示。</p></div>'}</div>`;}
 function legacyEmployees(){return heading('数字员工','业务岗位负责目标，专业 Agent 按需提供能力。')+`<div class="role-note"><div><h3>一位目标协调者，组织一支专业团队</h3><p>上新由商品运营数字员工负责；分析由经营分析数字员工负责。每个目标拥有独立的上下文和任务记录。</p></div><span>规划 → 执行 → 检查 → 继续</span></div><div class="agent-grid">${state.agents.map(a=>`<article class="panel agent-card"><div class="artifact-top"><span class="avatar">${esc(a.initials)}</span>${badge('专业能力 · 演示')}</div><h2>${esc(a.name)}</h2><p>${esc(a.role)}</p><p class="field-hint">按需参与目标；尚未接入真实模型与外部工具。</p><button class="text-button" data-agent="${a.id}">邀请到新目标 ↗</button></article>`).join('')}</div>`;}
 
+function renderSidebarRecent(){
+ const list=$('#rail-recent-list');
+ const recent=[...state.goals].sort((a,b)=>Date.parse(b.updatedAt||b.createdAt)-Date.parse(a.updatedAt||a.createdAt)).slice(0,3);
+ list.innerHTML=recent.map(g=>{
+  const selected=state.view==='overview'&&!state.home&&state.goal===g.id;
+  return `<a class="rail-recent-item" href="#overview/goal/${encodeURIComponent(g.id)}" title="${esc(g.text)}"${selected?' aria-current="page"':''}>${icon('clock')}<span>${esc(g.text)}</span></a>`;
+ }).join('');
+}
 function fitChatInput(){const el=$('#chat-input');if(el){el.style.height='44px';el.style.height=Math.min(120,Math.max(44,el.scrollHeight))+'px';}}
 document.addEventListener('input',e=>{if(e.target.id==='chat-input'){fitChatInput();e.target.removeAttribute('aria-invalid');const error=$('#chat-error');if(error)error.textContent='';}});
 function capture(){const form=$('#chat-form'),input=$('#chat-input'),log=$('.chat-log');if(!form)return null;const id=form.dataset.goal,s={id,focus:document.activeElement===input,start:input?.selectionStart,end:input?.selectionEnd,scroll:log?.scrollTop||0,bottom:!log||log.scrollHeight-log.scrollTop-log.clientHeight<70};positions[id]=s;return s;}
-function render(force=false){const next=JSON.stringify(state);if(!force&&next===fingerprint)return;if(!force&&(document.querySelector('#mention-menu')?.hidden===false||document.querySelector('#discussion-dialog')?.open))return;if(!force&&document.querySelector('.select-trigger[aria-expanded=true]'))return;if(!force&&!busy&&document.activeElement?.closest('[data-pick-estimate],[data-cloud-receipt],[data-voucher-form],#market-search,#market-results,#flow-settings-form,#flow-data-form,#image-config-form,#facts-form,#ledger-form,#skill-data-form,#reference-form,#source-search,#kb-search,#kb-goal-form,#business-data-form,#copy-data-form,#search-config-form,#search-query-form'))return;const search=document.activeElement?.id==='history-search'?document.activeElement:null;const focusedRow=document.activeElement?.closest('.inbox-row')?.dataset.open;capture();discussionUI.hide();fingerprint=next;$('#main').classList.toggle('conversation-page',state.view==='overview'&&!state.home&&!!current());$('#main').innerHTML=({overview:workspace,flows:flowsUI.page,tasks:globalTasks,artifacts:globalArtifacts,knowledge:workforceUI.knowledgePage,'ai-config':workforceUI.capabilityPage,runs:runsView}[state.view])();if(search&&$('#history-search')){const input=$('#history-search');input.focus({preventScroll:true});input.setSelectionRange(search.selectionStart,search.selectionEnd);}
+function render(force=false){const next=JSON.stringify(state);if(!force&&next===fingerprint)return;if(!force&&(document.querySelector('#mention-menu')?.hidden===false||document.querySelector('#discussion-dialog')?.open))return;if(!force&&document.querySelector('.select-trigger[aria-expanded=true]'))return;if(!force&&!busy&&document.activeElement?.closest('[data-pick-estimate],[data-cloud-receipt],[data-voucher-form],#market-search,#market-results,#flow-settings-form,#flow-data-form,#image-config-form,#facts-form,#ledger-form,#skill-data-form,#reference-form,#source-search,#kb-search,#kb-goal-form,#business-data-form,#copy-data-form,#search-config-form,#search-query-form,#employee-search'))return;const search=document.activeElement?.id==='history-search'?document.activeElement:null;const focusedRow=document.activeElement?.closest('.inbox-row')?.dataset.open;const restoreTab=document.activeElement?.matches('.goal-tabs [role=tab]');capture();discussionUI.hide();fingerprint=next;$('#main').classList.toggle('conversation-page',state.view==='overview'&&!state.home&&!!current());$('#main').innerHTML=({overview:workspace,employees:workforceUI.employeesPage,flows:flowsUI.page,tasks:globalTasks,artifacts:globalArtifacts,knowledge:workforceUI.knowledgePage,'ai-config':workforceUI.capabilityPage,runs:runsView}[state.view])();if(search&&$('#history-search')){const input=$('#history-search');input.focus({preventScroll:true});input.setSelectionRange(search.selectionStart,search.selectionEnd);}
  if($('.task-history')&&(historyReturn||focusedRow)){
   const id=historyReturn?.id||focusedRow;
   const row=Array.from(document.querySelectorAll('.inbox-row')).find(button=>button.dataset.open===id);
   (row||$('#history-search'))?.focus({preventScroll:true});
   if(historyReturn){window.scrollTo(0,historyReturn.scroll);historyReturn=null;}
  }
- $('#page-crumb').textContent=viewNames[state.view];$('#nav-count').textContent=state.goals.flatMap(g=>g.tasks).filter(t=>['waiting','approval','confirmation','acceptance'].includes(t.status)).length;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view.split('/')[0]===state.view);b.setAttribute('aria-current',b.dataset.view.split('/')[0]===state.view?'page':'false');});const more=$('[data-nav-more]');if(more){const active=['ai-config','tasks','runs','artifacts'].includes(state.view);more.classList.toggle('active',active);more.setAttribute('aria-current',active?'page':'false');}const saved=positions[state.goal]||{bottom:true},log=$('.chat-log'),input=$('#chat-input');fitChatInput();if(log)log.scrollTop=saved.bottom?log.scrollHeight:saved.scroll;if(input&&saved.focus){input.focus({preventScroll:true});input.setSelectionRange(saved.start,saved.end);}imagesUI.hydrate();}
+ renderSidebarRecent();
+ $('#page-crumb').textContent=viewNames[state.view];$('#nav-count').textContent=state.goals.flatMap(g=>g.tasks).filter(t=>['waiting','approval','confirmation','acceptance'].includes(t.status)).length;document.querySelectorAll('.sidebar .nav-item[data-view],#navigation-dialog .nav-item[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view.split('/')[0]===state.view);b.setAttribute('aria-current',b.dataset.view.split('/')[0]===state.view?'page':'false');});const saved=positions[state.goal]||{bottom:true},log=$('.chat-log'),input=$('#chat-input');fitChatInput();if(log)log.scrollTop=saved.bottom?log.scrollHeight:saved.scroll;if(restoreTab){$('.goal-tabs [aria-selected=true]')?.focus({preventScroll:true});}else if(input&&saved.focus){input.focus({preventScroll:true});input.setSelectionRange(saved.start,saved.end);}imagesUI.hydrate();}
 function applyRoute(route){
  const aliases={applications:'flows',capabilities:'flows',connections:'ai-config/models',agents:'ai-config/legacy',sources:'ai-config/sources'};
- route=route.split('/')[0]==='employees'?'flows':aliases[route]||route;const [view,tab]=route.split('/');state.view=viewNames[view]?view:'overview';
+ route=Object.hasOwn(aliases,route)?aliases[route]:route;
+ const [view,tab,section]=route.split('/');
+ state.view=Object.hasOwn(viewNames,view)?view:'overview';
+ state.employeeId=state.view==='employees'&&/^[a-zA-Z0-9_-]+$/.test(tab||'')?tab:null;
+ state.employeeTab=state.employeeId&&['deliveries','settings'].includes(section)?section:'work';
  state.configTab=['market','models','images','search','stores','skills','external','sources','catalog','legacy'].includes(tab)?tab:'models';
  state.home=state.view==='overview'&&tab!=='goal';
  if(view==='overview'&&tab==='goal'&&route.split('/')[2]){
   const [, ,id,section]=route.split('/');state.goal=id;state.tab=Object.hasOwn(tabNames,section)?section:'discussion';sessionStorage.setItem('selectedGoal',id);
  }
+ if(state.employeeId)return 'employees/'+state.employeeId+(state.employeeTab==='work'?'':'/'+state.employeeTab);
  const canonical=state.home?'overview/home':view==='overview'&&tab==='goal'&&state.goal?'overview/goal/'+state.goal+(state.tab==='discussion'?'':'/'+state.tab):state.view==='ai-config'?'ai-config/'+state.configTab:state.view;
  return canonical;
 }
 function go(route){const canonical=applyRoute(route);$('#navigation-dialog')?.close();location.hash=canonical;render(true);}
 
-function openGoal(id,tab='discussion'){capture();state.goal=id;state.tab=tab;state.details=false;sessionStorage.setItem('selectedGoal',id);go('overview/goal/'+id+(tab==='discussion'?'':'/'+tab));}
+function openGoal(id,tab='discussion'){capture();state.goal=id;state.tab=tab;sessionStorage.setItem('selectedGoal',id);go('overview/goal/'+id+(tab==='discussion'?'':'/'+tab));}
 function receive(g){changeEpoch++;const i=state.goals.findIndex(x=>x.id===g.id);if(i<0)state.goals.unshift(g);else state.goals[i]=g;render();}
 async function act(kind,extra={},id=state.goal){const result=await post(`goals/${id}/${kind==='offerDetail'&&extra.detail?.base64?'offer-photo':'actions'}`,{kind,expectedVersion:state.goals.find(g=>g.id===id)?.version,...extra});receive(result);return result;}
 async function refresh(){const epoch=changeEpoch;try{const health=await api('health');if(!canEnter(health))return;const [agents,goals,runs,workforce,sources,knowledge,workspaces,integrations,images,flows]=await Promise.all([api('agents'),api('goals'),api('runs'),api('workforce'),api('sources'),api('knowledge'),api('workspaces'),api('integrations'),api('images'),api('flows')]);if(busy||epoch!==changeEpoch)return;state.agents=agents;state.goals=goals;state.runs=runs;state.workforce=workforce;state.sources=sources;state.knowledge=knowledge;state.workspaces=workspaces;state.integrations=integrations;state.images=images;state.flows=flows;setupUI.update();await updateRunPreview();$('#connection-state').textContent='服务已连接';render();}catch(err){$('#connection-state').textContent='连接中断';if(!state.agents.length)$('#main').innerHTML='<div class="panel empty-state"><h2>暂时无法连接</h2><p>请确认服务已启动，页面将自动重试。</p></div>';}}
-function openCreate(text='',kind='analysis',only=null,source=null){sourceGoal=source;createMembersTouched=false;createKindManual=kind==='listing'||!!only;createRequestId=globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);createStep=1;createPermission='draft';$('#goal').value=text;$('#team-recommendation').textContent='';$('#goal-kind').value=kind;$('#create-store').value='未关联店铺';$('#create-store').readOnly=false;$('#create-connected-store').innerHTML='<option value="">未关联店铺 · 仅草案</option>'+(state.integrations?.stores||[]).filter(s=>s.enabled).map(s=>`<option value="${s.id}">${esc(s.name)} · ${s.platform==='taobao'?'淘宝 / 天猫':s.platform==='douyin'?'抖店':esc(s.platform)}</option>`).join('');$('#create-sku').value=kind==='listing'?'DEMO-JF-001':'全店汇总';$('#create-product').value=kind==='listing'?'角阀':'经营分析';$('#create-price').value='29.90';clearCreateError();$('#create-engine').value=only&&state.agents.some(a=>a.id===only)?'legacy':only?'team':'flow';$('#team-selection').value=only?'manual':'auto';syncTeamChoice();updateCreateMembers(kind,only);$('#goal-advanced').hidden=!only;$('#goal-advanced').open=!!only;showCreateStep();pickHint();$('#task-dialog').showModal();$('#goal').focus();}
+let assignedEmployee=null;
+function openCreate(text='',kind='analysis',only=null,source=null,assigned=null){assignedEmployee=assigned;sourceGoal=source;createMembersTouched=false;createKindManual=kind==='listing'||!!only;createRequestId=globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);createStep=1;createPermission='draft';$('#goal').value=text;$('#pick-example').hidden=!!assignedEmployee;$('#team-recommendation').textContent='';$('#goal-kind').value=kind;$('#create-store').value='未关联店铺';$('#create-store').readOnly=false;$('#create-connected-store').innerHTML='<option value="">未关联店铺 · 仅草案</option>'+(state.integrations?.stores||[]).filter(s=>s.enabled).map(s=>`<option value="${s.id}">${esc(s.name)} · ${s.platform==='taobao'?'淘宝 / 天猫':s.platform==='douyin'?'抖店':esc(s.platform)}</option>`).join('');$('#create-sku').value=kind==='listing'?'DEMO-JF-001':'全店汇总';$('#create-product').value=kind==='listing'?'角阀':'经营分析';$('#create-price').value='29.90';clearCreateError();$('#create-engine').value=only&&state.agents.some(a=>a.id===only)?'legacy':only?'team':'flow';$('#team-selection').value=only?'manual':'auto';syncTeamChoice();updateCreateMembers(kind,only);$('#goal-advanced').hidden=!only;$('#goal-advanced').open=!!only;showCreateStep();pickHint();$('#task-dialog').showModal();$('#goal').focus();}
 $('#pick-example').onclick=()=>{$('#create-engine').value='flow';$('#goal').value='在 1688 上找高性价比、高利润的露营灯';syncTeamChoice();clearCreateError();$('#goal').focus();$('#goal').setSelectionRange($('#goal').value.length-3,$('#goal').value.length);};
-function pickHint(){const hint=$('#pick-intent'),intent=$('#create-engine').value==='flow'&&sourcingIntent($('#goal').value);hint.hidden=!intent;if($('#create-engine').value==='flow')$('#submit-task').textContent=intent?.query?'打开 1688 并开始选品':'创建任务';hint.textContent=intent?(intent.query?'将打开 1688 搜索「'+intent.query+'」，并比较商品报价。':'加上品类即可开始，例如「在 1688 找露营灯」。'):'';}
+function creationPickIntent(text){
+ if(assignedEmployee&&assignedEmployee.mode!=='flow')return null;
+ return sourcingIntent(businessBrief({text,assignedEmployeeId:assignedEmployee?.id}));
+}
+function pickHint(){const hint=$('#pick-intent'),intent=$('#create-engine').value==='flow'&&creationPickIntent($('#goal').value);hint.hidden=!intent;if($('#create-engine').value==='flow')$('#submit-task').textContent=intent?.query?'打开 1688 并开始选品':'创建任务';hint.textContent=intent?(intent.query?'将打开 1688 搜索「'+intent.query+'」，并比较商品报价。':'加上品类即可开始，例如「在 1688 找露营灯」。'):'';}
 $('#goal').addEventListener('input',pickHint);
 function syncTeamChoice(){pickHint();const flow=$('#create-engine').value==='flow';$('label[for=team-selection]').hidden=flow;$('label[for=goal-kind]').hidden=flow;$('#goal-kind').hidden=flow;$('#team-selection').hidden=flow;const manual=$('#create-engine').value==='legacy'||$('#team-selection').value==='manual';$('#manual-team-options').hidden=flow||!manual;$('#auto-team-hint').hidden=flow||manual;$('#team-selection').disabled=$('#create-engine').value==='legacy';}
 $('#team-selection').onchange=syncTeamChoice;
@@ -213,7 +268,7 @@ $('#create-engine').addEventListener('change',syncTeamChoice);
 function showCreateStep(){const first=createStep===1;$('#create-step-one').hidden=!first;$('#create-step-two').hidden=first;$('#create-back').hidden=first;const flow=$('#create-engine').value==='flow';
  $('#new-step').hidden=flow;
  $('#new-step').textContent=flow?'':'第 '+createStep+' / 2 步';
- $('#new-title').textContent=first?'新建任务':'确认任务范围';
+ $('#new-title').textContent=assignedEmployee?'交办给'+assignedEmployee.name:first?'新建任务':'确认任务范围';
  if(first)$('#goal').after($('#form-error'));else $('#task-form .dialog-footer').before($('#form-error'));
  if(flow)pickHint();else $('#submit-task').textContent=first?'下一步':'创建任务';
  if(!first){const listing=$('#goal-kind').value==='listing';$('#scope-preview').innerHTML=`<h3>${esc($('#goal').value)}</h3>${scopeRow('负责成员',$('#create-engine').value==='team'?($('#team-selection').value==='auto'?'总控将按目标自动安排，无需手动选人':'保留你指定的成员'):listing?'商品运营数字员工':'经营分析数字员工')}${scopeRow('业务范围','由下方填写的店铺与 SKU / 分析范围确定')}${scopeRow('交付标准',listing?(createPermission==='draft'?'核验规格、准备上新草案并验收；不执行发布':'核验规格、准备草案；审批发布后观察7天'):'形成分析建议，负责人确认验收')}${scopeRow('资料准备度',listing?'待核验 · 创建后补齐演示资料':'创建后自动检查各员工所需资料')}`;$('#goal-permission').disabled=!listing||$('#create-engine').value==='team';$('#goal-permission').value=listing&&$('#create-engine').value!=='team'?createPermission:'draft';$('#create-price').parentElement.hidden=!listing;$('#scope-note').textContent='填写业务范围后，商品资料和经营账单在目标内补充。输入数据未自动同步店铺；发布动作仍为模拟。';}}
@@ -252,10 +307,10 @@ $('#task-form').onsubmit=async e=>{
   return;
  }
  if($('#create-engine').value==='flow'){
- const b=button,intent=sourcingIntent(text);
+ const b=button,intent=creationPickIntent(text);
  if(intent&&!intent.query){createFieldError(goal,'想找哪个品类？请在任务要求里加上商品名称。');return;}
  const tab=intent?pickBrowser.reserve():null;b.disabled=true;b.textContent='正在创建…';
- try{const g=await post('goals',{executionMode:'flow',text,requestId:createRequestId});receive(g);$('#task-dialog').close();openGoal(g.id);if(intent)pickBrowser.openSearch(g,tab);}
+ try{const g=await post('goals',{...(assignedEmployee?{assignedEmployeeId:assignedEmployee.id}:{executionMode:'flow'}),text,requestId:createRequestId});receive(g);$('#task-dialog').close();openGoal(g.id);if(intent)pickBrowser.openSearch(g,tab);}
  catch(error){tab?.close();$('#form-error').textContent=error.message;}finally{b.disabled=false;pickHint();}return;}const automatic=$('#create-engine').value==='team'&&$('#team-selection').value==='auto',members=[...document.querySelectorAll('[name=agents]:checked')].map(x=>x.value);if(!automatic&&!members.length){
  $('#goal-advanced').open=true;
  $('#form-error').textContent='请选择至少一位已就绪的成员。';
@@ -285,36 +340,44 @@ document.addEventListener('keydown',e=>{if(e.target.id==='chat-input'&&e.key==='
 document.addEventListener('submit',async e=>{if(e.target.id!=='chat-form')return;e.preventDefault();const id=e.target.dataset.goal;if(sending.has(id))return;const field=$('#chat-input'),text=field.value;if(!text.trim()){field.setAttribute('aria-invalid','true');$('#chat-error').textContent='写下想说的话，再发送。';field.focus();return;}const target=$('#chat-target').value,intent=$('#chat-intent')?.value;const b=e.submitter||e.target.querySelector('[type=submit]');sending.add(id);b.disabled=true;try{const g=await post(`goals/${id}/actions`,{kind:'message',text,target,intent,...discussionUI.submission(state.goals.find(g=>g.id===id),text)});discussionUI.sent(id);if(drafts[id]===text)drafts[id]='';receive(g);if(state.goal===id){$('#chat-input')?.focus();const log=$('.chat-log');if(log)log.scrollTop=log.scrollHeight;}}catch(err){if(state.goal===id&&$('#chat-error'))$('#chat-error').textContent=err.message;else toast(err.message);}finally{sending.delete(id);if(state.goal===id){const live=$('#chat-form [type=submit]');if(live){live.disabled=false;live.textContent='发送 ↗';}}}});
 function filterHistory(value){
  historySearch=value;
- $('.history-panel').innerHTML=historyPanel();
+ const {filtersHTML,rowsHTML}=historyParts();
+ $('.history-filters').innerHTML=filtersHTML;
+ $('.history-panel').innerHTML=rowsHTML;
 }
 document.addEventListener('input',e=>{if(e.target.id==='history-search')filterHistory(e.target.value);});
+document.addEventListener('change',e=>{if(e.target.id==='history-sort'){historySort=e.target.value;filterHistory(historySearch);}});
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;let ownsAction=false;try{
  if(b.hasAttribute('data-business-center'))go('flows');
  if(b.hasAttribute('data-kb-center'))go('knowledge');
  if(b.hasAttribute('data-source-center'))go('ai-config/sources');
  if(b.dataset.seed)openCreate(b.dataset.seed);
- if(b.hasAttribute('data-new'))openCreate();
+ if(b.hasAttribute('data-new')){b.closest('#navigation-dialog')?.close();openCreate();}
  if(b.hasAttribute('data-sample'))openCreate('为角阀准备商品资料、内容大纲与经营测算，交付后由我验收','listing');
  if(b.dataset.agent)openCreate('',b.dataset.agent==='product'||b.dataset.agent==='content'?'listing':'analysis',b.dataset.agent);
- if(b.dataset.employeeGoal){const e=state.workforce.employees.find(e=>e.id===b.dataset.employeeGoal);openCreate('请'+e.name+'协助完成：'+state.workforce.skills.find(s=>s.id===e.skillIds[0]).name,['merchandise','creative','risk'].includes(e.roleId)?'listing':'analysis',e.id);}
- if(b.hasAttribute('data-nav-more'))$('#navigation-dialog').showModal();
+ if(b.dataset.employeeGoal){
+  const employee=[...(state.flows?.employees||[]),...(state.workforce?.employees||[])].find(e=>e.id===b.dataset.employeeGoal);
+  if(!employee?.enabled||!employee.readiness?.ready){toast('该员工当前无法接单，请查看岗位设置。');return;}
+  openCreate('','analysis',null,null,employee);
+ }
+ if(b.hasAttribute('data-nav-more')){$('#navigation-dialog').showModal();b.setAttribute('aria-expanded','true');}
  if(b.hasAttribute('data-nav-close'))$('#navigation-dialog').close();
  if(b.hasAttribute('data-clear-search')){const search=$('#history-search');search.value='';filterHistory('');search.focus();}
- if(b.hasAttribute('data-history-sort')){newestFirst=!newestFirst;filterHistory(historySearch);$('[data-history-sort]').focus();}
  if(b.dataset.inboxFilter){inboxFilter=b.dataset.inboxFilter;render(true);document.querySelector('[data-inbox-filter="'+inboxFilter+'"]')?.focus();}
  if(b.hasAttribute('data-inbox-home'))go('overview/home');
  if(b.dataset.view)go(b.dataset.view==='overview'?'overview/home':b.dataset.view);
- if(b.dataset.open){if(b.matches('.inbox-row'))historyReturn={id:b.dataset.open,scroll:window.scrollY};openGoal(b.dataset.open,b.dataset.openTab||'discussion');}
- if(b.dataset.tab&&Object.hasOwn(tabNames,b.dataset.tab)&&state.view==='overview'&&current()){openGoal(state.goal,b.dataset.tab);}
+ if(b.dataset.open){if(b.closest('.task-history'))historyReturn={id:b.dataset.open,scroll:window.scrollY};openGoal(b.dataset.open,b.dataset.openTab||'discussion');}
+ if(b.dataset.tab&&Object.hasOwn(tabNames,b.dataset.tab)&&state.view==='overview'&&current()){openGoal(state.goal,b.dataset.tab);$('.goal-tabs [aria-selected=true]')?.focus();}
  if(b.dataset.filter){state.filter=b.dataset.filter;render(true);}
- if(b.hasAttribute('data-details')){state.details=!state.details;render(true);$(state.details?'.goal-context .details-close':'.goal-header [data-details]')?.focus({preventScroll:true});}
- if(b.dataset.mention){targets[state.goal]=b.dataset.mention;state.tab='discussion';state.details=false;render(true);$('#chat-input')?.focus();}
+ if(b.dataset.mention){targets[state.goal]=b.dataset.mention;openGoal(state.goal,'discussion');$('#chat-input')?.focus();}
  if(b.dataset.action){if(busy)return;busy=true;ownsAction=true;b.disabled=true;const g=current(),extra={};if(b.dataset.action==='approve'){extra.version=g.version;extra.approvalId=g.approval.id;}if(b.dataset.mismatch)extra.mismatch=true;await act(b.dataset.action,extra);if(b.dataset.action==='facts'){state.tab='tasks';render(true);}if(b.dataset.action==='observe'||b.dataset.action==='complete'){state.tab='review';render(true);}toast('操作已记录');}
  if(b.hasAttribute('data-edit')){const g=current();$('#edit-dialog').dataset.goal=g.id;$('#publish-title').value=g.proposal.title;$('#publish-price').value=g.proposal.price;$('#edit-error').textContent='';$('#edit-dialog').showModal();}
  if(b.hasAttribute('data-reject')){$('#reject-dialog').dataset.goal=state.goal;$('#reject-reason').value='';$('#reject-error').textContent='';$('#reject-dialog').showModal();}
  if(b.dataset.preview||b.dataset.download){const g=state.goals.find(x=>x.id===b.dataset.parent),a=g.artifacts.find(x=>x.id===(b.dataset.preview||b.dataset.download));if(a.imageJobId){await imagesUI.openJob(a.imageJobId);}else if(b.dataset.download)download(a);else{preview=a;$('#artifact-title').textContent=a.title;$('#artifact-meta').textContent=`v${a.version} · ${artNames[a.status]} · 数据来源见正文`;$('#artifact-body').textContent=a.body;$('#artifact-evidence').textContent='来源：'+a.evidence;$('#artifact-dialog').showModal();}}
  if(b.hasAttribute('data-followup')){const g=current();openCreate('基于上一轮目标，分析商品贡献利润与退款情况，提出下一轮优化建议','analysis',null,g.id);}
  }catch(err){toast(err.message);}finally{if(ownsAction){busy=false;b.disabled=false;}}});
+$('#nav-open').setAttribute('aria-expanded','false');
+$('#navigation-dialog').addEventListener('close',()=>$('#nav-open').setAttribute('aria-expanded','false'));
+window.matchMedia('(min-width:761px)').addEventListener('change',e=>{if(e.matches&&$('#navigation-dialog').open)$('#navigation-dialog').close();});
 window.addEventListener('hashchange',()=>{const canonical=applyRoute(location.hash.slice(1));if(location.hash.slice(1)!==canonical)history.replaceState(null,'','#'+canonical);$('#navigation-dialog')?.close();render(true);});
 const runNames={queued:'排队中',running:'执行中',succeeded:'成功',needs_input:'等待资料',failed:'失败',interrupted:'已中断',discarded:'旧版本已丢弃',waiting_resume:'等待恢复'};
 let configEditing=null,testRunId=null,runPreviewId=null,createRequestId=null,createKindManual=false,createMembersTouched=false;
@@ -324,8 +387,9 @@ function runsView(){return heading('运行记录','每次 Agent 调用都保存�
 function platformRuntime(g){const r=g.runtime||{};return `<section class="action-card"><div class="action-kicker">后端自动执行 · ${esc(runNames[r.status]||'等待调度')}</div><h3>${r.status==='failed'?'本步骤调用失败':r.status==='needs_input'?'需要补齐数据后继续':'数字员工正在按计划推进'}</h3><p>${esc(r.error||'无需反复点击生成。主协调器按顺序调用所选能力，并保存每一步的交付物。')}</p>${r.missing?.length?`<div class="note">待处理：${r.missing.map(esc).join('、')}</div>`:''}<div class="action-buttons">${['failed','needs_input'].includes(r.status)?`<button class="primary" data-tab="facts">检查并补充资料</button>${actionButton('retry','重试当前步骤',true)}${g.mode==='team'?actionButton('replan','重新安排分工',true):''}`:''}${g.kind==='listing'?'<button class="text-button" data-edit>调整发布内容</button>':''}${r.runId?`<button class="text-button" data-run="${r.runId}">查看本次调用 →</button>`:''}</div></section>`;}
 function field(name,label,value='',type='text',attrs=''){return `<div><label for="field-${name}">${label}</label><input id="field-${name}" name="${name}" type="${type}" value="${esc(value??'')}" ${attrs}></div>`;}
 function platformFacts(g){const locked=g.paused||!(g.kind==='listing'?['facts','plan','draft']:['plan','draft']).includes(g.stage);const f=g.facts||{},ledger=g.financials||{};
- const controls=g.kind==='listing'?`${field('material','材质',f.confirmed?f.material:'','text','required maxlength="500"')}${field('connector','接口 / 适用规格',f.confirmed?f.connector:'','text','required maxlength="500"')}${field('cost','采购成本（元）',f.cost,'number','required min="0" max="1000000000" step="0.01"')}${field('stock','可售库存（件）',f.stock,'number','required min="0" max="1000000000" step="1"')}${field('source','资料来源',f.confirmed?f.source:'','text','required maxlength="500"')}`:`${[['netSales','净销售额'],['goods','商品成本'],['fees','平台及支付费用'],['fulfillment','履约费用'],['ads','归因广告费用'],['returns','售后额外损失'],['other','其他可变成本']].map(([k,n])=>field(k,n+'（元，可留空）',ledger[k],'number','min="0" max="1000000000000" step="0.01"')).join('')}${field('window','统计期间',ledger.window,'text','required maxlength="120"')}${field('source','账单来源',ledger.source,'text','required maxlength="500"')}`;
- return `<div class="tab-scroll"><div class="section-title"><div><h3>${g.kind==='listing'?'商品资料录入':'经营账单录入'}</h3><p class="field-hint">数据保存在后端，Agent 将据此校验或计算。缺失数值请留空，不以 0 代替未知。</p></div></div><div class="note">${esc(g.scope.store)} · ${esc(g.scope.sku)}${g.kind==='listing'?' · 售价 '+money(g.proposal.price):''}</div><form id="${g.kind==='listing'?'facts-form':'ledger-form'}" data-goal="${g.id}"><fieldset ${locked?'disabled':''}><div class="data-fields">${controls}</div>${g.kind==='listing'?'<label class="confirm-check"><input name="confirmed" type="checkbox" required> 我已核对所填资料及来源</label>':'<p class="field-hint">净销售额已扣退款本金；售后损失只计额外成本，避免重复扣减。</p>'}<div class="action-buttons"><button type="submit" class="primary">保存${g.kind==='listing'?'并确认资料':'账单'}</button><button type="button" class="secondary" data-fill-data="${g.kind}">填入演示样例</button></div></fieldset><p class="form-error" id="data-error" role="alert"></p></form>${locked?'<div class="note">当前阶段不允许覆盖已确认输入。暂停时先恢复；已生成成果后，另建跟进目标或按内容变更重新审批。</div>':''}</div>`;
+ const itemFields=g.kind==='listing'&&g.assignedEmployeeId?`${field('product','商品名称',g.scope.product,'text','required maxlength="120"')}${field('sku','SKU',g.scope.sku,'text','required maxlength="120"')}${field('price','售价（元）',g.proposal?.price,'number','required min="0.01" max="100000" step="0.01"')}`:'';
+ const controls=g.kind==='listing'?`${itemFields}${field('material','材质',f.confirmed?f.material:'','text','required maxlength="500"')}${field('connector','接口 / 适用规格',f.confirmed?f.connector:'','text','required maxlength="500"')}${field('cost','采购成本（元）',f.cost,'number','required min="0" max="1000000000" step="0.01"')}${field('stock','可售库存（件）',f.stock,'number','required min="0" max="1000000000" step="1"')}${field('source','资料来源',f.confirmed?f.source:'','text','required maxlength="500"')}`:`${[['netSales','净销售额'],['goods','商品成本'],['fees','平台及支付费用'],['fulfillment','履约费用'],['ads','归因广告费用'],['returns','售后额外损失'],['other','其他可变成本']].map(([k,n])=>field(k,n+'（元，可留空）',ledger[k],'number','min="0" max="1000000000000" step="0.01"')).join('')}${field('window','统计期间',ledger.window,'text','required maxlength="120"')}${field('source','账单来源',ledger.source,'text','required maxlength="500"')}`;
+ return `<div class="tab-scroll"><div class="section-title"><div><h3>${g.kind==='listing'?'商品资料录入':'经营账单录入'}</h3><p class="field-hint">数据保存在后端，Agent 将据此校验或计算。缺失数值请留空，不以 0 代替未知。</p></div></div><div class="note">${esc(g.scope.store)} · ${esc(g.scope.sku)}${g.kind==='listing'&&g.proposal?.price!=null?' · 售价 '+money(g.proposal.price):''}</div><form id="${g.kind==='listing'?'facts-form':'ledger-form'}" data-goal="${g.id}"><fieldset ${locked?'disabled':''}><div class="data-fields">${controls}</div>${g.kind==='listing'?'<label class="confirm-check"><input name="confirmed" type="checkbox" required> 我已核对所填资料及来源</label>':'<p class="field-hint">净销售额已扣退款本金；售后损失只计额外成本，避免重复扣减。</p>'}<div class="action-buttons"><button type="submit" class="primary">保存${g.kind==='listing'?'并确认资料':'账单'}</button><button type="button" class="secondary" data-fill-data="${g.kind}">填入演示样例</button></div></fieldset><p class="form-error" id="data-error" role="alert"></p></form>${locked?'<div class="note">当前阶段不允许覆盖已确认输入。暂停时先恢复；已生成成果后，另建跟进目标或按内容变更重新审批。</div>':''}</div>`;
 }
 async function openConfig(id){const a=state.agents.find(a=>a.id===id);configEditing=structuredClone(a);testRunId=null;$('#test-agent').disabled=false;$('#config-title').textContent=a.name+' · 配置与测试';for(const key of ['name','role','adapter','timeoutMs','endpoint','secretEnv','instructions'])$('#cfg-'+key).value=a[key];$('#cfg-enabled').checked=a.enabled;$('#cfg-threshold').value=a.id==='product'?a.settings.minGrossMargin:a.settings.targetProfitRate;$('#threshold-label').textContent=a.id==='product'?'最低采购价差率（%）':'贡献利润率目标（%）';$('#config-revision').textContent='当前已保存版本 v'+a.revision;$('#config-error').textContent='';$('#agent-test-result').textContent='测试使用服务端已保存的配置。修改后请先保存。';$('#agent-test-input').value=JSON.stringify(await api(`agents/${id}/sample`),null,2);updateAdapterFields();$('#agent-config-dialog').showModal();}
 function updateAdapterFields(){const remote=$('#cfg-adapter').value==='http';$('#remote-config').hidden=!remote;$('#cfg-instructions').disabled=!remote;$('#builtin-note').hidden=remote;}

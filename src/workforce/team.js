@@ -62,12 +62,15 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   const signature=planningSignature(d,g);if(g.collaboration?.goalVersion===g.version&&g.collaboration.signature===signature)return g;
   const steps=g.members.map(id=>{const e=employee(d,id);return {employeeId:id,employeeName:e.name,skillIds:g.executionPlan?.steps.find(s=>s.employeeId===id)?.skillIds||e.skillIds};});
   if(isResearchGoal(g)){g.research=collectResearch(d,g);if(!Array.isArray(g.skillData?.candidates)){event(g,researchSummary(g.research));if(g.research.status!=='found'&&(d.sources.some(s=>s.enabled&&s.mode==='http')||(d.searchConfig?.enabled&&d.searchConfig.lastTest?.status==='succeeded'&&d.searchConfig.lastTest.revision===d.searchConfig.revision))&&g.researchAttemptVersion!==g.version){g.researchRequest={id:randomUUID(),version:g.version,question:g.text};g.researchAttemptVersion=g.version;event(g,'正在检查已配置的授权来源；找到的数据会保留来源，未核验记录不会直接用于结论。');}}}
-  if(!g.contentDraft&&imageOutputs(g.text).length){g.autoContent=prepareContent(d,g);return g;}
+  if(!g.assignedEmployeeId&&!g.contentDraft&&imageOutputs(g.text).length){g.autoContent=prepareContent(d,g);return g;}
   const checks=await checkTeamInputs(d,g,steps,inputs);
   for(const step of steps){const ready=employeeReadiness(employee(d,step.employeeId),models(d),d.externalSkills.map(publicExternal));if(!ready.ready)checks.push({employeeId:step.employeeId,employeeName:step.employeeName,skillId:null,name:'员工配置',status:'missing',missing:ready.blockers,detail:'配置未就绪'});}
   g.collaboration={goalVersion:g.version,signature,steps,checks,createdAt:stamp()};if(g.executionPlan?.source==='auto-match')g.executionPlan.checks=checks;
   event(g,'已完成本地能力与输入检查，协作顺序：'+steps.map(s=>s.employeeName).join(' → ')+'。前一步的正式成果会传给后续员工，最后由负责人验收。'+(isSelectionGoal(g.text)?'\n先从已接入的知识库与来源检索候选；网络搜索需先连接并测试搜索服务。缺少市场依据时只做参数与报价初筛，不编造销量和质量评分。':''));
   for(const step of (isResearchGoal(g)?[]:steps)){const rows=checks.filter(c=>c.employeeId===step.employeeId);receipt(g,employee(d,step.employeeId),'能力检查 · 本地规则\n'+rows.map(c=>c.name+'：'+(c.status==='missing'?'待补 '+c.missing.join('、'):c.status==='runtime'?c.detail:'输入校验通过')).join('\n')+(steps.indexOf(step)?'\n执行时接收前序员工的交付物。':''),{workflow:'check'});}
+  if(g.assignedEmployeeId && !g.planProposal && checks.every(row=>row.status!=='missing')){
+   action(d,g,{kind:'plan',expectedVersion:g.version});return g;
+  }
   const skillIds=steps.flatMap(s=>s.skillIds);if(g.teamSelection==='auto'&&!g.planProposal&&skillIds.some(id=>id.startsWith('copy.'))&&skillIds.every(id=>id.startsWith('copy.')||id==='task.brief')&&!prepareContent(d,g).missing.length)action(d,g,{kind:'plan',expectedVersion:g.version});
   return g;
  }
@@ -86,7 +89,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   g.tasks.forEach((t,i)=>{t.status=i===0?(g.stage==='plan'?'confirmation':'completed'):i===g.tasks.length-1?(g.stage==='completed'?'completed':g.stage==='review'?'acceptance':'pending'):completed.includes(t.owner)?'completed':g.stage==='draft'&&g.members.find(id=>!completed.includes(id))===t.owner?(g.paused?'paused':['failed','needs_input'].includes(g.runtime.status)?'waiting':'active'):'pending';});
  }
  function schedule(d,g){
-  if(!g.contentDraft&&imageOutputs(g.text).length)return;
+  if(!g.assignedEmployeeId&&!g.contentDraft&&imageOutputs(g.text).length)return;
   if(g.paused||g.researchRequest||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime.status))return;
   const completed=g.runtime.completed||[],id=g.members.find(id=>!completed.includes(id));
   if(!id){g.stage='review';g.runtime={status:'completed',completed};event(g,'所选员工已完成本轮交付，请人工验收；未执行真实业务写入。','review');update(g);return;}
@@ -105,7 +108,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
  function revise(g){g.version++;g.planProposal=null;g.executionPlan=null;g.stage='plan';g.runtime={status:'idle',completed:[]};g.artifacts.forEach(a=>{if(a.status==='draft')a.status='superseded';});event(g,'资料已保存为新版本，请重新确认计划。','plan');}
  function action(d,g,input){
   const k=input.kind;
-  if(k==='complete'&&!g.contentDraft&&imageOutputs(g.text).some(kind=>!d.imageJobs?.some(j=>j.goalId===g.id&&j.goalVersion===g.version&&j.outputKind===kind&&j.status==='succeeded')))fail('图片尚未全部生成，文字简报不能作为图片交付验收');
+  if(k==='complete'&&!g.assignedEmployeeId&&!g.contentDraft&&imageOutputs(g.text).some(kind=>!d.imageJobs?.some(j=>j.goalId===g.id&&j.goalVersion===g.version&&j.outputKind===kind&&j.status==='succeeded')))fail('图片尚未全部生成，文字简报不能作为图片交付验收');
   if(k==='complete'&&g.production)for(const id of g.production.jobIds||[])images.assertDelivery(id);
   if(['contentPreferences','knowledge','references','facts','ledger','inputs','plan','retry','complete','revise','adoptPlan','discardPlan','replan','kickoff','regroupSelection','setTeam','research'].includes(k)&&input.expectedVersion!==g.version)fail('目标版本已改变，请重新检查',409);
   if(k==='message'){
@@ -175,6 +178,12 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
     if(g.kind!=='listing'||!['plan','draft'].includes(g.stage))fail('当前阶段不允许修改商品资料');const f=input.facts||{};
     for(const key of ['material','connector','source'])if(typeof f[key]!=='string'||!f[key].trim()||f[key].length>500)fail('请填写商品材质、接口与来源');
     if(input.confirmed!==true||f.cost===''||f.stock===''||f.cost===null||f.stock===null||!Number.isFinite(Number(f.cost))||Number(f.cost)<0||Number(f.cost)>1e9||!Number.isInteger(Number(f.stock))||Number(f.stock)<0||Number(f.stock)>1e9)fail('请确认资料并填写有效成本与整数库存');
+    if(g.assignedEmployeeId && (f.product!==undefined||f.sku!==undefined||f.price!==undefined)){
+     for(const key of ['product','sku'])if(typeof f[key]!=='string'||!f[key].trim()||f[key].length>120)fail('请填写商品名称与 SKU（最多 120 字）');
+     const price=Number(f.price);
+     if(!Number.isFinite(price)||price<=0||price>100000||Math.abs(price*100-Math.round(price*100))>1e-6)fail('售价须为大于零且最多两位小数的金额');
+     g.scope.product=f.product.trim();g.scope.sku=f.sku.trim();g.proposal={title:g.scope.product,price};
+    }
     g.facts={material:f.material.trim(),connector:f.connector.trim(),source:f.source.trim(),cost:Number(f.cost),stock:Number(f.stock),confirmed:true};revise(g);
    }else if(k==='ledger'){
     if(g.kind!=='analysis'||!['plan','draft'].includes(g.stage))fail('只能在分析准备阶段更新账单');const f=input.financials||{};

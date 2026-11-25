@@ -1,6 +1,6 @@
 import {imageOutputs,prepareContent} from './content-preparation.js';
 const now=()=>new Date().toISOString();
-const managed=g=>g&&g.mode==='team'&&!g.contentDraft&&imageOutputs(g.text).length>0&&g.stage!=='completed'&&!g.paused;
+const managed=g=>g&&g.mode==='team'&&!g.assignedEmployeeId&&!g.contentDraft&&imageOutputs(g.text).length>0&&g.stage!=='completed'&&!g.paused;
 export function createProductionManager({getData,transaction,images,event}){
  const signature=g=>{const d=getData();return JSON.stringify([g.version,g.text,g.skillData,g.knowledge,d.knowledge.documents.map(x=>[x.id,x.revision,x.enabled]),d.knowledge.bases.map(x=>[x.id,x.enabled]),d.materials.map(x=>[x.id,x.revision,x.status]),d.sources.map(x=>[x.id,x.revision,x.enabled]),g.research?.at,!!g.researchRequest,images.view().config,d.imageJobs?.filter(j=>j.goalId===g.id).map(j=>[j.id,j.status])]);};
  const pending=()=>getData().goals.some(g=>managed(g)&&g.production?.signature!==signature(g));

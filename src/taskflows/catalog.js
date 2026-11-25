@@ -9,6 +9,10 @@ export const flowCapabilities=[
  ...skillDefinitions.map(s=>({id:s.id,name:s.name,description:s.description})),
  {id:'result.compile',name:'核验并汇总结果',description:'汇总前序任务的真实交付物、来源和限制，不将未执行任务标为完成。'},
 ];
+export const flowEmployees=[
+ {id:'flow-sourcing',roleId:'selection',name:'选品分析员',instructions:'从 1688 核对同类商品的报价和来源，结合售价与费用比较候选。',skillIds:['sourcing.1688']},
+ {id:'flow-visual',roleId:'creative',name:'商品视觉设计师',instructions:'使用已连接的图片服务制作商品主图与详情图，保留商品依据和图片版本。',skillIds:['image.main','image.detail']}
+].map(role=>({...role,enabled:true,mode:'flow',readiness:{ready:true,label:'任务流岗位',blockers:[]}}));
 const node=(id,title,capability,dependsOn=[])=>({id,title,capability,dependsOn,objective:title,acceptance:'交付可检查的结果并说明来源与限制',required:true});
 export const flowTemplates=[
  {id:'analysis',name:'证据驱动分析',description:'收集证据后，按问题选择分析方法，最后整合判断。',nodes:[node('evidence','收集相关证据','evidence.collect'),node('analysis','分析问题并验证结论','analysis.reason',['evidence']),node('summary','核验与汇总','result.compile',['analysis'])]},

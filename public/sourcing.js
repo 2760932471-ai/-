@@ -1,6 +1,9 @@
 import {offerPhoto as normalizeOfferPhoto,offerPhotos} from './offer-photos.js';
 export function businessBrief(goal){
- return goal.scenario?.answer ? goal.text+'；使用场景：'+goal.scenario.answer : goal.text;
+ let text=goal.text;
+ if(goal.assignedEmployeeId==='flow-sourcing'&&!sourcingIntent(text))text='在1688找'+text;
+ if(goal.assignedEmployeeId==='flow-visual'&&!/主图|海报|配图|详情(?:页)?图|生图|作图|做图|出图|(?:不要|无需|不用|不做).*图|只.*文案|只.*文字|简报|提示词/.test(text))text+='；制作商品主图';
+ return goal.scenario?.answer ? text+'；使用场景：'+goal.scenario.answer : text;
 }
 // Shared by goal creation and the task runner so that both search the same category.
 export function sourcingIntent(text){

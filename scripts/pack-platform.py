@@ -12,7 +12,7 @@ files.append(root/'deliverables/电商数字员工通用知识包_V0.14.md')
 files.extend((root/'deliverables/知识库入门包_V0.14').glob('*.md'))
 files.extend((root/'deliverables/企业知识资料_V0.16').glob('*.md'))
 with ZipFile(output,'w',ZIP_DEFLATED) as z:
-    z.write(root/'deliverables/ai-platform-preview.html','AI数字员工协作平台/先打开预览.html')
+    z.write(root/'deliverables/ai-platform-preview.html','AI数字员工协作工作台/先打开预览.html')
     for p in sorted(set(files)):
-        z.write(p,'AI数字员工协作平台/'+str(p.relative_to(root)))
+        z.write(p,'AI数字员工协作工作台/'+str(p.relative_to(root)))
 print(f'Created {output.name}: {output.stat().st_size} bytes; excludes runtime data, secrets, Git metadata and dependencies.')

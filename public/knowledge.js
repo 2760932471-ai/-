@@ -27,7 +27,7 @@ export function createKnowledgeUI({state,api,esc,badge,toast,refresh,render,act}
    <header class="page-heading kb-heading"><div><h1 id="kb-title">知识库</h1><p>保存业务文档、图片和视频，检索时可查看原件。</p></div><div class="action-buttons"><button class="secondary" data-kb-starters>企业知识资料</button><button class="primary" data-kb-import>＋ 导入资料</button></div></header>
    <div class="kb-layout"><section class="kb-library" aria-labelledby="kb-library-title">
     <header class="kb-pane-title"><h2 id="kb-library-title">资料库</h2><span>${docs.length} 份资料 · ${docs.reduce((n,doc)=>n+doc.chunkCount,0)} 个切片</span></header>
-    <div class="kb-toolbar"><label for="kb-filter" class="sr-only">知识库范围</label><select id="kb-filter">${baseOptions(baseId,true)}</select><button class="text-button" data-kb-base-new>新建知识库</button>${baseId?`<button class="text-button" data-kb-base-edit="${esc(baseId)}">库设置</button><button class="text-button" data-kb-base-delete="${esc(baseId)}">删除空库</button>`:''}</div>
+    <div class="kb-toolbar"><select id="kb-filter" aria-label="知识库范围">${baseOptions(baseId,true)}</select><button class="text-button" data-kb-base-new>新建知识库</button>${baseId?`<button class="text-button" data-kb-base-edit="${esc(baseId)}">库设置</button><button class="text-button" data-kb-base-delete="${esc(baseId)}">删除空库</button>`:''}</div>
     <div class="kb-documents">${docs.map(doc=>documentCard(doc,d)).join('')||'<div class="kb-empty"><span class="kb-empty-file" aria-hidden="true"></span><h3>暂无资料</h3><p>可导入 TXT、Markdown、图片或视频。</p><button class="text-button" data-kb-import>导入第一份资料 →</button></div>'}</div>
    </section><section class="kb-recall" aria-labelledby="kb-recall-title">
     <header class="kb-pane-title"><h2 id="kb-recall-title">召回测试</h2></header>

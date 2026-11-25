@@ -1,0 +1,43 @@
+.staff-view{--staff-accent:#3055e8;--staff-line:#dce4ef;--staff-muted:#596a81;width:min(1400px,100%);margin:0 auto;padding:clamp(24px,3.5vw,56px);color:var(--ink,#17253c)}
+.staff-view h1,.staff-view h2,.staff-view p{margin:0}
+.staff-view h1{font-size:clamp(25px,2.2vw,34px);line-height:1.3;letter-spacing:-.045em}
+.staff-view h2{font-size:17px;line-height:1.5;letter-spacing:-.02em}
+.staff-view :where(button,a,input,select):focus-visible{outline:3px solid #829dff;outline-offset:3px}
+.emp-head,.emp-detail-id,.emp-card-line,.emp-actions,.emp-tools,.emp-tabs{display:flex;align-items:center}
+.emp-head{justify-content:space-between;gap:16px}
+.emp-head>div>p,.staff-view .emp-intro,.emp-box>p{color:var(--staff-muted);margin-top:8px;line-height:1.65;font-size:14px}
+.emp-tabs{gap:26px;border-bottom:1px solid var(--staff-line);margin:22px 0;overflow:auto}
+.emp-tabs>a,.emp-tabs>button{font:inherit;line-height:1.5;flex:none;color:var(--staff-muted);background:none;border:0;border-bottom:2px solid transparent;text-decoration:none;border-radius:0;padding:10px 1px 13px}
+.emp-tabs>[aria-current=page],.emp-tabs>[aria-pressed=true]{color:var(--staff-accent);border-bottom-color:var(--staff-accent);font-weight:650}
+.emp-tools{gap:16px;align-items:flex-end;justify-content:space-between;margin:0 0 18px}
+.emp-tools label{font-size:12px;font-weight:580;color:var(--staff-muted)}
+.emp-tools input,.emp-tools select{display:block;min-height:40px;margin:5px 0 0;font-size:14px;background-color:#fff;border:1px solid var(--staff-line);border-radius:9px}
+.emp-tools input{width:min(340px,100%);padding:8px 12px}.emp-tools label:first-child{width:min(340px,100%)}
+.emp-tools label:last-child{width:155px}
+.staff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(265px,100%),1fr));gap:16px}
+.staff-card,.emp-box,.emp-rows{background:#fff;border:1px solid var(--staff-line);border-radius:13px}
+.staff-card{padding:21px;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.staff-card[hidden],.staff-view [hidden]{display:none!important}
+.emp-card-line{gap:12px;justify-content:space-between;align-self:stretch}
+.emp-mark{display:inline-grid;place-items:center;width:39px;height:39px;background:#e7eeff;color:#3159c5;border-radius:11px;flex:none}
+.emp-mark.emp-violet{color:#6351b8;background:#f0ecff}
+.emp-method{font-size:12px;color:var(--staff-muted)}
+.staff-card h2 a{color:inherit;text-decoration:none}.staff-card h2 a:hover,.emp-back:hover,.emp-actions a:hover{text-decoration:underline}
+.staff-card p{color:var(--staff-muted);line-height:1.65;font-size:14px}
+.emp-description{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.emp-actions{gap:12px;flex-wrap:wrap}
+.staff-card .emp-actions{margin-top:auto;padding-top:5px}
+.emp-actions a,.emp-back{font-size:13px;color:var(--staff-accent);text-decoration:none}
+.emp-latest{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;background:transparent;color:var(--staff-accent);font-size:12px;border:none;padding:3px 0}
+.emp-back{display:inline-block;margin-bottom:17px}
+.emp-detail-id{gap:12px;min-width:0}.emp-detail-id p{color:var(--staff-muted);font-size:13px}
+.emp-intro{max-width:80ch}
+.emp-section{margin:24px 0}.emp-section h2{margin:0 0 11px}
+.emp-rows{overflow:hidden}
+.emp-rows>div,.emp-rows>button{display:flex;align-items:center;justify-content:space-between;text-align:left;width:100%;gap:20px;background:#fff;border:0;border-radius:0;padding:15px 17px;color:inherit}
+.emp-rows>*+*{border-top:1px solid var(--staff-line)}
+.emp-rows>button:hover{background:#f6f8ff}.emp-rows>button>span:last-child{color:var(--staff-accent);font-size:13px;white-space:nowrap}
+.emp-rows small{display:block;color:var(--staff-muted);margin-top:3px}.emp-rows b{font-weight:600}
+.emp-empty,.emp-box{padding:20px}.staff-view .emp-empty{color:var(--staff-muted);border:1px dashed var(--staff-line);border-radius:12px;font-size:14px}
+.emp-box .emp-actions{margin-top:14px}
+@media(max-width:650px){.staff-view{padding:22px 16px}.emp-tools{gap:10px}.emp-tabs{gap:20px}.emp-head{align-items:flex-start}.emp-head>.primary{flex:none}.emp-card-line{align-self:stretch}.emp-rows>div,.emp-rows>button{padding:12px;gap:10px}}

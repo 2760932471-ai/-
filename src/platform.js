@@ -97,6 +97,21 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(!/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId||''))throw new Error('缺少有效创建请求编号');
   const signature=JSON.stringify({...input,requestId:undefined});
   if(Object.hasOwn(d.requests,input.requestId)){const old=d.requests[input.requestId];if(old.signature!==signature)throw conflict('同一创建请求不能更换内容');return findGoal(d,old.goalId);}
+  let employee;
+  if(input.assignedEmployeeId!==undefined){
+   if(flows.view().employees.some(e=>e.id===input.assignedEmployeeId)){
+    input={...input,executionMode:'flow'};
+   }else{
+    employee=d.employees.find(e=>e.id===input.assignedEmployeeId);
+    if(!employee)throw new Error('当前空间找不到这位数字员工');
+    if(!employee.enabled)throw new Error('该数字员工已停用');
+    if(!employee.skillIds.some(id=>id.startsWith('external_')) && imageOutputs(input.text).length && /(?:生图|出图|作图|做图|(?:生成|制作|做|输出).{0,10}(?:主图|详情图|图片|海报))/.test(input.text) && !/(?:方案|策划|文案|排版建议|构图方向)/.test(input.text)){
+     throw new Error('本岗位按已配置的技能交付。需要图片文件时，请在数字员工中交给商品视觉设计师，或从「任务」交给总控。');
+    }
+    const listing=['merchandise','creative','risk'].includes(employee.roleId);
+    input={...input,executionMode:'team',teamSelection:'manual',employeeIds:[employee.id],startCollaboration:true,kind:listing?'listing':'analysis',permission:'draft'};
+   }
+  }
   const isTeam=input.executionMode!=='flow'&&(Array.isArray(input.employeeIds)||input.teamSelection==='auto');if(input.teamSelection!==undefined&&!['auto','manual'].includes(input.teamSelection))throw new Error('成员安排方式无效');
   const creationInput=input.teamSelection==='auto'?{...input,employeeIds:[]}:input;
   const isFlow=input.executionMode==='flow';
@@ -104,6 +119,12 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(!isFlow&&!isTeam&&!input.members?.includes(required))throw new Error(`请邀请${required==='product'?'商品运营':'经营分析'} Agent 参与此目标`);
   for(const id of isFlow||isTeam?[]:input.members){if(!findAgent(d,id).enabled)throw new Error('所选Agent已停用');}
   const g=isFlow?flows.create(d,input):isTeam?team.create(d,creationInput):createGoal(input);if(!isTeam&&!isFlow){g.mode='platform';g.runtime={status:'idle',completed:[]};}
+  if(employee){
+   g.assignedEmployeeId=employee.id;g.assignedEmployeeName=employee.name;
+   g.scope={store:'未关联店铺',sku:input.kind==='listing'?'':'目标范围',product:'',platform:'按任务提供资料',window:7};
+   g.proposal=g.kind==='listing'?{title:'',price:null}:null;
+   g.messages[1].text='已交给'+employee.name+'，将检查本次任务所需的资料并执行已配置的能力。';
+  }
   if(input.scope){for(const k of ['store','sku','product']){if(typeof input.scope[k]!=='string'||!input.scope[k].trim()||input.scope[k].length>120)throw new Error('请填写有效的店铺、SKU / 数据范围和商品名称');g.scope[k]=input.scope[k].trim();}g.scope.platform='用户指定范围（未连接平台）';}
   if(input.storeConnectionId){const shop=d.stores?.find(s=>s.id===input.storeConnectionId&&s.enabled);if(!shop)throw new Error('所选店铺不属于本空间或已停用');g.storeConnectionId=shop.id;g.scope.store=shop.name;g.scope.platform=({taobao:'淘宝 / 天猫',douyin:'抖店','1688':'1688',shopify:'Shopify',other:'其他平台'}[shop.platform])+'（已关联，仅草案）';g.permission='draft';}
   if(input.proposal){const price=Number(input.proposal.price);if(!Number.isFinite(price)||price<=0||price>100000||Math.abs(price*100-Math.round(price*100))>1e-6)throw new Error('售价必须是有效正数，最多2位小数');g.proposal={title:String(input.proposal.title||g.scope.product).slice(0,120),price};}
