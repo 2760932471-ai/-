@@ -456,8 +456,9 @@ main.conversation-page {padding:0}
 .conversation-page .goal-tabs button:hover {color:#194abf}
 .conversation-page .goal-tabs button.active {border-bottom-color:#245bee;color:#164ec9}
 .conversation-page .goal-content,.conversation-page .chat-area,.conversation-page .chat-log {background:#f6f7fa}
-.conversation-page .chat-log {padding:24px max(22px,calc((100% - 1440px)/2)) 14px}
-.conversation-page .chat-message {gap:12px;margin-bottom:26px}
+.conversation-page {--chat-column-width:992px}
+.conversation-page .chat-log {padding:22px max(18px,calc((100% - var(--chat-column-width))/2)) 12px}
+.conversation-page .chat-message {gap:10px;margin-bottom:20px}
 .conversation-page .chat-message .avatar {
   border:1px solid #dce2eb;background:#fff;color:#344151;border-radius:9px;font-weight:650;
 }
@@ -483,7 +484,7 @@ main.conversation-page {padding:0}
 .conversation-page .chat-log .message-bubble:has(.chat-outcome)::before {display:none}
 .conversation-page .chat-composer {
   border:1px solid #cbd3df;border-radius:14px;background:#fff;
-  margin:7px max(16px,calc((100% - 1040px)/2)) 17px;
+  margin:7px max(16px,calc((100% - var(--chat-column-width))/2)) 17px;
   padding:11px 14px;box-shadow:0 4px 14px rgb(24 40 68 / 6%);
 }
 .conversation-page .chat-composer:focus-within {border-color:#356cf4;box-shadow:0 0 0 3px rgb(53 108 244 / 12%)}
@@ -964,7 +965,7 @@ function knowledgeMediaFiles(root){
  return {put:(id,v)=>access(id,'put',v),get:id=>access(id,'get'),remove:id=>access(id,'delete')};
 }
 const previewBar=document.querySelector('#preview-status');
-previewBar.textContent=previewPersistent?'V0.31.1 · 本地预览 · 数据仅存于此浏览器，未连接店铺和外部 Agent':'V0.31.1 · 免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
+previewBar.textContent=previewPersistent?'V0.31.2 · 本地预览 · 数据仅存于此浏览器，未连接店铺和外部 Agent':'V0.31.2 · 免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
 document.querySelector('#preview-reset').onclick=()=>{if(!confirm('清空当前工作空间的目标、消息和配置？其他工作空间和完整后端不受影响。'))return;if(previewPersistent){const id=previewSession.getItem('workspaceId')||'default';localStorage.removeItem(id==='default'?previewKey:previewStorageKey('/preview/workspaces/'+id+'/platform.json'));}location.reload();};
 
 const previewBuiltins=(()=>{
