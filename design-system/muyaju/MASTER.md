@@ -1,5 +1,15 @@
 # 慕雅居设计规范 · Commerce OS
 
+## 当前界面 · V0.30
+
+桌面使用单行白色导航，手机保留底部导航。首屏以浅灰底、白色内容表面和蓝色操作链接组织信息。首页直接展示历史任务，名称旁列出当前步骤、需要补充的信息或最近成果。任务筛选显示命中数量，搜索包含任务名和当前事项。行尾操作进入执行步骤、讨论或交付物。手机把行尾操作放在任务名称下方。
+
+长时间阅读的列表、讨论与交付报告使用浅色表面。蓝色标识选中、可操作位置和进度，文字说明任务状态。讨论按人右、AI 左排列，任务内可访问执行记录和成果。
+
+本版参考了 Anthropic 的视觉焦点建议、UI UX Pro Max 的响应式与焦点规则、Vercel 的交互检查，以及 IBM Carbon 的 AI 数据行示例。[Frontend Design](https://github.com/anthropics/skills/tree/main/skills/frontend-design) · [UI UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) · [Web Design Guidelines](https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines) · [Carbon AI 数据表示例](https://github.com/carbon-design-system/carbon-website/blob/main/src/pages/components/data-table/images/usage-ai-presence-datatable-row-ai-l.png)
+
+## 历史版本
+
 依据：ui-ux-pro-max 的 SKILL.md 与 references/quick-reference.md。云端脚本资源读取失败，未生成或宣称数据库检索结果。以下为基于可读规则制定的项目设计系统。
 
 ## 产品与布局

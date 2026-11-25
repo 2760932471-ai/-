@@ -51,46 +51,62 @@ function heading(title,desc){return `<div class="page-heading"><div><h1>${title}
 function empty(text,desc){return `<div class="empty-state"><h2>${text}</h2><p>${desc}</p><button class="primary" data-new>新建目标 ↗</button></div>`;}
 function scopeRow(label,value){return `<div class="scope-row"><span>${label}</span><strong>${esc(value)}</strong></div>`;}
 function context(g){if(g.mode==='flow')return flowsUI.context(g);const done=g.tasks.filter(t=>t.status==='completed').length;return `<aside class="goal-context"><button class="secondary details-toggle details-close" data-details>← 返回协作</button><section class="context-section"><div class="context-title"><h3>目标进展</h3>${badge(g.paused?'已暂停':stageNames[g.stage],true)}</div><progress class="progress-bar" value="${done}" max="${g.tasks.length}" aria-label="已完成任务">${done} / ${g.tasks.length}</progress><p>${done} / ${g.tasks.length} 项任务完成 · 计划 v${g.version}</p><p>当前进度代表任务步骤，不代表经营收益。</p></section><section class="context-section"><h3 class="context-heading">业务范围</h3>${scopeRow('店铺',g.scope.store)}${scopeRow('平台',g.scope.platform)}${scopeRow('SKU',g.scope.sku)}${scopeRow('执行边界',g.permission==='approval'?'发布前审批':'只准备草案')}<p>${esc(g.criterion)}</p></section><section class="context-section"><h3 class="context-heading">协作成员</h3><div class="member"><span class="avatar">你</span><div><strong>你</strong><small>目标负责人 · 审批与验收</small></div></div><div class="member"><span class="avatar">AI</span><div><strong>${esc(g.coordinator)}</strong><small>统一协调目标与任务</small></div></div>${discussionUI.people(g).map(id=>`<button class="member" data-mention="${id}"><span class="avatar">${esc(shortName(id).slice(0,1))}</span><div><strong>${esc(agentName(id))}</strong><small>${g.mode==='team'?esc(state.workforce?.employees.find(e=>e.id===id)?.readiness.label||'员工'):g.mode==='platform'?'代码 / HTTP 能力':'历史演示能力'}</small></div><span>@</span></button>`).join('')}</section><section class="context-section"><h3>运行控制</h3><p>暂停目标会阻止后续推进；已提交的动作不能撤回。群聊可继续。</p>${g.stage!=='completed'?`<button class="secondary" data-action="pause">${g.paused?'恢复目标推进':'暂停目标推进'}</button>`:'<p>目标已结束，历史成果已保留。</p>'}</section></aside>`;}
-let inboxFilter='all', historySearch='';
+let inboxFilter='all', historySearch='', newestFirst=true, historyReturn=null;
+const blockedStep=n=>['needs_input','failed','needs_capability'].includes(n.status);
 function goalInboxState(g){
  const status=g.flow?.status||g.stage;
- if(g.stage==='completed')return {label:'已完成',group:'done',tab:'artifacts'};
- if(g.paused)return {label:'已暂停',group:'paused',tab:'tasks'};
- if(g.stage==='review')return {label:'待验收',group:'review',tab:'artifacts'};
- if(status==='awaiting_context')return {label:'等你回复',group:'attention',tab:'discussion'};
- if(['blocked','planning_failed','approval','facts'].includes(status)||['needs_input','failed'].includes(g.runtime?.status))return {label:'待处理',group:'attention',tab:'tasks'};
- return {label:'进行中',group:'active',tab:'tasks'};
+ if(g.stage==='completed')return {label:'已完成',group:'done',tab:'artifacts',action:'查看成果'};
+ if(g.paused)return {label:'已暂停',group:'paused',tab:'tasks',action:'查看断点'};
+ if(g.stage==='review')return {label:'待验收',group:'review',tab:'artifacts',action:'查看交付物'};
+ if(status==='awaiting_context')return {label:'等你回复',group:'attention',tab:'discussion',action:'回复问题'};
+ if(['blocked','planning_failed','approval','facts'].includes(status)||g.flow?.nodes?.some(blockedStep)||['needs_input','failed'].includes(g.runtime?.status)||(!g.flow&&g.tasks?.some(t=>['approval','waiting','confirmation'].includes(t.status))))return {label:'待处理',group:'attention',tab:'tasks',action:'去处理'};
+ return {label:'进行中',group:'active',tab:'tasks',action:'查看进度'};
 }
-const inboxFilters=[['all','全部'],['active','进行中'],['attention','待处理'],['review','待验收'],['done','已完成'],['paused','已暂停']];
-function historyRow(g,status){
+const inboxFilters=[['all','全部'],['attention','待处理'],['review','待验收'],['active','进行中'],['done','已完成'],['paused','已暂停']];
+function historyDetail(g,status){
+ if(status.group==='done'||status.group==='review')return g.artifacts?.filter(a=>a.status!=='superseded'&&a.version===g.version).at(-1)?.title||'';
+ if(g.flow?.question)return g.flow.question;
+ if(g.flow?.status==='planning_failed')return g.flow.error||'任务规划失败';
+ const blocked=g.flow?.nodes?.find(blockedStep);
+ if(blocked){
+  const issue=flowsUI.nodeIssue(blocked);
+  return issue&&issue!==blocked.title?blocked.title+(blocked.missing?.length?' · 待补资料：':' · ')+issue:blocked.title;
+ }
+ const tasks=g.tasks||[];
+ const step=tasks.find(t=>['waiting','approval','confirmation','acceptance','active'].includes(t.status))||tasks.find(t=>t.status!=='completed');
+ return step?.title||g.flow?.plan?.name||'';
+}
+function historyRow({g,status,detail}){
  const tasks=g.tasks||[];
  const done=tasks.filter(t=>t.status==='completed').length;
  const updated=g.updatedAt||g.createdAt;
- const step=tasks.find(t=>['waiting','approval','confirmation','acceptance','active'].includes(t.status))||tasks.find(t=>t.status!=='completed');
- const result=g.artifacts?.filter(a=>a.status!=='superseded'&&a.version===g.version).at(-1);
- const detail=status.group==='done'||status.group==='review'?result?.title||'查看任务成果':g.flow?.question||step?.title||g.flow?.plan?.name||status.label;
  return `<li><button class="inbox-row" data-open="${esc(g.id)}" data-open-tab="${status.tab}">
-  <span class="history-name"><strong>${esc(g.text)}</strong><small>${esc(detail)}</small></span>
+  <span class="history-name"><strong>${esc(g.text)}</strong>${detail?`<small title="${esc(detail)}">${esc(detail)}</small>`:''}</span>
   <span class="history-state ${status.group}">${status.label}</span>
   <span class="history-progress">${tasks.length?`<progress max="${tasks.length}" value="${done}" aria-label="步骤完成进度"></progress><small>${done} / ${tasks.length} 步</small>`:'待规划'}</span>
   <time class="history-time" datetime="${esc(updated)}">${updated?date(updated):'—'}</time>
-  <span class="history-open" aria-hidden="true">›</span>
+  <span class="history-open">${status.action} ${icon('arrow')}</span>
  </button></li>`;
 }
 function historyPanel(){
- const goals=state.goals.slice().sort((a,b)=>Date.parse(b.updatedAt||b.createdAt)-Date.parse(a.updatedAt||a.createdAt));
- const rows=goals.map(g=>({g,status:goalInboxState(g)}));
- const filters=inboxFilters.filter(([key])=>key!=='paused'||inboxFilter===key||rows.some(row=>row.status.group===key));
+ const rows=state.goals.map(g=>{
+  const status=goalInboxState(g);
+  return {g,status,detail:historyDetail(g,status)};
+ });
+ const filters=inboxFilters.filter(([key])=>key!=='paused'||inboxFilter===key||rows.some(r=>r.status.group===key));
  const query=historySearch.trim().toLocaleLowerCase();
- const visible=rows.filter(({g,status})=>(inboxFilter==='all'||status.group===inboxFilter)&&g.text.toLocaleLowerCase().includes(query));
- return `   <nav class="history-filters" aria-label="按任务状态筛选">${filters.map(([key,label])=>`<button data-inbox-filter="${key}" aria-pressed="${inboxFilter===key}">${label}${key==='all'?` <span>${rows.length}</span>`:''}</button>`).join('')}</nav>
-   ${visible.length?`<div class="history-columns" aria-hidden="true"><span>任务名称</span><span>状态</span><span>进度</span><span>最近更新 ↓</span></div><ul class="history-rows">${visible.map(({g,status})=>historyRow(g,status)).join('')}</ul>`:`<div class="history-empty">${icon('layers')}<h2>${query?'没有找到匹配的任务':goals.length?'没有符合此状态的任务':'还没有任务'}</h2>${query?'<button class="text-button" data-clear-search>清除搜索</button>':goals.length?'<button class="text-button" data-inbox-filter="all">查看全部任务</button>':'<p>新建任务后，可以在这里跟进执行、查看交付物。</p>'}</div>`}
-  `;
+ const matching=rows.filter(({g,detail})=>!query||[g.text,detail].some(v=>v.toLocaleLowerCase().includes(query)));
+ const visible=matching.filter(r=>inboxFilter==='all'||r.status.group===inboxFilter).sort(({g:a},{g:b})=>(newestFirst?1:-1)*(Date.parse(b.updatedAt||b.createdAt)-Date.parse(a.updatedAt||a.createdAt)));
+ return `<div class="history-controls"><nav class="history-filters" aria-label="按任务状态筛选">${filters.map(([key,label])=>{
+  const count=key==='all'?matching.length:matching.filter(r=>r.status.group===key).length;
+  return `<button data-inbox-filter="${key}" aria-pressed="${inboxFilter===key}">${label} <span>${count}</span></button>`;
+ }).join('')}</nav><button class="history-sort" data-history-sort aria-label="切换更新时间排序，当前${newestFirst?'从新到旧':'从旧到新'}">${newestFirst?'最近更新 ↓':'最早更新 ↑'}</button></div>
+ ${visible.length?`<div class="history-columns" aria-hidden="true"><span>任务名称 / 当前事项</span><span>状态</span><span>执行进度</span><span>更新时间</span><span>操作</span></div><ul class="history-rows">${visible.map(historyRow).join('')}</ul>`:`<div class="history-empty">${icon('layers')}<h2>${query?'没有找到匹配的任务':rows.length?'没有符合此状态的任务':'还没有任务'}</h2>${query?'<button class="text-button" data-clear-search>清除搜索</button>':rows.length?'<button class="text-button" data-inbox-filter="all">查看全部任务</button>':'<p>新建任务后，可以在这里跟进执行、查看交付物。</p>'}</div>`}`;
 }
 function workspaceHome(){
- return `<section class="task-history" aria-labelledby="history-title">
-  <header class="history-heading"><h1 id="history-title">任务</h1><label class="history-search"><span aria-hidden="true">${icon('search')}</span><input type="search" id="history-search" aria-label="搜索任务名称" placeholder="搜索任务名称" value="${esc(historySearch)}" maxlength="200"></label><button class="primary" data-new><span aria-hidden="true">＋</span> 新建任务</button></header>
-  <div class="history-panel">${historyPanel()}</div></section>`;
+ return `<section class="task-history" aria-labelledby="history-title"><header class="history-heading">
+  <h1 id="history-title">任务</h1><label class="history-search"><span aria-hidden="true">${icon('search')}</span><input type="search" id="history-search" aria-label="搜索任务或当前事项" placeholder="搜索任务或当前事项" value="${esc(historySearch)}" maxlength="200"></label><button class="primary" data-new>＋ 新建任务</button>
+  </header><div class="history-panel">${historyPanel()}</div></section>`;
 }
 function workspace(){
  const g=current();
@@ -162,7 +178,14 @@ function legacyEmployees(){return heading('数字员工','业务岗位负责目�
 function fitChatInput(){const el=$('#chat-input');if(el){el.style.height='44px';el.style.height=Math.min(120,Math.max(44,el.scrollHeight))+'px';}}
 document.addEventListener('input',e=>{if(e.target.id==='chat-input'){fitChatInput();e.target.removeAttribute('aria-invalid');const error=$('#chat-error');if(error)error.textContent='';}});
 function capture(){const form=$('#chat-form'),input=$('#chat-input'),log=$('.chat-log');if(!form)return null;const id=form.dataset.goal,s={id,focus:document.activeElement===input,start:input?.selectionStart,end:input?.selectionEnd,scroll:log?.scrollTop||0,bottom:!log||log.scrollHeight-log.scrollTop-log.clientHeight<70};positions[id]=s;return s;}
-function render(force=false){const next=JSON.stringify(state);if(!force&&next===fingerprint)return;if(!force&&(document.querySelector('#mention-menu')?.hidden===false||document.querySelector('#discussion-dialog')?.open))return;if(!force&&document.querySelector('.select-trigger[aria-expanded=true]'))return;if(!force&&!busy&&document.activeElement?.closest('[data-pick-estimate],[data-cloud-receipt],[data-voucher-form],#market-search,#market-results,#flow-settings-form,#flow-data-form,#image-config-form,#facts-form,#ledger-form,#skill-data-form,#reference-form,#source-search,#kb-search,#kb-goal-form,#business-data-form,#copy-data-form,#search-config-form,#search-query-form'))return;const restoreSearch=document.activeElement?.id==='history-search';capture();discussionUI.hide();fingerprint=next;$('#main').classList.toggle('conversation-page',state.view==='overview'&&!state.home&&!!current());$('#main').innerHTML=({overview:workspace,flows:flowsUI.page,tasks:globalTasks,artifacts:globalArtifacts,knowledge:workforceUI.knowledgePage,'ai-config':workforceUI.capabilityPage,runs:runsView}[state.view])();if(restoreSearch)$('#history-search')?.focus({preventScroll:true});$('#page-crumb').textContent=viewNames[state.view];$('#nav-count').textContent=state.goals.flatMap(g=>g.tasks).filter(t=>['waiting','approval','confirmation','acceptance'].includes(t.status)).length;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view.split('/')[0]===state.view);b.setAttribute('aria-current',b.dataset.view.split('/')[0]===state.view?'page':'false');});const more=$('[data-nav-more]');if(more){const active=['ai-config','tasks','runs','artifacts'].includes(state.view);more.classList.toggle('active',active);more.setAttribute('aria-current',active?'page':'false');}const saved=positions[state.goal]||{bottom:true},log=$('.chat-log'),input=$('#chat-input');fitChatInput();if(log)log.scrollTop=saved.bottom?log.scrollHeight:saved.scroll;if(input&&saved.focus){input.focus({preventScroll:true});input.setSelectionRange(saved.start,saved.end);}imagesUI.hydrate();}
+function render(force=false){const next=JSON.stringify(state);if(!force&&next===fingerprint)return;if(!force&&(document.querySelector('#mention-menu')?.hidden===false||document.querySelector('#discussion-dialog')?.open))return;if(!force&&document.querySelector('.select-trigger[aria-expanded=true]'))return;if(!force&&!busy&&document.activeElement?.closest('[data-pick-estimate],[data-cloud-receipt],[data-voucher-form],#market-search,#market-results,#flow-settings-form,#flow-data-form,#image-config-form,#facts-form,#ledger-form,#skill-data-form,#reference-form,#source-search,#kb-search,#kb-goal-form,#business-data-form,#copy-data-form,#search-config-form,#search-query-form'))return;const search=document.activeElement?.id==='history-search'?document.activeElement:null;const focusedRow=document.activeElement?.closest('.inbox-row')?.dataset.open;capture();discussionUI.hide();fingerprint=next;$('#main').classList.toggle('conversation-page',state.view==='overview'&&!state.home&&!!current());$('#main').innerHTML=({overview:workspace,flows:flowsUI.page,tasks:globalTasks,artifacts:globalArtifacts,knowledge:workforceUI.knowledgePage,'ai-config':workforceUI.capabilityPage,runs:runsView}[state.view])();if(search&&$('#history-search')){const input=$('#history-search');input.focus({preventScroll:true});input.setSelectionRange(search.selectionStart,search.selectionEnd);}
+ if($('.task-history')&&(historyReturn||focusedRow)){
+  const id=historyReturn?.id||focusedRow;
+  const row=Array.from(document.querySelectorAll('.inbox-row')).find(button=>button.dataset.open===id);
+  (row||$('#history-search'))?.focus({preventScroll:true});
+  if(historyReturn){window.scrollTo(0,historyReturn.scroll);historyReturn=null;}
+ }
+ $('#page-crumb').textContent=viewNames[state.view];$('#nav-count').textContent=state.goals.flatMap(g=>g.tasks).filter(t=>['waiting','approval','confirmation','acceptance'].includes(t.status)).length;document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view.split('/')[0]===state.view);b.setAttribute('aria-current',b.dataset.view.split('/')[0]===state.view?'page':'false');});const more=$('[data-nav-more]');if(more){const active=['ai-config','tasks','runs','artifacts'].includes(state.view);more.classList.toggle('active',active);more.setAttribute('aria-current',active?'page':'false');}const saved=positions[state.goal]||{bottom:true},log=$('.chat-log'),input=$('#chat-input');fitChatInput();if(log)log.scrollTop=saved.bottom?log.scrollHeight:saved.scroll;if(input&&saved.focus){input.focus({preventScroll:true});input.setSelectionRange(saved.start,saved.end);}imagesUI.hydrate();}
 function applyRoute(route){
  const aliases={applications:'flows',capabilities:'flows',connections:'ai-config/models',agents:'ai-config/legacy',sources:'ai-config/sources'};
  route=route.split('/')[0]==='employees'?'flows':aliases[route]||route;const [view,tab]=route.split('/');state.view=viewNames[view]?view:'overview';
@@ -180,17 +203,23 @@ function openGoal(id,tab='discussion'){capture();state.goal=id;state.tab=tab;sta
 function receive(g){changeEpoch++;const i=state.goals.findIndex(x=>x.id===g.id);if(i<0)state.goals.unshift(g);else state.goals[i]=g;render();}
 async function act(kind,extra={},id=state.goal){const result=await post(`goals/${id}/${kind==='offerDetail'&&extra.detail?.base64?'offer-photo':'actions'}`,{kind,expectedVersion:state.goals.find(g=>g.id===id)?.version,...extra});receive(result);return result;}
 async function refresh(){const epoch=changeEpoch;try{const health=await api('health');if(!canEnter(health))return;const [agents,goals,runs,workforce,sources,knowledge,workspaces,integrations,images,flows]=await Promise.all([api('agents'),api('goals'),api('runs'),api('workforce'),api('sources'),api('knowledge'),api('workspaces'),api('integrations'),api('images'),api('flows')]);if(busy||epoch!==changeEpoch)return;state.agents=agents;state.goals=goals;state.runs=runs;state.workforce=workforce;state.sources=sources;state.knowledge=knowledge;state.workspaces=workspaces;state.integrations=integrations;state.images=images;state.flows=flows;setupUI.update();await updateRunPreview();$('#connection-state').textContent='服务已连接';render();}catch(err){$('#connection-state').textContent='连接中断';if(!state.agents.length)$('#main').innerHTML='<div class="panel empty-state"><h2>暂时无法连接</h2><p>请确认服务已启动，页面将自动重试。</p></div>';}}
-function openCreate(text='',kind='analysis',only=null,source=null){sourceGoal=source;createMembersTouched=false;createKindManual=kind==='listing'||!!only;createRequestId=globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);createStep=1;createPermission='draft';$('#goal').value=text;$('#team-recommendation').textContent='';$('#goal-kind').value=kind;$('#create-store').value='未关联店铺';$('#create-store').readOnly=false;$('#create-connected-store').innerHTML='<option value="">未关联店铺 · 仅草案</option>'+(state.integrations?.stores||[]).filter(s=>s.enabled).map(s=>`<option value="${s.id}">${esc(s.name)} · ${s.platform==='taobao'?'淘宝 / 天猫':s.platform==='douyin'?'抖店':esc(s.platform)}</option>`).join('');$('#create-sku').value=kind==='listing'?'DEMO-JF-001':'全店汇总';$('#create-product').value=kind==='listing'?'角阀':'经营分析';$('#create-price').value='29.90';$('#form-error').textContent='';$('#create-engine').value=only&&state.agents.some(a=>a.id===only)?'legacy':only?'team':'flow';$('#team-selection').value=only?'manual':'auto';syncTeamChoice();updateCreateMembers(kind,only);$('#goal-advanced').hidden=!only;$('#goal-advanced').open=!!only;showCreateStep();pickHint();$('#task-dialog').showModal();$('#goal').focus();}
-$('#pick-example').onclick=()=>{$('#create-engine').value='flow';$('#goal').value='在 1688 上找高性价比、高利润的露营灯';syncTeamChoice();$('#form-error').textContent='';$('#goal').focus();$('#goal').setSelectionRange($('#goal').value.length-3,$('#goal').value.length);};
-function pickHint(){const hint=$('#pick-intent'),intent=$('#create-engine').value==='flow'&&sourcingIntent($('#goal').value);hint.hidden=!intent;if($('#create-engine').value==='flow')$('#submit-task').textContent=intent?.query?'打开 1688 并开始选品 ↗':'交给总控并开始 ↗';hint.textContent=intent?(intent.query?'将打开 1688 搜索「'+intent.query+'」，并比较商品报价。':'加上品类即可开始，例如「在 1688 找露营灯」。'):'';}
+function openCreate(text='',kind='analysis',only=null,source=null){sourceGoal=source;createMembersTouched=false;createKindManual=kind==='listing'||!!only;createRequestId=globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);createStep=1;createPermission='draft';$('#goal').value=text;$('#team-recommendation').textContent='';$('#goal-kind').value=kind;$('#create-store').value='未关联店铺';$('#create-store').readOnly=false;$('#create-connected-store').innerHTML='<option value="">未关联店铺 · 仅草案</option>'+(state.integrations?.stores||[]).filter(s=>s.enabled).map(s=>`<option value="${s.id}">${esc(s.name)} · ${s.platform==='taobao'?'淘宝 / 天猫':s.platform==='douyin'?'抖店':esc(s.platform)}</option>`).join('');$('#create-sku').value=kind==='listing'?'DEMO-JF-001':'全店汇总';$('#create-product').value=kind==='listing'?'角阀':'经营分析';$('#create-price').value='29.90';clearCreateError();$('#create-engine').value=only&&state.agents.some(a=>a.id===only)?'legacy':only?'team':'flow';$('#team-selection').value=only?'manual':'auto';syncTeamChoice();updateCreateMembers(kind,only);$('#goal-advanced').hidden=!only;$('#goal-advanced').open=!!only;showCreateStep();pickHint();$('#task-dialog').showModal();$('#goal').focus();}
+$('#pick-example').onclick=()=>{$('#create-engine').value='flow';$('#goal').value='在 1688 上找高性价比、高利润的露营灯';syncTeamChoice();clearCreateError();$('#goal').focus();$('#goal').setSelectionRange($('#goal').value.length-3,$('#goal').value.length);};
+function pickHint(){const hint=$('#pick-intent'),intent=$('#create-engine').value==='flow'&&sourcingIntent($('#goal').value);hint.hidden=!intent;if($('#create-engine').value==='flow')$('#submit-task').textContent=intent?.query?'打开 1688 并开始选品':'创建任务';hint.textContent=intent?(intent.query?'将打开 1688 搜索「'+intent.query+'」，并比较商品报价。':'加上品类即可开始，例如「在 1688 找露营灯」。'):'';}
 $('#goal').addEventListener('input',pickHint);
 function syncTeamChoice(){pickHint();const flow=$('#create-engine').value==='flow';$('label[for=team-selection]').hidden=flow;$('label[for=goal-kind]').hidden=flow;$('#goal-kind').hidden=flow;$('#team-selection').hidden=flow;const manual=$('#create-engine').value==='legacy'||$('#team-selection').value==='manual';$('#manual-team-options').hidden=flow||!manual;$('#auto-team-hint').hidden=flow||manual;$('#team-selection').disabled=$('#create-engine').value==='legacy';}
 $('#team-selection').onchange=syncTeamChoice;
 $('#create-engine').addEventListener('change',syncTeamChoice);
-function showCreateStep(){const first=createStep===1;$('#create-step-one').hidden=!first;$('#create-step-two').hidden=first;$('#create-back').hidden=first;$('#create-hint').hidden=!first;$('#new-step').textContent=$('#create-engine').value==='flow'?'新建目标 · 总控自主规划':'新建目标 · '+createStep+' / 2';$('#submit-task').textContent=$('#create-engine').value==='flow'?'交给总控并开始 ↗':first?'下一步：确认范围 →':'创建目标并进入协作 ↗';if(!first){const listing=$('#goal-kind').value==='listing';$('#scope-preview').innerHTML=`<h3>${esc($('#goal').value)}</h3>${scopeRow('负责成员',$('#create-engine').value==='team'?($('#team-selection').value==='auto'?'总控将按目标自动安排，无需手动选人':'保留你指定的成员'):listing?'商品运营数字员工':'经营分析数字员工')}${scopeRow('业务范围','由下方填写的店铺与 SKU / 分析范围确定')}${scopeRow('交付标准',listing?(createPermission==='draft'?'核验规格、准备上新草案并验收；不执行发布':'核验规格、准备草案；审批发布后观察7天'):'形成分析建议，负责人确认验收')}${scopeRow('资料准备度',listing?'待核验 · 创建后补齐演示资料':'创建后自动检查各员工所需资料')}`;$('#goal-permission').disabled=!listing||$('#create-engine').value==='team';$('#goal-permission').value=listing&&$('#create-engine').value!=='team'?createPermission:'draft';$('#create-price').parentElement.hidden=!listing;$('#scope-note').textContent='填写业务范围后，商品资料和经营账单在目标内补充。输入数据未自动同步店铺；发布动作仍为模拟。';}}
+function showCreateStep(){const first=createStep===1;$('#create-step-one').hidden=!first;$('#create-step-two').hidden=first;$('#create-back').hidden=first;const flow=$('#create-engine').value==='flow';
+ $('#new-step').hidden=flow;
+ $('#new-step').textContent=flow?'':'第 '+createStep+' / 2 步';
+ $('#new-title').textContent=first?'新建任务':'确认任务范围';
+ if(first)$('#goal').after($('#form-error'));else $('#task-form .dialog-footer').before($('#form-error'));
+ if(flow)pickHint();else $('#submit-task').textContent=first?'下一步':'创建任务';
+ if(!first){const listing=$('#goal-kind').value==='listing';$('#scope-preview').innerHTML=`<h3>${esc($('#goal').value)}</h3>${scopeRow('负责成员',$('#create-engine').value==='team'?($('#team-selection').value==='auto'?'总控将按目标自动安排，无需手动选人':'保留你指定的成员'):listing?'商品运营数字员工':'经营分析数字员工')}${scopeRow('业务范围','由下方填写的店铺与 SKU / 分析范围确定')}${scopeRow('交付标准',listing?(createPermission==='draft'?'核验规格、准备上新草案并验收；不执行发布':'核验规格、准备草案；审批发布后观察7天'):'形成分析建议，负责人确认验收')}${scopeRow('资料准备度',listing?'待核验 · 创建后补齐演示资料':'创建后自动检查各员工所需资料')}`;$('#goal-permission').disabled=!listing||$('#create-engine').value==='team';$('#goal-permission').value=listing&&$('#create-engine').value!=='team'?createPermission:'draft';$('#create-price').parentElement.hidden=!listing;$('#scope-note').textContent='填写业务范围后，商品资料和经营账单在目标内补充。输入数据未自动同步店铺；发布动作仍为模拟。';}}
 $('#goal-kind').onchange=()=>{createKindManual=true;const listing=$('#goal-kind').value==='listing';$('#create-sku').value=listing?'DEMO-JF-001':'全店汇总';$('#create-product').value=listing?'角阀':'经营分析';updateCreateMembers($('#goal-kind').value);};
 $('#goal-permission').onchange=e=>{createPermission=e.target.value;showCreateStep();};
-$('#close-dialog').onclick=()=>$('#task-dialog').close();$('#create-back').onclick=()=>{createStep=1;$('#form-error').textContent='';showCreateStep();$('#goal').focus();};
+$('#close-dialog').onclick=()=>$('#task-dialog').close();$('#create-back').onclick=()=>{createStep=1;clearCreateError();showCreateStep();$('#goal').focus();};
 async function recommendTeam(){
  const text=$('#goal').value.trim();if(!text||$('#create-engine').value!=='team')return;
  let recommendation=await post('workforce/recommend',{text});if(!recommendation.recipes.length&&!recommendation.employeeIds.length){$('#team-recommendation').textContent='暂未匹配业务工作包，请手动选择员工；不会猜测不存在的能力。';return;}
@@ -200,13 +229,48 @@ async function recommendTeam(){
  $('#team-recommendation').textContent='按关键词与已装配能力推荐：'+(recommendation.labels||recommendation.recipes.map(r=>r.name)).join(' → ')+'。请确认成员和业务范围；不是模型自主规划。';
 }
 $('#recommend-team').onclick=async()=>{const b=$('#recommend-team');b.disabled=true;try{await recommendTeam();}catch(err){$('#form-error').textContent=err.message;}finally{b.disabled=false;}};
-$('#goal').addEventListener('invalid',e=>{e.preventDefault();$('#form-error').textContent='先写下想完成的目标，例如「在 1688 上找水龙头」。';$('#goal').focus();});
-$('#task-form').onsubmit=async e=>{e.preventDefault();if($('#create-engine').value==='flow'){
- const b=e.submitter,text=$('#goal').value.trim(),intent=sourcingIntent(text);
- if(intent&&!intent.query){$('#form-error').textContent='想找哪个品类？在目标里加上商品名称，例如「在 1688 上筛选高性价比的露营灯」。';$('#goal').focus();return;}
- const tab=intent?pickBrowser.reserve():null;b.disabled=true;
+function clearCreateError(){
+ $('#task-form [aria-invalid=true]')?.removeAttribute('aria-invalid');
+ $('#form-error').textContent='';
+}
+function createFieldError(field,message){
+ const error=$('#form-error');
+ field.after(error);
+ field.setAttribute('aria-invalid','true');
+ field.setAttribute('aria-describedby',field.id==='goal'?'form-error pick-intent':'form-error');
+ error.textContent=message;
+ field.focus();
+}
+$('#task-form').addEventListener('input',clearCreateError);
+$('#task-form').onsubmit=async e=>{
+ e.preventDefault();
+ const goal=$('#goal'),text=goal.value.trim(),button=$('#submit-task');
+ if(button.disabled)return;
+ clearCreateError();
+ if(!text||text.length>2000){
+  createFieldError(goal,text?'请把任务要求缩短到 2000 字以内。':'写下想完成的事，再创建任务。');
+  return;
+ }
+ if($('#create-engine').value==='flow'){
+ const b=button,intent=sourcingIntent(text);
+ if(intent&&!intent.query){createFieldError(goal,'想找哪个品类？请在任务要求里加上商品名称。');return;}
+ const tab=intent?pickBrowser.reserve():null;b.disabled=true;b.textContent='正在创建…';
  try{const g=await post('goals',{executionMode:'flow',text,requestId:createRequestId});receive(g);$('#task-dialog').close();openGoal(g.id);if(intent)pickBrowser.openSearch(g,tab);}
- catch(error){tab?.close();$('#form-error').textContent=error.message;}finally{b.disabled=false;}return;}const automatic=$('#create-engine').value==='team'&&$('#team-selection').value==='auto',members=[...document.querySelectorAll('[name=agents]:checked')].map(x=>x.value);if(!$('#goal').value.trim()||(!automatic&&!members.length)){$('#form-error').textContent='请填写目标，并至少邀请一位配置就绪的成员。';return;}if(createStep===1){if(!createKindManual){$('#submit-task').disabled=true;try{const suggestion=await post('goal-preview',{text:$('#goal').value});const previousKind=$('#goal-kind').value;$('#goal-kind').value=suggestion.kind;if(previousKind!==suggestion.kind&&!createMembersTouched&&$('#create-engine').value==='legacy')updateCreateMembers(suggestion.kind);$('#create-sku').value=suggestion.sku||(suggestion.kind==='listing'?'DEMO-JF-001':'全店汇总');$('#create-product').value=suggestion.product||(suggestion.kind==='listing'?'角阀':'经营分析');}catch(err){$('#form-error').textContent=err.message;return;}finally{$('#submit-task').disabled=false;}}createStep=2;showCreateStep();$('#new-title').tabIndex=-1;$('#new-title').focus();return;}const b=$('#submit-task');b.disabled=true;busy=true;try{const g=await post('goals',{text:$('#goal').value,...($('#create-engine').value==='team'?{employeeIds:automatic?[]:members,teamSelection:automatic?'auto':'manual',startCollaboration:true}:{members}),kind:$('#goal-kind').value,permission:$('#goal-permission').value,sourceGoal,requestId:createRequestId,storeConnectionId:$('#create-connected-store').value||undefined,scope:{store:$('#create-store').value,sku:$('#create-sku').value,product:$('#create-product').value},proposal:$('#goal-kind').value==='listing'?{price:$('#create-price').value,title:$('#create-product').value}:undefined});receive(g);$('#task-dialog').close();openGoal(g.id);toast('目标、协作群与任务已同时创建');}catch(err){$('#form-error').textContent=err.message;}finally{b.disabled=false;busy=false;}};
+ catch(error){tab?.close();$('#form-error').textContent=error.message;}finally{b.disabled=false;pickHint();}return;}const automatic=$('#create-engine').value==='team'&&$('#team-selection').value==='auto',members=[...document.querySelectorAll('[name=agents]:checked')].map(x=>x.value);if(!automatic&&!members.length){
+ $('#goal-advanced').open=true;
+ $('#form-error').textContent='请选择至少一位已就绪的成员。';
+ $('#manual-team-options').append($('#form-error'));
+ const choice=$('#agent-options input:not(:disabled)')||$('#recommend-team');
+ choice.focus();
+ return;
+ }
+ if(createStep===1){if(!createKindManual){$('#submit-task').disabled=true;try{const suggestion=await post('goal-preview',{text:$('#goal').value});const previousKind=$('#goal-kind').value;$('#goal-kind').value=suggestion.kind;if(previousKind!==suggestion.kind&&!createMembersTouched&&$('#create-engine').value==='legacy')updateCreateMembers(suggestion.kind);$('#create-sku').value=suggestion.sku||(suggestion.kind==='listing'?'DEMO-JF-001':'全店汇总');$('#create-product').value=suggestion.product||(suggestion.kind==='listing'?'角阀':'经营分析');}catch(err){$('#form-error').textContent=err.message;return;}finally{$('#submit-task').disabled=false;}}createStep=2;showCreateStep();$('#new-title').tabIndex=-1;$('#new-title').focus();return;}
+ const price=$('#create-price');
+ if($('#goal-kind').value==='listing'&&!price.validity.valid){
+  createFieldError(price,'售价应为 0.01 至 100000 元，最多保留两位小数。');
+  return;
+ }
+ const b=button;b.disabled=true;b.textContent='正在创建…';busy=true;try{const g=await post('goals',{text:$('#goal').value,...($('#create-engine').value==='team'?{employeeIds:automatic?[]:members,teamSelection:automatic?'auto':'manual',startCollaboration:true}:{members}),kind:$('#goal-kind').value,permission:$('#goal-permission').value,sourceGoal,requestId:createRequestId,storeConnectionId:$('#create-connected-store').value||undefined,scope:{store:$('#create-store').value,sku:$('#create-sku').value,product:$('#create-product').value},proposal:$('#goal-kind').value==='listing'?{price:$('#create-price').value,title:$('#create-product').value}:undefined});receive(g);$('#task-dialog').close();openGoal(g.id);toast('任务已创建');}catch(err){$('#form-error').textContent=err.message;}finally{b.disabled=false;b.textContent='创建任务';busy=false;}};
 function download(a){const text=`# ${a.title}\n\n版本：v${a.version} · ${artNames[a.status]}\n\n> 根据录入资料准备，未自动核对外部平台\n\n${a.body}\n\n来源：${a.evidence}`;const url=URL.createObjectURL(new Blob([text],{type:'text/markdown;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=a.title+'-v'+a.version+'.md';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('#team-close').onclick=()=>$('#team-dialog').close();
 $('#team-edit-mode').onchange=()=>{$('#team-edit-members').hidden=$('#team-edit-mode').value==='auto';};
@@ -236,13 +300,14 @@ document.addEventListener('click',async e=>{const b=e.target.closest('button');i
  if(b.hasAttribute('data-nav-more'))$('#navigation-dialog').showModal();
  if(b.hasAttribute('data-nav-close'))$('#navigation-dialog').close();
  if(b.hasAttribute('data-clear-search')){const search=$('#history-search');search.value='';filterHistory('');search.focus();}
+ if(b.hasAttribute('data-history-sort')){newestFirst=!newestFirst;filterHistory(historySearch);$('[data-history-sort]').focus();}
  if(b.dataset.inboxFilter){inboxFilter=b.dataset.inboxFilter;render(true);document.querySelector('[data-inbox-filter="'+inboxFilter+'"]')?.focus();}
  if(b.hasAttribute('data-inbox-home'))go('overview/home');
  if(b.dataset.view)go(b.dataset.view==='overview'?'overview/home':b.dataset.view);
- if(b.dataset.open)openGoal(b.dataset.open,b.dataset.openTab||'discussion');
+ if(b.dataset.open){if(b.matches('.inbox-row'))historyReturn={id:b.dataset.open,scroll:window.scrollY};openGoal(b.dataset.open,b.dataset.openTab||'discussion');}
  if(b.dataset.tab&&Object.hasOwn(tabNames,b.dataset.tab)&&state.view==='overview'&&current()){openGoal(state.goal,b.dataset.tab);}
  if(b.dataset.filter){state.filter=b.dataset.filter;render(true);}
- if(b.hasAttribute('data-details')){state.details=!state.details;render(true);}
+ if(b.hasAttribute('data-details')){state.details=!state.details;render(true);$(state.details?'.goal-context .details-close':'.goal-header [data-details]')?.focus({preventScroll:true});}
  if(b.dataset.mention){targets[state.goal]=b.dataset.mention;state.tab='discussion';state.details=false;render(true);$('#chat-input')?.focus();}
  if(b.dataset.action){if(busy)return;busy=true;ownsAction=true;b.disabled=true;const g=current(),extra={};if(b.dataset.action==='approve'){extra.version=g.version;extra.approvalId=g.approval.id;}if(b.dataset.mismatch)extra.mismatch=true;await act(b.dataset.action,extra);if(b.dataset.action==='facts'){state.tab='tasks';render(true);}if(b.dataset.action==='observe'||b.dataset.action==='complete'){state.tab='review';render(true);}toast('操作已记录');}
  if(b.hasAttribute('data-edit')){const g=current();$('#edit-dialog').dataset.goal=g.id;$('#publish-title').value=g.proposal.title;$('#publish-price').value=g.proposal.price;$('#edit-error').textContent='';$('#edit-dialog').showModal();}

@@ -15,7 +15,7 @@ export function createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowled
   return `<div class="bridge-check"><strong>${esc(env.host)}环境检查</strong><ul><li>官方 SDK · ${env.sdkInstalled?'已安装':'待安装'}</li><li>桥接开关 · ${env.enabled?'已启用':'待启用'}</li><li>账号调用 · ${connected?'上次测试成功':m.lastTest?.status==='failed'?'上次测试失败':'待测试'}</li></ul><details ${connected?'':'open'}><summary>连接当前服务端</summary><p>在运行工作台的同一个终端操作。Codespaces 请将 3000 端口设为 Private。</p><ol><li>安装项目依赖 <code>npm run setup:codex</code></li><li>检查登录 <code>npx --no-install codex login status</code>。需要登录时执行 <code>npx --no-install codex login --device-auth</code>，按终端提示完成授权。</li><li>停止旧服务，在 Bash 中执行 <code>ENABLE_CODEX_LOCAL=1 npm start</code>，刷新此页并测试连接。</li></ol></details></div>`;
  }
  function applicationsPage(){return head('工作应用','选择要完成的工作，提供资料，交给数字员工处理。')+'<div class=applications-page>'+imagesUI.card()+contentUI.page()+businessUI.page()+'</div>';}
- function knowledgePage(){return head('知识库','管理业务资料，并用实际问题检查能检索到哪些内容。')+knowledgeUI.page();}
+ function knowledgePage(){return knowledgeUI.page();}
  function capabilityPage(){const d=data(),tab=state.configTab||'models';let body='';
  if(tab==='market')body=setupUI.marketPage();
  else if(tab==='images')body=imagesUI.configPage();
