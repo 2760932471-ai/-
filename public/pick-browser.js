@@ -100,7 +100,7 @@ export function createPickBrowser({state,act,esc,render}){
   const g=state.goals.find(x=>x.id===f.dataset.pickEstimate);if(!g)return;
   const retail=f.elements.retail.valueAsNumber,expenses=f.elements.expenses.valueAsNumber;
   if(!(retail>0)||!(expenses>=0)){f.querySelector('[role=status]').textContent='请填入售价和单件其他成本；确认为零的成本可填 0。';return;}
-  estimates.set(storageKey(g),{retail,expenses});render(true);
+  estimates.set(storageKey(g),{retail,expenses,grams:sourcingIntent(g.text)?.grams});render(true);
  });
  document.addEventListener('paste',async e=>{
   const field=e.target.closest('[data-pick-paste]');if(!field)return;e.preventDefault();

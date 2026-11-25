@@ -47,12 +47,27 @@ export async function searchPublicOffers(query){
 }
 
 export function publicOfferDetail(html,sku){
- const facts=[],schemaImages=[];
+ const facts=[],schemaImages=[],quotes=[];
  for(const match of html.matchAll(/<script\b[^>]*\btype=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){
   try{
    const data=JSON.parse(match[1]);
    for(const item of [data['@graph']||data].flat()){
     if(item?.['@type']!=='Product'||item.url&&new URL(item.url,'https://detail.1688.com').pathname!=='/offer/'+sku+'.html')continue;
+    for(const o of [item.offers].flat().filter(Boolean)){
+     const url=o.url||item.url;
+     if(!url)continue;
+     const spec=o.priceSpecification;
+     const directPrice=o.price??o.lowPrice;
+     const currency=directPrice!=null?o.priceCurrency:spec?.priceCurrency;
+     if(currency!=='CNY')continue;
+     const price=Number(directPrice??spec?.price);
+     const quantity=spec?.referenceQuantity;
+     const unit={KGM:'公斤',GRM:'克'}[quantity?.unitCode]||quantity?.unitText;
+     const samePrice=Number(spec?.price)===price&&(!spec?.priceCurrency||spec.priceCurrency===currency);
+     const basis=samePrice&&Number(quantity?.value)>0&&/^(?:斤|公斤|千克|克|kg|g)$/i.test(unit)?'元/'+Number(quantity.value)+unit:'计价单位待核实';
+     const [row]=cleanOffers([{url:new URL(url,'https://detail.1688.com').href,title:item.name,price,terms:'详情页人民币展示报价，'+basis+'，起订量待核实'}]);
+     if(row?.sku===sku)quotes.push(row);
+    }
     for(const p of [item.additionalProperty||[]].flat())facts.push(p.name+'：'+p.value);
     for(const [key,label]of [['material','材质'],['color','颜色'],['size','尺寸']])if(typeof item[key]==='string')facts.push(label+'：'+item[key]);
     for(const image of [item.image].flat())schemaImages.push(typeof image==='string'?image:image?.url);
@@ -65,7 +80,7 @@ export function publicOfferDetail(html,sku){
  }
  const scripts=Array.from(html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi),m=>m[1]);
  const photos=offerPhotos(embeddedOfferCandidates(sku,scripts),schemaImages,meta);
- return {sku,photo:photos[0]||'',photos,facts};
+ return {sku,photo:photos[0]||'',photos,facts,...(quotes.length?{quote:cleanOffers(quotes)[0]}:{})};
 }
 
 export async function fetchOfferDetail(sku){

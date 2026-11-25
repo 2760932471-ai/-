@@ -64,3 +64,36 @@ test('blocked comparison exposes missing inputs and resumes in place with operat
  await p.pump();await p.pump();const updated=get(p,g);assert.equal(updated.stage,'review');assert.equal(updated.version,1);
  assert.equal(updated.flow.nodes[0].runId,evidenceRun);assert(updated.artifacts.some(a=>a.body.includes('报价单 B')));
 });
+
+test('a chained task, final report and later discussion can recall evidence from an indirect predecessor',async t=>{
+ const raw=basicFlow({text:'制作标题和卖点'});
+ const title=raw.nodes.find(n=>n.capability==='copy.titles');
+ const copy=raw.nodes.find(n=>n.capability==='copy.selling_points');
+ copy.dependsOn=[title.id];raw.nodes.at(-1).dependsOn=[copy.id];
+ const {p}=await make(t,{
+  modelCall:async(model,messages)=>{
+   if(messages.length===1)return {message:{content:'连接正常'}};
+   const input=JSON.parse(messages[1].content);
+   if(input.message){
+    assert(input.memory.steps.some(s=>s.files.some(f=>f.excerpt?.includes('样品包装为纸袋'))));
+    return {message:{content:JSON.stringify({intent:'discussion',answer:'这次依据的是样品纸袋包装记录。'})}};
+   }
+   return {message:{content:JSON.stringify(raw)}};
+  },
+  flowSkillCall:async(id,input)=>{
+   if(id==='copy.selling_points'){
+    assert(input.taskMemory.steps.some(s=>s.capability==='evidence.collect'));
+    assert(input.observations.some(a=>a.body.includes('样品包装为纸袋')));
+   }
+   const out=result(id);out.artifacts[0].body=id==='copy.titles'?'样品包装为纸袋':'包装卖点';return out;
+  }
+ });
+ await connectModel(t,p);
+ const g=await create(p,'为猫粮制作标题和卖点');
+ for(let i=0;i<4;i++)await p.pump();
+ assert.equal(get(p,g).stage,'review');
+ assert.match(get(p,g).artifacts.at(-1).body,/样品包装为纸袋/);
+ const response=await act(p,g,'message',{text:'包装判断依据是什么？'});
+ assert.match(response.messages.at(-1).text,/纸袋包装记录/);
+ assert.equal(response.version,1);
+});

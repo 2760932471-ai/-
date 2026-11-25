@@ -1,8 +1,10 @@
-# AI数字员工协作工作台 · V0.25.1
+# AI数字员工协作工作台 · V0.26.0
+
+总控会从任务断点找回来源、费用假设和交付物。在原讨论里问“为什么选这款”或“卖 59.9 元还能赚多少”，即可沿用已存报价复核。新一轮同品类选品会参考同店近期成功的取数路径，重新读取商品价格。
 
 协同工作台直接发送改图意见即可沿用已选商品和参考图重新出图。知识库支持 JPG、PNG、WebP 图片（8 MB）以及 MP4、WebM 视频（32 MB），通过标题、说明和字幕检索并打开原件。
 
-[下载 V0.25.1 启动包](deliverables/ai-platform-0.25.1.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
+[下载 V0.26.0 启动包](deliverables/ai-platform-0.26.0.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
 
 图片生成支持 Codex 桥接。服务端完成 `npm run setup:codex` 和 `npx --no-install codex login --device-auth` 后，用 `ENABLE_CODEX_LOCAL=1 npm start` 启动。在「AI基础能力配置 → 图片生成」选择「Codex 桥接 · ChatGPT 账户」，启用并保存。「检查 Codex 连接」读取登录状态与账户服务，不生成图片。目标任务通过原生图片工具生成，收到 PNG 后交付；模型或账户没有生图权限时会显示失败。
 
@@ -148,7 +150,7 @@ npm run pack
 npm run deploy:preview
 ```
 
-`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.25.1.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
+`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.26.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
 
 `src/workforce/`包含能力目录、Skill、员工配置、模型/API/Codex适配、执行循环与团队任务。`public/workforce.js`为员工和能力中心界面。旧版规则与模拟发布保留兼容，V0.2说明及PRD中未实现条款不能当作本版已交付能力。
 
