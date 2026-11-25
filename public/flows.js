@@ -9,7 +9,7 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
  }
  function intervention(g,n){
   if(g.paused)return '<button class="primary" data-action="pause">恢复后续执行</button>';
-  if(g.flow.calls>=g.flow.policy?.maxCalls)return '<p>本轮调用次数已用完。核对执行记录后，可在下方重新规划。</p>';
+  if(g.flow.calls>=g.flow.policy?.maxCalls)return '<small>本轮调用次数已用完。</small><button class="secondary" data-flow-replan="'+esc(g.id)+'">重新规划</button>';
   const id=esc(n.id),goal=esc(g.id);
   const retry='<button class="secondary" data-flow-retry="'+id+'" data-goal="'+goal+'">从此步继续</button>';
   if(n.status==='needs_input'&&n.capability==='product.compare')return '<button class="primary" data-offer-input="'+id+'" data-goal="'+goal+'">读取或补入候选报价</button><button class="text-button" data-view="ai-config/sources">管理供应商来源</button>'+retry;
@@ -24,26 +24,51 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   return (images?'<button class="primary" data-view="ai-config/images">打开连接配置</button>':'<button class="secondary" data-tab="facts">查看与补充资料</button>')+retry;
  }
  function panel(g){
-  const f=g.flow;
-  if(f.status==='awaiting_context')return `<section class="flow-panel"><h2>确认使用场景</h2><p>${esc(f.question)}</p><button class="secondary" data-tab="discussion">在讨论里回复</button></section>`;
-  const nodes=f.nodes,done=nodes.filter(n=>n.status==='succeeded').length;
+  const f=g.flow,nodes=f.nodes;
+  const done=nodes.filter(n=>n.status==='succeeded').length;
   const blocked=nodes.filter(n=>['failed','needs_input','needs_capability'].includes(n.status));
-  const active=nodes.find(n=>['running','waiting_external'].includes(n.status));
+  const active=nodes.filter(n=>['running','waiting_external'].includes(n.status));
+  const pick=nodes.find(n=>n.capability==='sourcing.1688');
   const status=g.paused?'已暂停':blocked.length?blocked.length+' 步待处理':label(f.status);
-  return `<section class="flow-panel" aria-label="任务流执行"><header class="flow-overview"><div><span class="flow-kicker">任务执行</span><h2>${esc(f.plan?.name||'规划执行步骤')}</h2></div>${badge(status,true)}</header>
-   <div class="flow-progress"><progress value="${done}" max="${nodes.length||1}" aria-label="已完成步骤"></progress><span>${done} / ${nodes.length} 步完成</span></div>
-   ${f.error?`<div class="flow-attention"><strong>规划未完成</strong><p>${esc(f.error)}</p><button class="secondary" data-view="flows">查看总控设置</button></div>`:''}
-   ${blocked.filter(n=>n.capability!=='sourcing.1688'||!pickBrowser.hasQuery(g)||g.paused||n.status!=='needs_input').map(n=>`<div class="flow-attention"><span class="flow-kicker">需要介入 · 第 ${nodes.indexOf(n)+1} 步</span><h3>${esc(n.title)}</h3><p>${esc(nodeIssue(n))}</p><div class="action-buttons">${intervention(g,n)}</div></div>`).join('')}
-   ${pickBrowser.panel(g)}
-   <ol class="execution-steps">${nodes.map((n,i)=>{
-    const dep=n.dependsOn.map(id=>nodes.find(x=>x.id===id)).filter(Boolean);
-    const waiting=dep.filter(x=>x.status!=='succeeded');
-    const checking=['pending','running'].includes(n.status)&&n.investigation;
-    const stateLabel=checking?(n.investigation.phase==='search'?'正在补查资料':'正在复核判断'):n.status==='pending'&&!waiting.length?'等待调度':label(n.status);
-    return `<li class="flow-node" data-flow-node="${esc(n.id)}" data-status="${esc(n.status)}"><span class="step-mark" aria-hidden="true">${n.status==='succeeded'?'✓':i+1}</span><div class="step-body"><div class="section-title"><strong>${esc(n.title)}</strong>${badge(stateLabel,active===n)}</div>${n.status==='pending'&&waiting.length?`<small>正在等「${waiting.map(x=>esc(x.title)).join('、')}」完成</small>`:''}${checking?`<p>${esc(n.investigation.query)} · ${esc(n.investigation.why)}</p>`:''}<details ${disclosure(g.id+'/'+g.version+'/step/'+n.id)}><summary>执行详情</summary><p>${esc(n.objective)} · ${esc(n.acceptance)}</p><small>${esc(state.flows?.capabilities.find(c=>c.id===n.capability)?.name||n.capability)} · 已执行 ${n.attempts} 次</small>${n.runId?`<button class="text-button" data-run="${esc(n.runId)}">查看本步运行记录</button>`:''}${n.capabilityProposal?`<p>${esc(n.capabilityProposal.description)}</p><pre>${esc(n.capabilityProposal.implementation)}</pre><p>验证要求：${esc(n.capabilityProposal.tests)}</p>`:''}</details></div></li>`;
-   }).join('')}</ol>
-   <details class="flow-policy" ${disclosure(g.id+'/'+g.version+'/policy')}><summary>规划依据与执行设置</summary><p>${esc(f.plan?.rationale||'正在选择任务路径。')}</p><small>${f.plan?.planner==='model'?'模型规划':'基础组合'} · 调用 ${f.calls} / ${f.policy?.maxCalls||24} 次 · 并行上限 ${f.policy?.parallel||3}</small></details>
-   <div class="action-buttons">${g.stage!=='completed'?`<button class="secondary" data-flow-replan="${esc(g.id)}" ${g.paused||f.status==='planning_running'?'disabled':''}>重新规划</button>`:`<button class="secondary" data-flow-save="${esc(g.id)}">保存为可复用任务流</button>`}<button class="text-button" data-view="flows">总控设置</button></div></section>`;
+  const pause='<button class="secondary" data-action="pause">暂停后续执行</button>';
+  const card=(title,body='',actions='')=>`<section class="flow-current" data-current-task-action tabindex="-1"><h3>${esc(title)}</h3>${body?`<p>${esc(body)}</p>`:''}${actions?`<div class="action-buttons">${actions}</div>`:''}</section>`;
+  let current;
+  if(g.paused){
+   current=card('后续执行已暂停','恢复后会从当前进度继续。','<button class="primary" data-action="pause">恢复执行</button>');
+  }else if(f.status==='awaiting_context'){
+   current=card('补充使用场景',f.question,'<button class="primary" data-tab="discussion">在讨论中回复</button>');
+  }else if(f.status==='planning_failed'){
+   current=card('规划未完成',f.error,`<button class="primary" data-flow-retry data-goal="${esc(g.id)}">重试规划</button><button class="text-button" data-view="flows">查看总控设置</button>`);
+  }else if(blocked.length){
+   current=blocked.map((n,i)=>{
+    const location=`data-flow-intervention="${esc(n.id)}" tabindex="-1" ${i===0?'data-current-task-action':''}`;
+    if(n===pick&&n.status==='needs_input'&&pickBrowser.hasQuery(g)&&!(f.calls>=f.policy?.maxCalls)){
+     return `<div ${location}>${pickBrowser.panel(g)}</div>`;
+    }
+    const actions=intervention(g,n)||'<button class="primary" data-tab="discussion">在讨论中补充商品信息</button>';
+    return `<section class="flow-attention" ${location}><span class="flow-kicker">待处理 · 第 ${nodes.indexOf(n)+1} 步</span><h3>${esc(n.title)}</h3><p>${esc(nodeIssue(n))}</p><div class="action-buttons">${actions}</div></section>`;
+   }).join('');
+  }else if(g.stage==='review'||g.stage==='completed'){
+   const delivered=g.artifacts.filter(a=>a.version===g.version&&a.status!=='superseded').length;
+   const files='<button class="secondary" data-tab="artifacts">查看交付物</button>';
+   current=g.stage==='review'?card('交付物待验收',`本轮共有 ${delivered} 份交付物，可逐项核对后确认。`,'<button class="primary" data-tab="review">查看并验收</button>'+files):card('任务已验收','',files);
+  }else{
+   const next=active.length?active:nodes.filter(n=>n.status==='pending'&&n.dependsOn.every(id=>nodes.some(parent=>parent.id===id&&parent.status==='succeeded')));
+   const title=!nodes.length?'正在规划执行步骤':active.length?'正在执行':'等待调度';
+   current=card(title,next.map(n=>n.title).join('、'),pause);
+  }
+  const steps=nodes.map((n,i)=>{
+   const waiting=n.dependsOn.map(id=>nodes.find(x=>x.id===id)).filter(x=>x&&x.status!=='succeeded');
+   const checking=['pending','running'].includes(n.status)&&n.investigation;
+   const stateLabel=checking?(n.investigation.phase==='search'?'正在补查资料':'正在复核判断'):n.status==='pending'&&!waiting.length?'等待调度':label(n.status);
+   return `<li class="flow-node" data-flow-node="${esc(n.id)}" data-status="${esc(n.status)}" tabindex="-1"><span class="step-mark" aria-hidden="true">${n.status==='succeeded'?'✓':i+1}</span><div class="step-body"><details ${disclosure(g.id+'/'+g.version+'/step/'+n.id)}><summary aria-label="${esc(n.title)} · ${esc(stateLabel)} · 执行详情"><strong>${esc(n.title)}</strong>${badge(stateLabel,active.includes(n))}</summary>${waiting.length?`<p>等待「${waiting.map(x=>esc(x.title)).join('、')}」完成</p>`:''}${checking?`<p>${esc(n.investigation.query)} · ${esc(n.investigation.why)}</p>`:''}<p>${esc(n.objective)} · ${esc(n.acceptance)}</p><small>${esc(state.flows?.capabilities.find(c=>c.id===n.capability)?.name||n.capability)} · 已执行 ${n.attempts||0} 次</small>${n.runId?`<button class="text-button" data-run="${esc(n.runId)}">查看本步运行记录</button>`:''}${n.capabilityProposal?`<p>${esc(n.capabilityProposal.description)}</p><pre>${esc(n.capabilityProposal.implementation)}</pre><p>验证要求：${esc(n.capabilityProposal.tests)}</p>`:''}</details></div></li>`;
+  }).join('');
+  return `<section class="flow-panel" aria-label="任务流执行"><header class="flow-overview"><h2>${esc(f.plan?.name||'任务执行')}</h2>${badge(status,true)}</header>
+   ${current}
+   ${nodes.length?`<div class="task-steps-heading"><h3 class="flow-step-heading">执行步骤</h3><small>${done} / ${nodes.length} 步完成</small><progress value="${done}" max="${nodes.length}" aria-label="已完成步骤"></progress></div><ol class="execution-steps">${steps}</ol>`:''}
+   ${pick?.status==='succeeded'?pickBrowser.panel(g):''}
+   <details class="flow-policy" ${disclosure(g.id+'/'+g.version+'/policy')}><summary>规划依据与执行设置</summary><p>${esc(f.plan?.rationale||'正在选择任务路径。')}</p><small>${f.plan?.planner==='model'?'模型规划':'基础组合'} · 调用 ${f.calls} / ${f.policy?.maxCalls||24} 次 · 并行上限 ${f.policy?.parallel||3}</small>
+   <div class="action-buttons">${g.stage==='completed'?`<button class="secondary" data-flow-save="${esc(g.id)}">保存为可复用任务流</button>`:`<button class="secondary" data-flow-replan="${esc(g.id)}" ${g.paused||f.status==='planning_running'?'disabled':''}>重新规划</button>${!g.paused&&(blocked.length||['review','planning_failed','awaiting_context'].includes(f.status))?pause:''}`}<button class="text-button" data-view="flows">总控设置</button></div></details></section>`;
  }
  function enterOffers(g,nodeId){
   const dialog=document.createElement('dialog');
@@ -118,8 +143,7 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
  function discussion(g,messageView,legacyReport){
   const final=['review','completed'].includes(g.stage);
   const old=final&&!g.messages.some(m=>m.reportVersion===g.version)?legacyReport(g):null;
-  const blocked=g.flow.nodes.find(n=>['failed','needs_input','needs_capability'].includes(n.status));
-  return `<div class="chat-area"><div class="chat-log" tabindex="0" aria-label="群聊消息记录">${discussionMessages(g,messageView)}${remakeAction(g)}${old?messageView({id:'report-'+g.version,derived:true,author:'目标总控',role:'coordinator',text:old.text,at:g.updatedAt,artifactIds:old.imageIds,links:[{title:'查看所选商品',url:old.source,snippet:''}]},g):''}${blocked?`<aside class="flow-attention"><strong>${blocked.error?.includes('所选商品的参考图')?'自动取图':'当前断点'} · ${esc(blocked.title)}</strong><p>${esc(nodeIssue(blocked))}</p><div class="action-buttons">${intervention(g,blocked)}<button class="text-button" data-tab="tasks">查看任务</button></div></aside>`:''}</div><form id="chat-form" class="chat-composer flow-composer" novalidate data-goal="${g.id}">${discussionUI.composer(g)}<label class="sr-only" for="chat-input">目标讨论</label><textarea id="chat-input" aria-describedby="chat-error" rows="1" maxlength="2000" placeholder="${g.flow.status==='awaiting_context'?'在这里回复总控的问题…':'说说你的想法，或告诉总控下一步怎么做…'}">${esc(drafts[g.id]||'')}</textarea><select id="chat-target" hidden><option value="coordinator">总控</option></select><div class="composer-bottom">${discussionUI.uploadButton(g)}<div class="flow-send">${discussionUI.modelPicker(g)}<span>Enter 发送</span><button class="primary" type="submit">发送 ↑</button></div></div><p id="chat-error" class="form-error" role="alert"></p></form></div>`;}
+  return `<div class="chat-area"><div class="chat-log" tabindex="0" aria-label="群聊消息记录">${discussionMessages(g,messageView)}${remakeAction(g)}${old?messageView({id:'report-'+g.version,derived:true,author:'目标总控',role:'coordinator',text:old.text,at:g.updatedAt,artifactIds:old.imageIds,links:[{title:'查看所选商品',url:old.source,snippet:''}]},g):''}</div><form id="chat-form" class="chat-composer flow-composer" novalidate data-goal="${g.id}">${discussionUI.composer(g)}<label class="sr-only" for="chat-input">目标讨论</label><textarea id="chat-input" aria-describedby="chat-error" rows="1" maxlength="2000" placeholder="${g.flow.status==='awaiting_context'?'在这里回复总控的问题…':'说说你的想法，或告诉总控下一步怎么做…'}">${esc(drafts[g.id]||'')}</textarea><select id="chat-target" hidden><option value="coordinator">总控</option></select><div class="composer-bottom">${discussionUI.uploadButton(g)}<div class="flow-send">${discussionUI.modelPicker(g)}<span>Enter 发送</span><button class="primary" type="submit">发送 ↑</button></div></div><p id="chat-error" class="form-error" role="alert"></p></form></div>`;}
  function context(g){
   const f=g.flow,blocked=f.nodes.filter(n=>['failed','needs_input','needs_capability'].includes(n.status));
   const done=f.nodes.filter(n=>n.status==='succeeded').length;

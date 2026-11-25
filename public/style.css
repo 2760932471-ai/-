@@ -269,7 +269,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,textarea:focus-visibl
 .history-search input {min-width:0;width:100%;height:42px;margin:0;padding:0;border:0;background:transparent;box-shadow:none}
 .history-search:focus-within {outline:2px solid var(--primary);outline-offset:1px}
 .history-panel {border:1px solid var(--line);border-radius:13px;overflow:hidden;background:white}
-.history-columns,.history-rows li {display:grid;grid-template-columns:minmax(0,1fr) 76px minmax(74px,10%) 108px 92px;align-items:center;gap:clamp(8px,1.25vw,20px);padding-inline:18px}
+.history-columns,.history-rows li {display:grid;grid-template-columns:minmax(0,1fr) 76px minmax(74px,10%) 108px 124px;align-items:center;gap:clamp(8px,1.25vw,20px);padding-inline:18px}
 .history-columns {min-height:42px;background:#f5f7fc;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
 .history-rows {list-style:none;margin:0;padding:0}
 .history-rows li+li {border-top:1px solid #e9edf4}
@@ -304,7 +304,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,textarea:focus-visibl
 .main-shell:has(.task-history)>footer {display:none}
 .back-to-goals {display:inline-flex;align-items:center;gap:7px;min-height:40px;padding:0 3px;border:0;background:transparent;font-size:13px}
 @container(max-width:820px){
- .history-columns,.history-rows li {grid-template-columns:minmax(0,1fr) 74px 70px 88px;gap:10px;padding-inline:12px}
+ .history-columns,.history-rows li {grid-template-columns:minmax(0,1fr) 74px 70px 124px;gap:10px;padding-inline:12px}
  .task-history .inbox-row {grid-column:1/4}
  .history-time,.history-columns span:nth-child(4) {display:none}
 }
@@ -314,7 +314,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible,textarea:focus-visibl
  .history-filters {gap:10px}
  .history-filters button {font-size:13px}
  .history-search input {font-size:16px}
- .history-sort-field {width:105px}
+ .history-sort-field {width:128px}
+ .history-controls .history-search {flex:1}
  .history-columns {display:none}
  .history-rows li {display:block;padding:0 12px 4px}
  .task-history .inbox-row {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;min-height:62px;padding:12px 0 0}
@@ -635,4 +636,146 @@ main:not(.conversation-page) {width:100%;max-width:1460px;padding:clamp(20px,2.6
   .chat-composer .attach-product>span {display:none}
   .chat-composer .attach-product {width:44px;justify-content:center}
   .composer-shortcuts,.composer-send,.flow-send {gap:4px}
+}
+
+/* Current step, task actions and team assignments */
+.discussion-task {
+  display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;
+  gap:12px;align-self:center;flex:none;width:min(992px,calc(100% - 36px));
+  min-height:56px;margin:8px auto;padding:8px 14px;text-align:left;
+  background:#f5f8ff;border:1px solid #dce5f3;border-radius:10px;color:#202c42;
+}
+.discussion-task:hover {background:#edf3ff;border-color:#aebfe2}
+.discussion-task:active {background:#e5eeff}
+.discussion-task-icon,.assignment-mark,.assignment-person {
+  display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:9px;
+  color:#315aad;background:#e5edfc;
+}
+.discussion-task-icon svg,.assignment-mark svg,.assignment-person svg {display:block;width:18px;height:18px}
+.discussion-task-body,.assignment-heading,.assignment-duty {display:grid;min-width:0;gap:2px}
+.discussion-task-title,.assignment-heading strong {font-size:14px;font-weight:620;line-height:1.45;overflow-wrap:anywhere}
+.discussion-task-meta,.assignment-heading small,.assignment-duty small {
+  color:#566578;font-size:12px;font-weight:400;line-height:1.45;overflow-wrap:anywhere;
+}
+.discussion-task-link {display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;color:#335cad;font-size:13px;font-weight:550}
+.discussion-task-link svg,.assignment-chevron {width:16px;height:16px;flex:none}
+.message-resource {display:inline-flex;align-items:center;gap:4px}
+.message-resource svg {width:14px;height:14px}
+.discussion-task:focus-visible,.team-assignment summary:focus-visible,.task-detail-panel summary:focus-visible {
+  outline:2px solid #416dce;outline-offset:2px;
+}
+
+.conversation-page .team-assignment {
+  margin:14px 0 18px 40px;max-width:760px;padding:0;
+  background:white;border:1px solid #dbe2ec;border-radius:12px;color:#263348;
+}
+.conversation-page .team-assignment .assignment-summary {
+  display:grid;grid-template-columns:30px minmax(0,1fr) 18px;align-items:center;gap:12px;
+  padding:11px 14px;min-height:50px;border-radius:inherit;list-style:none;cursor:pointer;
+}
+.team-assignment .assignment-summary::-webkit-details-marker {display:none}
+.team-assignment .assignment-summary:hover {background:#f6f8fc}
+.team-assignment .assignment-mark,.assignment-person {width:30px;height:30px;border-radius:8px;background:#f0f3f8;color:#59697f}
+.assignment-chevron {display:grid;place-items:center;color:#60718b}
+.team-assignment[open] .assignment-chevron {transform:rotate(180deg)}
+.team-assignment[open] .assignment-summary {border-radius:11px 11px 0 0}
+.assignment-body {padding:4px 16px 12px;border-top:1px solid #e6eaf1}
+.assignment-issue {margin:10px 0;padding:8px 10px;border-radius:6px;background:#f7f8fb;color:#465770;font-size:13px}
+.team-assignment[data-tone=attention] .assignment-issue {color:#795324;background:#fff7eb}
+.assignment-missing {margin:8px 0;padding:0 10px;border-radius:7px;background:#fbf7ee;color:#77531b}
+.assignment-missing summary {display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:40px;cursor:pointer;list-style:none;font-size:13px}
+.assignment-missing summary::-webkit-details-marker {display:none}
+.assignment-missing summary svg {width:14px;height:14px;transform:rotate(90deg)}
+.assignment-missing[open] summary svg {transform:rotate(-90deg)}
+.assignment-missing ul {margin:0;padding:0 8px 10px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:4px 16px;color:#614e34;font-size:12px}
+.assignment-list,.task-step-list {list-style:none;margin:0;padding:0}
+.assignment-list>li {display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:10px;padding:11px 0}
+.assignment-list>li+li {border-top:1px solid #edf0f4}
+.assignment-person {width:28px;height:28px;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.assignment-duty strong {font-size:13px;font-weight:600;color:#243146;overflow-wrap:anywhere}
+.assignment-state {color:#5d6c82;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.assignment-list button.assignment-state {color:#315aad;min-height:36px;padding:4px 8px;border-radius:6px}
+.assignment-list button.assignment-state:hover {background:#eef3fc}
+.assignment-actions {display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:8px}
+.assignment-actions:empty {display:none}
+
+.conversation-page .goal-content>.task-detail-panel {
+  max-width:1040px;padding:clamp(20px,3vw,32px) clamp(16px,3vw,28px);
+}
+.task-detail-panel [data-current-task-action] {scroll-margin-top:12px}
+.task-detail-panel [data-current-task-action]:focus-visible {outline:2px solid #416dce;outline-offset:3px;border-radius:12px}
+.task-detail-panel .action-card,.task-detail-panel .flow-current,.task-detail-panel .flow-attention {
+  padding:clamp(16px,2.2vw,22px);border:1px solid #d6e3f4;border-radius:12px;background:#f3f7fe;
+}
+.task-detail-panel :is(.action-card,.flow-current,.flow-attention) h3 {margin:2px 0 6px;color:#1f2b3e;font-size:18px;font-weight:630;line-height:1.45}
+.task-detail-panel :is(.action-card,.flow-current,.flow-attention) p {color:#526174;font-size:13px;line-height:1.65;overflow-wrap:anywhere}
+.task-detail-panel .action-kicker {margin-bottom:4px;font-size:12px;color:#365b95;font-weight:550;letter-spacing:0}
+.task-detail-panel :is(.primary,.secondary,.text-button),.assignment-actions button {white-space:normal;overflow-wrap:anywhere}
+.task-detail-panel .action-buttons,.assignment-actions {row-gap:6px}
+.task-detail-panel .action-buttons button,.assignment-actions button {min-height:40px;padding-inline:13px;font-size:13px}
+
+.task-steps {margin:24px 0}
+.task-steps-heading {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 6px}
+.task-steps-heading h3 {margin:0;margin-inline-end:auto;font-size:17px;color:#263348;font-weight:620}
+.task-steps-heading small {font-variant-numeric:tabular-nums;white-space:nowrap;color:#616e80}
+.task-steps-heading progress {width:100px;height:5px;border:0;border-radius:8px;background:#e4eaf3;accent-color:#4573c9}
+.task-steps-heading progress::-webkit-progress-bar {background:#e4eaf3;border-radius:8px}
+.task-steps-heading progress::-webkit-progress-value {background:#4573c9;border-radius:8px}
+.task-step-list {border-block:1px solid #e1e6ef}
+.task-step-list>.task-row {gap:12px;min-height:62px;padding:12px 4px;border-bottom:1px solid #e9edf3;overflow-wrap:anywhere}
+.task-step-list>.task-row:last-child {border:0}
+.task-detail-panel .task-number,.task-detail-panel .step-mark {
+  width:28px;height:28px;flex:0 0 28px;border:1px solid #dde4ed;border-radius:9px;
+  background:#f4f6fa;color:#5c6d84;font-size:12px;font-variant-numeric:tabular-nums;
+}
+.task-row .task-number svg {width:16px;height:16px}
+.task-detail-panel .task-text strong,.task-detail-panel .step-body summary strong {color:#253246;font-size:14px;font-weight:600}
+.task-detail-panel .task-text small {color:#5b6a7d;font-size:12px}
+.task-step-list>.task-row .badge,.task-detail-panel .flow-node .badge {font-size:11px}
+.task-detail-panel :is(.task-row.completed,.flow-node[data-status=succeeded]) :is(.task-number,.step-mark) {
+  color:#3c7067;border-color:#dceae4;background:#eff6f2;
+}
+.task-detail-panel .task-row:is(.active,.approval,.acceptance,.confirmation) .task-number,
+.task-detail-panel .flow-node:is([data-status=running],[data-status=needs_input],[data-status=needs_capability],[data-status=failed]) .step-mark {
+  color:#264f9b;border-color:#c2d4ed;background:#e8f0fc;
+}
+.conversation-page .task-detail-panel>.flow-panel {margin:0;padding:0;border:0;box-shadow:none}
+.task-detail-panel .flow-overview {margin-bottom:16px}
+.task-detail-panel .flow-overview h2 {margin:2px 0;font-size:22px}
+.task-detail-panel .flow-panel>.task-steps-heading {margin-top:24px}
+.task-detail-panel .execution-steps {margin:12px 0 22px}
+.task-detail-panel .execution-steps .flow-node {gap:12px;align-items:baseline;padding:4px 0}
+.task-detail-panel .execution-steps li:not(:last-child)::before {left:13px;top:42px;bottom:0}
+.task-detail-panel .step-body details {margin:0}
+.task-detail-panel .step-body summary {
+  display:grid;grid-template-columns:minmax(0,1fr) auto 10px;align-items:center;gap:8px;
+  padding:8px 6px;border-radius:6px;list-style:none;
+}
+.task-detail-panel .step-body summary::-webkit-details-marker {display:none}
+.task-detail-panel .step-body summary::after {
+  content:'';width:6px;height:6px;border:solid #677893;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);
+}
+.task-detail-panel .step-body details[open]>summary::after {transform:rotate(225deg)}
+.task-detail-panel .step-body summary:hover {background:#f3f6fb}
+.task-detail-panel .step-body details>p,.task-detail-panel .step-body details>small {padding-inline:6px;color:#566578}
+.task-criterion,.task-planning,.task-detail-panel .audit-list {padding:10px 0;border-top:1px solid #e6ebf1}
+.task-criterion strong,.task-planning>summary,.task-detail-panel .audit-list>summary {font-size:13px;color:#34445b}
+.task-criterion p {margin:4px 0;color:#5b687b;font-size:13px;overflow-wrap:anywhere}
+.task-detail-panel .audit-list>summary span {color:#63738a;font-variant-numeric:tabular-nums}
+.task-detail-panel :is(.flow-policy,.audit-list,.step-body) summary {min-height:40px}
+.task-detail-panel :is(.flow-policy,.audit-list,.step-body) summary:hover {color:#244f9a}
+
+@media(max-width:760px){
+  .discussion-task {width:calc(100% - 20px);grid-template-columns:28px minmax(0,1fr) auto;gap:8px;margin-block:5px;padding:7px 10px}
+  .discussion-task-icon {width:28px;height:28px}
+  .discussion-task-icon svg {width:16px;height:16px}
+  .discussion-task-link {font-size:12px;gap:2px}
+  .discussion-task-meta,.assignment-heading small {font-size:11px}
+  .conversation-page .team-assignment {margin-inline:0}
+  .conversation-page .team-assignment .assignment-summary {padding:10px;gap:8px}
+  .assignment-body {padding-inline:10px}
+  .assignment-list>li {gap:8px}
+  .conversation-page .goal-content>.task-detail-panel {padding:16px 12px 24px}
+  .task-detail-panel .action-buttons button,.assignment-actions button,.assignment-list button.assignment-state,.task-detail-panel :is(.flow-policy,.audit-list,.step-body) summary {min-height:44px}
+  .task-steps-heading progress {width:54px}
 }

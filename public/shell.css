@@ -207,3 +207,11 @@ main:not(.conversation-page) .global-filters .active {
   #task-form .dialog-footer { padding-inline: 16px; }
   #task-form #goal { font-size: 16px; }
 }
+
+.history-heading [data-new] {display:inline-flex;align-items:center;gap:7px}
+.history-heading [data-new] svg,.sidebar-create svg {display:block;flex:none;width:16px;height:16px}
+.history-open {min-height:44px;text-align:start;font-size:13px}
+.history-open:focus-visible,.inbox-row:focus-visible {outline:2px solid var(--primary);outline-offset:-2px}
+.history-open:hover {text-decoration:underline;text-underline-offset:3px}
+.history-open svg {flex:none;width:13px}
+.chat-queue:empty {display:none}

@@ -30,9 +30,40 @@ try{
  await page.locator('.goal-tabs [data-tab=tasks]').click();await page.screenshot({path:'/tmp/taskflows-desktop.png'});
  await page.locator('.sidebar [data-view=flows]').click();await page.getByRole('heading',{name:'任务流与总控',exact:true}).waitFor();assert.equal(await page.locator('#flow-settings-form').count(),1);await page.locator('[name=parallel]').fill('2');await page.locator('#flow-settings-form button[type=submit]').click();await page.waitForTimeout(400);assert.equal(await page.locator('[name=parallel]').inputValue(),'2');
  await page.locator('.sidebar-create').click();await page.locator('#goal').fill('找一款划算的水龙头，选品后直接上架');await page.locator('#submit-task').click();await page.locator('#task-dialog').waitFor({state:'hidden'});
- await page.locator('.goal-tabs [data-tab=tasks]').click();await page.getByRole('button',{name:'读取或补入候选报价'}).click();
+ const quoteAction=page.locator('.discussion-task[data-task-destination="intervention"]');
+ await quoteAction.waitFor({timeout:16000});
+ const nodeId=await quoteAction.getAttribute('data-step-id');
+ assert(nodeId);
+ await quoteAction.click();
+ await page.waitForFunction(id=>document.activeElement?.dataset.flowIntervention===id,nodeId);
+ const intervention=page.locator('[data-flow-intervention="'+nodeId+'"]');
+ await intervention.getByRole('button',{name:'读取或补入候选报价'}).click();
  const quotes=page.getByRole('dialog',{name:'比较候选报价'});for(let i=0;i<2;i++){const row=quotes.locator('fieldset').nth(i);await row.locator('[name=sku]').fill('龙头-'+i);await row.locator('[name=price]').fill(String(25+i));await row.locator('[name=source]').fill('测试报价单 '+i);}
  await quotes.getByRole('button',{name:'保存并继续比较'}).click();await quotes.waitFor({state:'hidden'});await page.getByText('3 / 3 步完成',{exact:true}).waitFor();assert.equal(await page.locator('.flow-attention').count(),0);
+ if(offline){
+  await primaryNav.locator('[data-view=overview]').click();
+  await page.locator('.inbox-row').filter({hasText:'四名员工协作准备角阀上新资料'}).click();
+ }else{
+  await primaryNav.locator('[data-view=employees]').click();
+  await page.locator('[data-employee-goal="employee-coordination"]').click();
+  await page.locator('#goal').fill('整理本轮任务交付摘要');await page.locator('#submit-task').click();
+  await page.locator('#task-dialog').waitFor({state:'hidden'});
+ }
+ const assignment=page.locator('.team-assignment[data-tone=complete]');
+ await assignment.waitFor({timeout:18000});
+ assert.equal(await assignment.evaluate(el=>el.open),false);
+ const summary=assignment.locator('summary');await summary.focus();await summary.press('Enter');
+ const duties=assignment.locator('.assignment-duty');
+ assert.equal(await duties.count(),offline?4:1);
+ for(const duty of await duties.all())assert((await duty.locator('small').innerText()).trim());
+ await assignment.getByRole('button',{name:/^预览/}).first().click();
+ await page.locator('#artifact-dialog').waitFor();assert((await page.locator('#artifact-body').innerText()).trim());
+ await page.locator('#close-artifact').click();
+ const reviewAction=page.locator('.discussion-task[data-tab=review]');
+ await reviewAction.click();
+ await page.getByRole('tab',{selected:true,name:'复盘'}).waitFor();
+ assert(await page.locator('#task-section [data-action=complete]').isEnabled());
+ // Opening the review leaves acceptance to the task owner.
  await page.locator('.sidebar [data-view=flows]').click();
  await page.setViewportSize({width:375,height:812});await page.locator('[data-nav-more]').click();
  const drawer=page.locator('#navigation-dialog');

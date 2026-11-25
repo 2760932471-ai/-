@@ -15,13 +15,22 @@ const $=s=>document.querySelector(s);
 $('.skip-link').addEventListener('click',event=>{event.preventDefault();$('#main').focus();});
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const paths={search:'M10 3a7 7 0 1 0 .01 0 M15 15l6 6',chat:'M4 4h16v12H9l-5 4z',photo:'M3 4h18v16H3z M3 16l5-5 4 4 3-3 6 6 M15 8h.01',chart:'M3 3v18h18 M7 16v-4 M12 16V8 M17 16V5',arrow:'M5 12h14 M13 6l6 6-6 6',back:'M19 12H5 M11 6l-6 6 6 6',clock:'M12 3a9 9 0 1 0 .01 0 M12 7v5l3 2',grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',layers:'m12 3 10 5-10 5L2 8z M2 12l10 5 10-5 M2 16l10 5 10-5',users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 4a4 4 0 0 1 0 8',file:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h6',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2'};
+Object.assign(paths,{
+ 'task-list':'M8 5H5a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 5 21h14a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 19 5h-3 M9 3h6v4H9z M7 12l1 1 2-2 M12.5 12H17 M7.5 17H9 M12.5 17H17',
+ 'chevron-right':'m9 5 7 7-7 7',
+ 'check':'m5 12 4.5 4.5L19 7',
+ 'plus':'M12 5v14 M5 12h14',
+ 'task-review':'M9 4H5a1 1 0 0 0-1 1v15a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1h-4 M9 2.5h6v4H9z m-.5 11 2.5 2.5 4.5-5',
+ 'task-hold':'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z M9.5 9v6 M14.5 9v6',
+ 'task-progress':'M4 15h3l3.5-7 3 9 2.5-5h4'
+});
 const icon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name]||paths.file}"/></svg>`;
 document.querySelectorAll('[data-icon]').forEach(e=>e.innerHTML=icon(e.dataset.icon));
 const stageNames={facts:'等待资料',plan:'待确认计划',draft:'待准备草案',approval:'待我审批',ready:'待提交',submitted:'待核验',observing:'观察中',review:'待验收',completed:'已结束'};
 const taskNames={completed:'已完成',pending:'待开始',active:'进行中',approval:'待审批',waiting:'等待资料',paused:'已暂停',observing:'观察中',confirmation:'待确认',acceptance:'待验收'};
 const artNames={draft:'草案',accepted:'已验收',verified:'已模拟核验',superseded:'已替代'};
 const viewNames={overview:'任务',employees:'数字员工',tasks:'执行明细',knowledge:'知识库','ai-config':'AI基础能力配置',runs:'运行记录',flows:'任务流',artifacts:'交付物'};
-const tabNames={discussion:'讨论',tasks:'任务',artifacts:'交付物',review:'复盘',facts:'资料',details:'详情'};
+const tabNames={discussion:'讨论',tasks:'执行步骤',artifacts:'交付物',review:'复盘',facts:'资料',details:'详情'};
 let state={flows:null,images:null,workspaces:[],integrations:null,knowledge:null,sources:null,workforce:null,goals:[],agents:[],runs:[],view:'overview',configTab:'models',goal:sessionStorage.getItem('selectedGoal'),tab:'discussion',filter:'all'};
 let fingerprint='',drafts={},targets={},intents={},positions={},sending=new Set(),busy=false,createStep=1,preview=null,sourceGoal=null,createPermission='draft',changeEpoch=0;
 sessionStorage.removeItem('platformToken');
@@ -80,13 +89,14 @@ function historyRow({g,status,detail}){
  const tasks=g.tasks||[];
  const done=tasks.filter(t=>t.status==='completed').length;
  const updated=g.updatedAt||g.createdAt;
- const mark=g.mode==='team'?'users':g.kind==='listing'?'photo':g.kind==='analysis'?'chart':'layers';
+ const mark=g.mode==='team'?'users':g.kind==='listing'?'photo':'task-list';
+ const next=['attention','paused','active'].includes(status.group)?taskDestination(g):{tab:status.tab,label:status.action};
  return `<li><button class="inbox-row" data-open="${esc(g.id)}" data-open-tab="discussion">
   <span class="history-title"><span class="history-icon ${mark}">${icon(mark)}</span><span class="history-name"><strong>${esc(g.text)}</strong>${detail?`<small title="${esc(detail)}">${esc(detail)}</small>`:''}</span></span>
   <span class="history-state ${status.group}">${status.label}</span>
   <span class="history-progress">${tasks.length?`<progress max="${tasks.length}" value="${done}" aria-label="步骤完成进度"></progress><small>${done} / ${tasks.length} 步</small>`:'待规划'}</span>
   <time class="history-time" datetime="${esc(updated)}">${updated?date(updated):'—'}</time>
- </button><button class="history-open" data-open="${esc(g.id)}" data-open-tab="${status.tab}" aria-label="${esc(g.text)}：${status.action}">${status.action} ${icon('arrow')}</button></li>`;
+ </button><button class="history-open" data-open="${esc(g.id)}" data-open-tab="${next.tab}" data-open-focus="${next.focus||''}" data-step-id="${esc(next.node||'')}" aria-label="${esc(g.text)}：${esc(next.label)}">${esc(next.label)} ${icon('chevron-right')}</button></li>`;
 }
 function historyParts(){
  const rows=state.goals.map(g=>{
@@ -106,13 +116,13 @@ function historyParts(){
   const count=key==='all'?matching.length:matching.filter(r=>r.status.group===key).length;
   return `<button data-inbox-filter="${key}" aria-pressed="${inboxFilter===key}">${label} <span>${count}</span></button>`;
  }).join('');
- const rowsHTML=visible.length?`<div class="history-columns" aria-hidden="true"><span>任务名称</span><span>状态</span><span>执行进度</span><span>更新时间</span><span>操作</span></div><ul class="history-rows">${visible.map(historyRow).join('')}</ul>`:`<div class="history-empty">${icon('layers')}<h2>${query?'没有找到匹配的任务':rows.length?'没有符合此状态的任务':'还没有任务'}</h2>${query?'<button class="text-button" data-clear-search>清除搜索</button>':rows.length?'<button class="text-button" data-inbox-filter="all">查看全部任务</button>':'<p>新建任务后，可以在这里跟进执行、查看交付物。</p>'}</div>`;
+ const rowsHTML=visible.length?`<div class="history-columns" aria-hidden="true"><span>任务名称</span><span>状态</span><span>执行进度</span><span>更新时间</span><span>下一步</span></div><ul class="history-rows">${visible.map(historyRow).join('')}</ul>`:`<div class="history-empty">${icon('task-list')}<h2>${query?'没有找到匹配的任务':rows.length?'没有符合此状态的任务':'还没有任务'}</h2>${query?'<button class="text-button" data-clear-search>清除搜索</button>':rows.length?'<button class="text-button" data-inbox-filter="all">查看全部任务</button>':'<p>新建任务后，可以在这里跟进执行、查看交付物。</p>'}</div>`;
  return {filtersHTML,rowsHTML};
 }
 function workspaceHome(){
  const {filtersHTML,rowsHTML}=historyParts();
  return `<section class="task-history" aria-labelledby="history-title">
-  <header class="history-heading"><div><h1 id="history-title">任务</h1><p>查看任务进展，继续讨论并验收交付物。</p></div><button class="primary" data-new>＋ 新建任务</button></header>
+  <header class="history-heading"><div><h1 id="history-title">任务</h1></div><button class="primary" data-new>${icon('plus')}新建任务</button></header>
   <nav class="history-filters" aria-label="按任务状态筛选">${filtersHTML}</nav>
   <div class="history-controls">
    <label class="history-search"><span aria-hidden="true">${icon('search')}</span><input type="search" id="history-search" aria-label="搜索任务或当前事项" placeholder="搜索任务或当前事项" value="${esc(historySearch)}" maxlength="200"></label>
@@ -149,34 +159,148 @@ document.addEventListener('keydown',e=>{
  tabs[next].click();
 });
 
+// Discussion links describe the live task. Opening one never approves or executes a step.
+function taskDestination(g){
+ const tasks=g.tasks||[],completed=tasks.filter(t=>t.status==='completed').length;
+ const task=tasks.find(t=>!['pending','completed'].includes(t.status))||tasks.find(t=>t.status==='pending');
+ const base={title:task?.title||'执行计划',meta:tasks.length?`${completed} / ${tasks.length} 步完成`:'',tab:'tasks',focus:'action',icon:'task-list'};
+ if(g.paused)return {...base,status:'已暂停',focus:'resume',label:'查看恢复选项',icon:'task-hold'};
+ if(g.stage==='completed')return {...base,title:'交付已验收',tab:'review',focus:'section',label:'查看验收记录',icon:'check'};
+ if(g.stage==='review')return {...base,title:'交付物已就绪',status:'待验收',tab:'review',focus:'section',label:'验收交付物',icon:'task-review'};
+ if(g.mode==='flow'){
+  const flow=g.flow;
+  if(flow.status==='awaiting_context')return {...base,title:'补充使用场景',status:'等待你的回复',tab:'discussion',focus:'reply',label:'回复问题'};
+  const blocked=flow.nodes.find(n=>['needs_input','failed','needs_capability'].includes(n.status));
+  if(blocked){
+   const label=blocked.capability==='sourcing.1688'?'查看采集进度':blocked.capability==='product.compare'?'核对候选报价':'处理这一步';
+   return {...base,title:blocked.title,status:flowsUI.label(blocked.status),focus:'intervention',node:blocked.id,label,icon:'task-hold'};
+  }
+  const running=flow.nodes.find(n=>['running','waiting_external'].includes(n.status));
+  const next=running||flow.nodes.find(n=>n.status==='pending'&&(n.dependsOn||[]).every(id=>flow.nodes.some(step=>step.id===id&&step.status==='succeeded')));
+  if(next)return {...base,title:next.title,status:next.status==='pending'?'等待执行':flowsUI.label(next.status),focus:'step',node:next.id,label:'查看步骤详情',icon:'task-progress'};
+  return {...base,title:flow.plan?.name||'规划执行步骤',status:flowsUI.label(flow.status),label:flow.status==='planning_failed'?'查看规划问题':'查看执行计划'};
+ }
+ if(g.production&&g.production.blocked)return {...base,status:'制作受阻',label:'查看制作要求',icon:'task-hold'};
+ if(g.stage==='draft'&&g.runtime?.status==='needs_input')return {...base,status:'待补资料',tab:'facts',focus:'section',label:'补充业务资料',icon:'task-hold'};
+ if(g.stage==='draft'&&g.runtime?.status==='failed')return {...base,status:'执行受阻',label:'查看失败原因',icon:'task-hold'};
+ if(g.stage==='plan'&&g.planProposal)return {...base,title:'分工草案待确认',status:'待确认',focus:'proposal',label:'核对分工草案'};
+ if(g.stage==='plan'&&g.teamSelection==='auto'&&g.matching?.missing?.length)return {...base,title:'调整任务分工',status:'待补成员',tab:'discussion',focus:'team',label:'查看能力缺口',icon:'task-hold'};
+ const labels={facts:'核对业务资料',plan:'核对执行计划',draft:'查看执行步骤',approval:'审核发布内容',ready:'核对提交内容',submitted:'核对发布回执',observing:'查看观察数据'};
+ return {...base,status:stageNames[g.stage],tab:g.stage==='facts'?'facts':'tasks',focus:g.stage==='facts'?'section':'action',label:labels[g.stage]||'查看执行计划',icon:g.stage==='approval'?'task-review':'task-list'};
+}
+function taskLinkAttributes(next){
+ return `data-tab="${next.tab}" data-task-destination="${next.focus}" ${next.node?`data-step-id="${esc(next.node)}"`:''}`;
+}
+function discussionTask(g){
+ const next=taskDestination(g),meta=[next.meta,next.status].filter(Boolean).join(' · ');
+ return `<button type="button" class="discussion-task" ${taskLinkAttributes(next)}>
+  <span class="discussion-task-icon">${icon(next.icon)}</span><span class="discussion-task-body"><strong class="discussion-task-title">${esc(next.title)}</strong>${meta?`<small class="discussion-task-meta">${esc(meta)}</small>`:''}</span>
+  <span class="discussion-task-link">${esc(next.label)} ${icon('chevron-right')}</span></button>`;
+}
+function focusTaskDestination(destination,nodeId){
+ const panel=$('#task-section');
+ if(!panel)return;
+ const escapedId=CSS.escape(nodeId||'');
+ const targets={
+  action:'[data-current-task-action]',proposal:'.planning-panel',resume:'[data-action="pause"]',
+  reply:'#chat-input',team:'[data-team-edit]',intervention:`[data-flow-intervention="${escapedId}"], [data-flow-node="${escapedId}"]`,
+  step:`[data-flow-node="${escapedId}"]`,section:'.tab-scroll h2, .tab-scroll h3'
+ };
+ const target=panel.querySelector(targets[destination])||panel.querySelector('[data-current-task-action]')||panel;
+ if(destination==='step'){const details=target.querySelector('details');if(details)details.open=true;}
+ const enclosing=target.closest('details');
+ if(enclosing)enclosing.open=true;
+ if(!target.matches('button,textarea,input,[tabindex]'))target.tabIndex=-1;
+ target.focus({preventScroll:true});
+ target.scrollIntoView({block:'nearest'});
+}
+function openTaskDestination(id,tab,destination,nodeId){
+ const focus=()=>{if(state.goal===id&&state.tab===tab)focusTaskDestination(destination,nodeId);};
+ if(state.view==='overview'&&!state.home&&state.goal===id&&state.tab===tab){focus();return;}
+ openGoal(id,tab);
+ focus();
+ // Reapply after the router processes the same navigation in its hashchange listener.
+ window.addEventListener('hashchange',focus,{once:true});
+}
 function messageView(m,g){const source=g.messages.find(x=>x.id===m.replyTo);
  const report=m.reportVersion===g.version&&g.mode==='flow'?sourcingReport(g):null;
  const currentReport=report&&m.text===report.text;
  const outcome=currentReport?`<div class="chat-outcome"><small>${esc(report.verdict)}</small><h3>${esc(report.selection.title)}</h3><p>${report.candidateCount} 款候选中选出 · ${report.selection.margin==null?'单件收益待核算':'预计单件收益 ¥'+report.selection.margin.toFixed(2)}</p><button class="primary" data-tab="artifacts">查看选品报告 ${icon('arrow')}</button></div>`:'';
- return `<article class="chat-message ${m.role}${m.reportVersion?' decision-message':''}"><span class="avatar">${m.role==='human'?'你':m.role==='coordinator'?'AI':esc(m.author.slice(0,1))}</span><div class="message-body"><div class="message-meta"><strong>${esc(m.author)}</strong><span>${m.role==='human'?'人类':m.workflow==='check'?'本地能力检查':m.workflow==='handoff'?'任务接收':m.workflow==='delivery'?'实际交付':m.role==='agent'?'专业 Agent':'目标统筹'}</span><time>${date(m.at)}</time></div><div class="message-bubble">${source?`<div class="message-quote">回复：${esc(source.text.slice(0,75))}</div>`:''}${currentReport?outcome:esc(m.text)}</div>${(m.links||[]).map(l=>/^https?:\/\//.test(l.url)?`<article class="message-source"><a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.title)} ↗</a><p>${esc(l.snippet)}</p></article>`:'').join('')}${m.mentionAll?`<p class="broadcast-receipt">已通知本群 ${m.targets.length} 位员工${m.skippedTargets?.length?` · ${m.skippedTargets.length} 位暂不可用，已跳过`:""}</p>`:""}${(m.artifactIds||m.upstreamArtifactIds||[]).map(id=>{const a=g.artifacts.find(a=>a.id===id);return a?`${a.imageJobId?imagesUI.thumbnail(a.imageJobId):''}<button class="event-link" data-preview="${esc(id)}" data-parent="${g.id}">${icon('file')} ${esc(a.title)} →</button>`:'';}).join('')}${imagesUI.chatCard(m,g)}${m.derived?'':discussionUI.controls(m,g)}${m.card?`<button class="event-link" data-tab="${m.card==='review'||m.card==='completed'?'review':m.card==='facts'?'facts':'tasks'}">${icon('file')} 查看${m.card==='facts'?'商品资料':m.card==='review'||m.card==='completed'?'复盘与验收':'任务与当前动作'} →</button>`:''}</div></article>`;}
+ return `<article class="chat-message ${m.role}${m.reportVersion?' decision-message':''}"><span class="avatar">${m.role==='human'?'你':m.role==='coordinator'?'AI':esc(m.author.slice(0,1))}</span><div class="message-body"><div class="message-meta"><strong>${esc(m.author)}</strong><span>${m.role==='human'?'人类':m.workflow==='check'?'本地能力检查':m.workflow==='handoff'?'任务接收':m.workflow==='delivery'?'实际交付':m.role==='agent'?'专业 Agent':'目标统筹'}</span><time>${date(m.at)}</time></div><div class="message-bubble">${source?`<div class="message-quote">回复：${esc(source.text.slice(0,75))}</div>`:''}${currentReport?outcome:esc(m.text)}</div>${(m.links||[]).map(l=>/^https?:\/\//.test(l.url)?`<article class="message-source"><a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.title)} ↗</a><p>${esc(l.snippet)}</p></article>`:'').join('')}${m.mentionAll?`<p class="broadcast-receipt">已通知本群 ${m.targets.length} 位员工${m.skippedTargets?.length?` · ${m.skippedTargets.length} 位暂不可用，已跳过`:""}</p>`:""}${(m.artifactIds||m.upstreamArtifactIds||[]).map(id=>{const a=g.artifacts.find(a=>a.id===id);return a?`${a.imageJobId?imagesUI.thumbnail(a.imageJobId):''}<button class="event-link" data-preview="${esc(id)}" data-parent="${g.id}">${icon('file')} ${esc(a.title)} →</button>`:'';}).join('')}${imagesUI.chatCard(m,g)}${m.derived?'':discussionUI.controls(m,g)}${m.card==='facts'?`<button type="button" class="text-button message-resource" data-tab="facts" data-task-destination="section">查看相关资料 ${icon('chevron-right')}</button>`:''}</div></article>`;}
 const collaborationExpanded=new Map();
-document.addEventListener('toggle',e=>{if(e.target.matches?.('[data-collaboration]'))collaborationExpanded.set(e.target.dataset.collaboration,e.target.open);},true);
+document.addEventListener('toggle',e=>{
+ const key=e.target.dataset?.collaboration||e.target.dataset?.missingChecklist;
+ if(key&&e.target.isConnected)collaborationExpanded.set(key,e.target.open);
+},true);
 function collaborationPanel(g){
- if(g.production)return imagesUI.productionCard(g);if(g.mode!=='team'||g.stage==='completed')return '';
- const c=g.collaboration,missing=c?.checks.filter(x=>x.status==='missing')||[];
- const matching=g.matching;
- const disabled=g.paused?'disabled':'',executeDisabled=g.paused||matching?.missing.length?'disabled':'';
- return `<details class="collaboration-status" data-collaboration="${g.id}" ${collaborationExpanded.get(g.id)?'open':''}><summary>分工与执行状态 · ${g.paused?'已暂停':['needs_input','failed'].includes(g.runtime?.status)?'执行受阻':esc(stageNames[g.stage])}${g.researchRequest?' · 正在查找来源':''}</summary><section class="collaboration-card" aria-label="协作交接"><div class="section-title"><div><small>协作交接 · 资料 v${g.version}</small><h3>${g.stage==='plan'?'一起推进这个目标':g.stage==='review'?'本轮成果已交付':['needs_input','failed'].includes(g.runtime?.status)?'执行受阻，需要处理':'团队正在交接成果'}</h3></div>${badge(g.paused?'已暂停':g.stage==='plan'?(missing.length?'待补资料':'待确认执行'):g.runtime?.status==='needs_input'?'等待资料':g.stage==='review'?'待你验收':'执行中')}</div>
- <p class="field-hint">这里查看谁负责、当前执行到哪一步，以及需要你确认或处理的事项。</p><div class="team-routing"><strong>${g.teamSelection==='auto'?'总控自动安排':'已按你的指定安排成员'}</strong>${g.stage==='plan'?`<button class="text-button" data-team-edit ${g.paused?'disabled':''}>${matching?.missing.length?'补充目标 / 调整成员':'调整成员'}</button>`:''}</div>
- ${matching?`<p class="field-hint">${esc(matching.method)} · 根据目标所需能力与员工可用状态选择，协调工作放在最后。</p><details class="matching-reasons"><summary>为什么选择这些成员</summary>${matching.steps.map(s=>`<p><strong>${esc(s.employeeName)}</strong>：${esc(s.objective)}<br>${esc(s.reasons.join('；'))}</p>`).join('')}</details>${matching.missing.length?`<p class="form-error" role="status">${esc(matching.missing.join('；'))}</p>`:''}`:''}
- ${g.research?`<div class="action-buttons">${actionButton('research',g.researchRequest?'正在查找…':'查找可用来源',true,g.researchRequest?'disabled':disabled)}<button class="text-button" data-view="ai-config/sources">供应商接入</button><button class="text-button" data-view="knowledge">知识库</button></div>`:''}
- ${c?`<ol class="handoff-steps">${g.members.map((id,i)=>`<li><span>${i+1}</span><div><strong>${esc(agentName(id))}</strong><small>${g.runtime?.completed?.includes(id)?'已交付':g.stage==='plan'?'确认后执行':g.members.find(x=>!g.runtime?.completed?.includes(x))===id?'当前处理':'等待前序交付'}</small></div></li>`).join('')}</ol>`:'<p>让总控检查现有成员的能力、资料缺口和交付顺序。</p>'}
- ${g.stage==='plan'?`${missing.length?`<p class="field-hint">${g.research?'总控会先查找已有来源。若缺少目标条件，请在群里说明品类与预算。':'待补：'+esc([...new Set(missing.flatMap(x=>x.missing))].join('；'))}</p>`:''}<div class="action-buttons">${!c?actionButton('kickoff','检查分工与资料',false,disabled):`<button class="secondary" data-tab="facts">查看业务资料</button>${actionButton('kickoff','重新检查',true,disabled)}${g.planProposal?'<button class="primary" data-tab="tasks">确认分工草案</button>':actionButton('plan',missing.length?'按当前资料开始执行':'确认分工并开始',false,executeDisabled)}`}</div>`:g.stage==='review'?`<button class="primary" data-tab="artifacts">查看全部交付物</button>`:['failed','needs_input'].includes(g.runtime?.status)?`<p>${esc(g.runtime.error||'请检查业务资料')}</p><button class="secondary" data-tab="facts">${g.research?'查看已有资料':'补齐资料'}</button>${actionButton('retry','重试当前员工',true,disabled)}`:''}
- <p class="field-hint">前序成果会传给后续员工。当前按已装配能力执行；没有数据的步骤会停下并说明原因。</p></section></details>`;
+ if(g.production)return imagesUI.productionCard(g);
+ if(g.mode!=='team'||g.stage==='completed')return '';
+ const plan=g.planProposal||g.executionPlan,checks=g.planProposal?.checks||g.collaboration?.checks||[];
+ const missing=[...new Set(checks.filter(c=>c.status==='missing').flatMap(c=>c.missing||[]))];
+ const unmatched=g.matching?.missing||[],completed=g.runtime?.completed||[];
+ const ids=g.planProposal?plan.steps.map(s=>s.employeeId):g.members;
+ const people=ids.map(id=>{
+  const employee=state.workforce?.employees.find(e=>e.id===id);
+  const step=plan?.steps?.find(s=>s.employeeId===id)||g.collaboration?.steps?.find(s=>s.employeeId===id);
+  const skills=(step?.skillIds||employee?.skillIds||[]).map(id=>state.workforce?.skills.find(s=>s.id===id)?.name).filter(Boolean);
+  return {id,name:step?.employeeName||agentName(id),duty:step?.objective||skills.join('、')||employee?.instructions||'职责待确认'};
+ });
+ const next=people.find(p=>!completed.includes(p.id));
+ const blocked=['needs_input','failed'].includes(g.runtime?.status),review=g.stage==='review',planning=g.stage==='plan';
+ const teamEdit='<button class="text-button" data-team-edit>调整分工</button>';
+ const facts=style=>`<button class="${style}" data-tab="facts">补充资料</button>`;
+ let title='团队正在执行',tone='working',issue='',actions='';
+ if(g.paused){
+  title='任务已暂停';tone='paused';actions=actionButton('pause','恢复执行');
+ }else if(review){
+  title='员工交付情况';tone='complete';
+  actions='<button class="text-button" data-tab="artifacts">查看全部交付物</button>';
+ }else if(planning){
+  tone='ready';
+  if(unmatched.length){
+   title='需要调整分工';tone='attention';issue=unmatched.join('；');
+   actions='<button class="primary" data-team-edit>调整目标与成员</button>';
+  }else if(g.planProposal){
+   title='请审阅新的分工';actions='<button class="primary" data-tab="tasks">审阅分工草案</button>'+teamEdit;
+  }else if(!g.collaboration&&!g.executionPlan){
+   title='请确认团队分工';actions=actionButton('plan','确认分工并开始')+actionButton('kickoff','检查分工与资料',true)+teamEdit;
+  }else{
+   title='请确认团队分工';
+   if(missing.length)tone='attention';
+   actions=missing.length?facts('primary')+actionButton('plan','按现有资料开始',true):actionButton('plan','确认分工并开始');
+   actions+=teamEdit;
+  }
+  if(missing.length&&!issue){issue='待补资料：'+missing.join('、');}
+ }else if(blocked){
+  title=g.runtime.status==='needs_input'?'需要补充资料':'执行中断';tone='attention';
+  issue=g.runtime.missing?.length?g.runtime.missing.join('、'):g.runtime.error||'';
+  actions=g.runtime.status==='needs_input'?facts('primary')+actionButton('retry','从这里继续',true):actionButton('retry','重试当前步骤')+facts('text-button');
+ }else if(next){
+  title=(g.researchRequest?'正在查找资料':next.name+'正在处理');
+ }
+ if(g.research&&!g.paused&&!review&&(planning||blocked))actions+=actionButton('research',g.researchRequest?'正在查找资料…':'查找可用来源',true,g.researchRequest?'disabled':'');
+ const names=people.slice(0,2).map(p=>p.name.replace(/数字员工$/,'')).join('、');
+ const summary=people.length?[people.length+' 位员工',names+(people.length>2?' 等':''),planning&&missing.length?missing.length+' 项资料待补':''].filter(Boolean).join(' · '):'待安排成员';
+ const rows=people.map((person,i)=>{
+  const current=!planning&&!review&&next?.id===person.id;
+  const status=review||completed.includes(person.id)?'已交付':planning?'':current?(g.paused?'已暂停':blocked?'待处理':'当前负责'):'待交接';
+  const artifact=review&&g.artifacts.find(item=>item.agent===person.id&&item.version===g.version&&item.status!=='superseded');
+  const statusView=artifact?`<button class="text-button assignment-state" data-preview="${esc(artifact.id)}" data-parent="${esc(g.id)}" aria-label="预览${esc(person.name)}的${esc(artifact.title)}">预览成果</button>`:status?`<span class="assignment-state">${status}</span>`:'';
+  return `<li><span class="assignment-person" aria-hidden="true">${i+1}</span><span class="assignment-duty"><strong>${esc(person.name)}</strong><small>${esc(person.duty)}</small></span>${statusView}</li>`;
+ }).join('');
+ const issueContent=planning&&!g.paused&&!unmatched.length&&missing.length>3
+  ?`<details class="assignment-missing" data-missing-checklist="missing-${esc(g.id)}" ${collaborationExpanded.get('missing-'+g.id)?'open':''}><summary>待补资料 · ${missing.length} 项 ${icon('chevron-right')}</summary><ul>${missing.map(item=>`<li>${esc(item)}</li>`).join('')}</ul></details>`
+  :issue?`<p class="assignment-issue">${esc(issue)}</p>`:'';
+ return `<details class="collaboration-status team-assignment" data-collaboration="${esc(g.id)}" data-tone="${tone}" ${collaborationExpanded.get(g.id)?'open':''}><summary class="assignment-summary"><span class="assignment-mark">${icon('users')}</span><span class="assignment-heading"><strong>${esc(title)}</strong><small>${esc(summary)}</small></span><svg class="assignment-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m5 8 5 5 5-5"/></svg></summary><div class="assignment-body">${issueContent}${rows?`<ol class="assignment-list" aria-label="员工交付顺序" data-selection="${g.teamSelection==='auto'?'auto':'manual'}">${rows}</ol>`:''}${actions?`<footer class="assignment-actions">${actions}</footer>`:''}</div></details>`;
 }
-function discussion(g){if(g.mode==='flow')return flowsUI.discussion(g,messageView,sourcingReport);const target=targets[g.id]||'coordinator',intent=intents[g.id]||'discuss';return `${discussionUI.toolbar(g)}${imagesUI.goalAction(g)}<div class="discussion-next"><span>${g.paused?'目标已暂停':stageNames[g.stage]} <strong>${esc(g.tasks.find(t=>t.status!=='completed')?.title||'全部任务已完成')}</strong></span><button class="text-button" data-tab="${g.stage==='facts'?'facts':g.stage==='completed'?'review':'tasks'}">${g.stage==='completed'?'查看复盘':'查看并处理'} →</button></div><div class="chat-area"><div class="chat-log" tabindex="0" aria-label="群聊消息记录">${g.messages.map(m=>messageView(m,g)).join('')}${collaborationPanel(g)}<div class="chat-queue" role="status">${g.repliesPaused?`AI 回复已暂停 · ${g.queue.length} 条待处理`:g.queue.length?`数字员工正在协调回复 · ${g.queue.length} 条待处理`:g.mode==='team'?'模型成员按问题选择Skill；规则成员仅重跑已有校验或计算。':'可以继续讨论；消息不会自动触发发布操作。'}</div></div><form id="chat-form" class="chat-composer" novalidate data-goal="${g.id}">${discussionUI.composer(g)}<label class="sr-only" for="chat-input">群聊消息</label><textarea id="chat-input" rows="1" required maxlength="2000" placeholder="说点什么… 输入 @ 可选员工或所有员工" aria-describedby="chat-input-help">${esc(drafts[g.id]||'')}</textarea><div class="composer-bottom"><div class="composer-shortcuts">${discussionUI.uploadButton(g)}<button type="button" class="text-button" data-chat-choose aria-label="在消息中插入提及" title="在消息中插入 @">@</button><span>输入 @ 提及员工或所有员工</span><span class="sr-only" id="chat-input-help">Enter 发送，Shift + Enter 换行</span></div><div class="composer-send">${discussionUI.modelPicker(g)}<button class="primary" type="submit" ${sending.has(g.id)?'disabled':''}>${sending.has(g.id)?'发送中…':'发送 ↗'}</button></div></div><details class="chat-options"><summary>消息设置</summary><div class="composer-tools"><label for="chat-target">发送给</label><select id="chat-target"><option value="coordinator">数字员工协调</option>${discussionUI.people(g).map(id=>`<option value="${id}" ${target===id?'selected':''}>@${esc(shortName(id))}</option>`).join('')}</select><label class="sr-only" for="chat-intent">消息用途</label><select id="chat-intent">${[['discuss','讨论 / 提问'],['context','补充背景'],['change','请求变更']].map(([v,n])=>`<option value="${v}" ${intent===v?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="text-button reply-pause" data-action="pauseReplies">${g.repliesPaused?'恢复 AI 回复':'暂停 AI 回复'}</button></div></details><p id="chat-error" role="alert"></p></form></div>`;}
+function discussion(g){if(g.mode==='flow')return discussionTask(g)+flowsUI.discussion(g,messageView,sourcingReport);const target=targets[g.id]||'coordinator',intent=intents[g.id]||'discuss';return `${discussionUI.toolbar(g)}${imagesUI.goalAction(g)}${discussionTask(g)}<div class="chat-area"><div class="chat-log" tabindex="0" aria-label="群聊消息记录">${g.messages.map(m=>messageView(m,g)).join('')}${collaborationPanel(g)}<div class="chat-queue" role="status">${g.repliesPaused?`AI 回复已暂停 · ${g.queue.length} 条待处理`:g.queue.length?`数字员工正在协调回复 · ${g.queue.length} 条待处理`:''}</div></div><form id="chat-form" class="chat-composer" novalidate data-goal="${g.id}">${discussionUI.composer(g)}<label class="sr-only" for="chat-input">群聊消息</label><textarea id="chat-input" rows="1" required maxlength="2000" placeholder="说点什么… 输入 @ 可选员工或所有员工" aria-describedby="chat-input-help">${esc(drafts[g.id]||'')}</textarea><div class="composer-bottom"><div class="composer-shortcuts">${discussionUI.uploadButton(g)}<button type="button" class="text-button" data-chat-choose aria-label="在消息中插入提及" title="在消息中插入 @">@</button><span>输入 @ 提及员工或所有员工</span><span class="sr-only" id="chat-input-help">Enter 发送，Shift + Enter 换行</span></div><div class="composer-send">${discussionUI.modelPicker(g)}<button class="primary" type="submit" ${sending.has(g.id)?'disabled':''}>${sending.has(g.id)?'发送中…':'发送 ↗'}</button></div></div><details class="chat-options"><summary>消息设置</summary><div class="composer-tools"><label for="chat-target">发送给</label><select id="chat-target"><option value="coordinator">数字员工协调</option>${discussionUI.people(g).map(id=>`<option value="${id}" ${target===id?'selected':''}>@${esc(shortName(id))}</option>`).join('')}</select><label class="sr-only" for="chat-intent">消息用途</label><select id="chat-intent">${[['discuss','讨论 / 提问'],['context','补充背景'],['change','请求变更']].map(([v,n])=>`<option value="${v}" ${intent===v?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="text-button reply-pause" data-action="pauseReplies">${g.repliesPaused?'恢复 AI 回复':'暂停 AI 回复'}</button></div></details><p id="chat-error" role="alert"></p></form></div>`;}
 function actionButton(kind,text,secondary=false,extra=''){return `<button class="${secondary?'secondary':'primary'}" data-action="${kind}" ${extra}>${text}</button>`;}
 function actionCard(g){if(g.paused)return `<section class="action-card"><h3>目标推进已暂停</h3><p>讨论和查看历史不受影响；恢复后从当前检查点继续。</p><div class="action-buttons">${actionButton('pause','恢复目标推进')}</div></section>`;
  if(g.production)return imagesUI.productionCard(g);
  if(['platform','team'].includes(g.mode)&&g.stage==='draft')return platformRuntime(g);
  let title='',desc='',detail='',buttons='';
  if(g.stage==='facts'){title='先核验商品事实，再准备上新';desc='请录入并确认材质、适用规格、成本和库存。代码 Agent 将校验必需信息与配置的价差约束。';buttons='<button class="primary" data-tab="facts">查看并确认资料 →</button>';}
- if(g.stage==='plan'){title=`确认计划 v${g.version}`;desc=g.mode==='team'?'先补充本目标资料，再确认成员交接顺序。模型员工选择已装配 Skill，规则员工按顺序执行。':'按下方顺序推进，每一步有负责人和前置条件。你可以随时在群里补充要求。';buttons=(g.mode==='team'?'<button class="secondary" data-tab="facts">先填写业务资料</button>':'')+actionButton('plan','确认计划',false,g.planProposal?'disabled title="请先采用或放弃分工草案"':'');}
+ if(g.stage==='plan'){title='核对执行计划';desc=g.mode==='team'?`核对下方 ${g.members.length} 位员工的分工后，即可开始执行。`:'确认后将按下方步骤执行。';buttons=actionButton('plan','确认计划',false,g.planProposal||g.matching?.missing?.length?'disabled':'')+(g.mode==='team'?'<button class="secondary" data-team-edit>调整成员</button><button class="text-button" data-tab="facts">补充业务资料</button>':'');}
  if(g.stage==='draft'){title='准备有来源的交付物';desc=g.kind==='listing'?'基于已确认样例规格生成标题、参数与售价草案。':'生成分析建议结构；未连接经营数据，不会声称已验证经营结论。';buttons=actionButton('draft','生成演示草案');}
  if(g.stage==='approval'){title=`请审批：新增商品发布 · v${g.version}`;desc='此次授权只覆盖当前版本的单次发布，不包含投放、调价或后续自动经营。';detail=publishDetails(g);buttons=actionButton('approve',g.mode==='platform'?'批准并提交此版本（模拟）':'批准此版本')+'<button class="secondary" data-reject>退回修改</button>';}
  if(g.stage==='ready'){title=`v${g.version} 已批准，尚未提交`;desc='请核对批准内容。此按钮只产生演示回执，不连接真实店铺。';detail=publishDetails(g);buttons=actionButton('execute','模拟提交发布');}
@@ -185,11 +309,47 @@ function actionCard(g){if(g.paused)return `<section class="action-card"><h3>目�
  if(g.stage==='review'){title=g.review?'经营复盘已准备，等待验收':'交付物已准备，等待验收';desc=g.review?'请检查观察窗口、费用口径与目标差距。演示结果不能用于证明真实经营提升。':'此目标只准备草案或建议。请查看交付内容，再决定是否结束。';buttons=`<button class="primary" data-tab="review">查看${g.review?'经营复盘':'交付验收'} →</button>`;}
  if(g.stage==='completed'){title='目标已结束，结果已保留';desc='讨论可以继续。需要新的分析或优化时，另建下一轮目标。';buttons='<button class="secondary" data-followup>创建下一轮优化目标 ↗</button>';}
  if(g.kind==='listing'&&['plan','draft','approval','ready'].includes(g.stage))buttons+='<button class="text-button" data-edit>调整发布内容</button>';
- return `<section class="action-card"><div class="action-kicker">下一步 · ${g.kind==='listing'?'商品上新':'经营分析'}</div><h3>${title}</h3><p>${desc}</p>${detail}<div class="action-buttons">${buttons}</div></section>`;
+ return `<section class="action-card"><div class="action-kicker">当前事项</div><h3>${title}</h3><p>${desc}</p>${detail}<div class="action-buttons">${buttons}</div></section>`;
 }
 function publishDetails(g){return `<div class="inline-facts"><span>作用范围<strong>${esc(g.scope.store)} / ${esc(g.scope.sku)}</strong></span><span>变更前<strong>无平台商品（模拟新增）</strong></span><span>发布标题<strong>${esc(g.proposal.title)}</strong></span><span>售价 / 库存<strong>${money(g.proposal.price)} / ${g.facts.stock} 件</strong></span></div><p>成本 ${money(g.facts.cost)}，不含完整平台、履约与广告费用，不能作为贡献利润结论。</p><button class="text-button" data-tab="artifacts">先预览当前版本草案 →</button>`;}
-function tasksRows(g,global=false){return g.tasks.map((t,i)=>{const visible=state.filter==='all'||state.filter==='attention'&&['waiting','approval','paused','confirmation','acceptance'].includes(t.status)||state.filter==='active'&&['active','observing'].includes(t.status)||state.filter==='completed'&&t.status==='completed';if(global&&!visible)return '';const tag=global?'button':'div';return `<${tag} class="task-row ${t.status}" ${global?`data-open="${g.id}" data-open-tab="tasks"`:''}><span class="task-number">${t.status==='completed'?'✓':String(i+1).padStart(2,'0')}</span><div class="task-text"><strong>${esc(t.title)}</strong><small>${global?esc(g.text)+' · ':''}${esc(shortName(t.owner))} · ${i?'依赖上一项完成':'首个步骤'}</small></div>${badge(taskNames[t.status],['active','approval','confirmation','acceptance'].includes(t.status))}</${tag}>`;}).join('');}
-function goalTasks(g){if(g.mode==='flow')return `<div class="tab-scroll">${flowsUI.panel(g)}</div>`;return `<div class="tab-scroll">${g.production?'':planningUI.panel(g)}${actionCard(g)}<div class="section-title"><h3>执行计划</h3><small>${g.tasks.length} 项任务 · v${g.version}</small></div>${tasksRows(g)}<div class="note">确认标准：${esc(g.criterion)}</div><details class="audit-list"><summary>查看 ${g.audit.length} 条操作记录</summary>${g.audit.slice().reverse().map(a=>`<div class="audit-row"><small>${date(a.at)}</small><div><strong>${esc(a.action)} · v${a.version}</strong><p>${esc(a.detail)}</p></div></div>`).join('')}</details></div>`;}
+function tasksRows(g,global=false){
+ const tasks=g.tasks||[];
+ return tasks.map((t,i)=>{
+  const human=['approval','confirmation','acceptance'].includes(t.status);
+  const needsAttention=human||['waiting','paused'].includes(t.status);
+  if(global&&state.filter!=='all'&&!(state.filter==='attention'&&needsAttention)&&!(state.filter==='active'&&['active','observing'].includes(t.status))&&!(state.filter==='completed'&&t.status==='completed'))return '';
+  const reviewStep=/^(负责人验收|验收|审批|确认(?:协作|分析|分工))/.test(t.title);
+  const owner=human||reviewStep?'任务负责人':t.owner==='coordinator'?'总控':t.owner==='任务实例'?'任务流执行':t.owner?shortName(t.owner):'';
+  const tag=global?'button':'li';
+  const attrs=global?`data-open="${esc(g.id)}" data-open-tab="tasks"`:`data-step="${esc(t.id)}"`;
+  return `<${tag} class="task-row ${esc(t.status)}" data-status="${esc(t.status)}" ${attrs}>
+   <span class="task-number" aria-hidden="true">${t.status==='completed'?icon('check'):i+1}</span>
+   <div class="task-text"><strong>${esc(t.title)}</strong><small>${[global?g.text:'',owner].filter(Boolean).map(esc).join(' · ')}</small></div>
+   ${badge(taskNames[t.status]||t.status,needsAttention||t.status==='active')}</${tag}>`;
+ }).join('');
+}
+const expandedPlans=new Set();
+document.addEventListener('toggle',event=>{
+ const id=event.target.dataset?.taskPlanning;
+ if(!id||!event.target.isConnected)return;
+ if(event.target.open)expandedPlans.add(id);else expandedPlans.delete(id);
+},true);
+function goalTasks(g){
+ if(g.mode==='flow')return `<div class="tab-scroll task-detail-panel">${flowsUI.panel(g)}</div>`;
+ const tasks=g.tasks||[],done=tasks.filter(t=>t.status==='completed').length;
+ const plan=g.production?'':planningUI.panel(g);
+ const proposal=Boolean(plan&&g.planProposal&&g.stage==='plan'&&!g.paused);
+ const planLabel=g.stage==='plan'?'查看与调整分工':'查看分工记录';
+ const otherPlan=plan&&!proposal?`<details class="task-planning" data-task-planning="${esc(g.id)}" ${expandedPlans.has(g.id)?'open':''}><summary>${planLabel}</summary>${plan}</details>`:'';
+ const audit=g.audit||[];
+ return `<div class="tab-scroll task-detail-panel">
+  <div data-current-task-action tabindex="-1">${proposal?plan:actionCard(g)}</div>
+  <section class="task-steps" aria-label="执行步骤"><div class="task-steps-heading"><h3>执行步骤</h3><small>${done} / ${tasks.length} 步已完成</small><progress value="${done}" max="${tasks.length||1}" aria-label="执行进度"></progress></div>
+   <ol class="task-step-list">${tasksRows(g)}</ol></section>
+  ${otherPlan}
+  ${g.criterion?`<div class="task-criterion"><strong>验收标准</strong><p>${esc(g.criterion)}</p></div>`:''}
+  ${audit.length?`<details class="audit-list"><summary>操作记录 <span>${audit.length}</span></summary>${[...audit].reverse().map(a=>`<div class="audit-row"><small>${date(a.at)}</small><div><strong>${esc(a.action)} · v${a.version}</strong><p>${esc(a.detail)}</p></div></div>`).join('')}</details>`:''}</div>`;
+}
 function artifactCard(a,g){return `<article class="artifact-card"><div class="artifact-top">${icon('file')}${badge(artNames[a.status],a.status==='draft')}</div><h3>${esc(a.title)}</h3>${a.imageJobId?imagesUI.thumbnail(a.imageJobId):''}<p>${esc(g.text)}</p><small>v${a.version} · ${esc(g.scope.sku)}</small><p>${esc(a.evidence)}</p><div class="artifact-actions"><button class="text-button" data-preview="${a.id}" data-parent="${g.id}">预览完整内容 ↗</button><button class="text-button" data-download="${a.id}" data-parent="${g.id}">下载 ↓</button></div></article>`;}
 function goalArtifacts(g){
  const report=['review','completed'].includes(g.stage)?sourcingReport(g):null;
@@ -203,7 +363,7 @@ function factsView(g){if(g.mode==='flow')return flowsUI.facts(g);if(g.production
  const f=g.facts;return `<div class="tab-scroll"><div class="section-title"><h3>商品事实卡</h3>${badge(f.confirmed?'已确认样例':'待核验',true)}</div><p class="field-hint">商品规格必须来自权威资料，不能由模型猜测补全。</p><table class="fact-table"><caption>${esc(g.scope.product)} · ${esc(g.scope.sku)}</caption>${[['材质',f.material],['接口',f.connector],['采购成本',f.cost===null?'待确认':money(f.cost)],['可售库存',f.stock===null?'待确认':f.stock+' 件'],['资料来源',f.source],['确认记录',f.confirmed?f.confirmedBy+' · '+date(f.confirmedAt):'尚未确认']].map(([k,v])=>`<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</table><div class="note">全部为虚构样例。原型不会将聊天中的规格直接写入此卡；真实上传、ERP对接与来源冲突处理后续接入。</div>${!f.confirmed?actionButton('facts','载入并确认演示资料',false,g.paused?'disabled':''):'<button class="primary" data-tab="tasks">查看任务计划 →</button>'}${g.paused?'<p class="field-hint">目标暂停中，请从目标详情恢复后再确认。</p>':''}</div>`;}
 function reviewView(g){const r=g.review||(g.kind==='analysis'?g.analysis:null);let body='';if(r){body=`<div class="section-title"><h3>经营复盘</h3>${badge(g.review?'虚构样例':'录入账单 · 代码计算')}</div><p class="field-hint">${esc(r.window)} · ${esc(r.source)}</p><div class="review-stats"><div><span>净销售额</span><strong>${money(r.netSales)}</strong></div><div><span>贡献利润</span><strong>${money(r.profit)}</strong></div><div><span>贡献利润率</span><strong>${r.rate===null?'—':esc(r.rate)+'%'}</strong></div></div><table class="fact-table"><caption>贡献利润 = 净销售额 − 全部归属可变成本</caption>${[['净销售额',r.netSales],['商品成本',r.goods],['平台与支付费用',r.fees],['履约费用',r.fulfillment],['归因广告费用',r.ads],['售后额外损失',r.returns],['其他可变费用',r.other],['贡献利润',r.profit]].map(([k,v])=>`<tr><th>${k}</th><td>${money(v)}</td></tr>`).join('')}</table><div class="note">净销售额已扣除退款本金；售后损失只记额外成本，避免重复扣减。<br>${esc(r.result)}</div>`;}
  else if(['review','completed'].includes(g.stage))body=`<h3>交付验收</h3><p class="field-hint">本目标仅准备${g.mode==='flow'?'任务流成果':g.production?'商品图片':g.contentDraft?'内容草稿':g.kind==='listing'?'上新草案':'分析建议'}，没有执行真实或模拟发布。</p><div class="note">验收标准：${esc(g.criterion)}</div>${g.artifacts.filter(a=>a.version===g.version).map(a=>artifactCard(a,g)).join('')}`;
- else body=`<h3>复盘等待中</h3><p class="field-hint">${g.permission==='approval'?'先完成发布核验，再观察7天数据。动作核验通过与经营达标是两个不同结果。':'完成交付物后，在这里确认验收。'}</p><div class="note">当前没有足够资料评估结果，不将缺失数据展示为零收入。</div><button class="secondary" data-tab="tasks">查看当前任务 →</button>`;
+ else {const next=taskDestination(g);body=`<h3>复盘等待中</h3><p class="field-hint">${g.permission==='approval'?'先完成发布核验，再观察7天数据。动作核验通过与经营达标是两个不同结果。':'完成交付物后，在这里确认验收。'}</p><div class="note">当前没有足够资料评估结果，不将缺失数据展示为零收入。</div><button class="secondary" ${taskLinkAttributes(next)}>${esc(next.label)}</button>`;}
  if(g.stage==='review')body+=`<div class="action-buttons">${actionButton('complete',r?'确认复盘并结束目标':'确认交付并结束目标',false,g.paused?'disabled':'')}<button class="text-button" data-tab="discussion">回群继续讨论</button></div>${g.paused?'<p class="field-hint">目标暂停中，请先恢复。</p>':''}`;
  if(g.stage==='completed')body+='<div class="note">负责人已验收，目标已结束。历史结果和讨论将保留。</div><button class="primary" data-followup>创建下一轮优化目标 ↗</button>';
  return `<div class="tab-scroll">${body}</div>`;}
@@ -365,8 +525,15 @@ document.addEventListener('click',async e=>{const b=e.target.closest('button');i
  if(b.dataset.inboxFilter){inboxFilter=b.dataset.inboxFilter;render(true);document.querySelector('[data-inbox-filter="'+inboxFilter+'"]')?.focus();}
  if(b.hasAttribute('data-inbox-home'))go('overview/home');
  if(b.dataset.view)go(b.dataset.view==='overview'?'overview/home':b.dataset.view);
- if(b.dataset.open){if(b.closest('.task-history'))historyReturn={id:b.dataset.open,scroll:window.scrollY};openGoal(b.dataset.open,b.dataset.openTab||'discussion');}
- if(b.dataset.tab&&Object.hasOwn(tabNames,b.dataset.tab)&&state.view==='overview'&&current()){openGoal(state.goal,b.dataset.tab);$('.goal-tabs [aria-selected=true]')?.focus();}
+ if(b.dataset.open){
+  if(b.closest('.task-history'))historyReturn={id:b.dataset.open,scroll:window.scrollY};
+  if(b.dataset.openFocus)openTaskDestination(b.dataset.open,b.dataset.openTab,b.dataset.openFocus,b.dataset.stepId);
+  else openGoal(b.dataset.open,b.dataset.openTab||'discussion');
+ }
+ if(b.dataset.tab&&Object.hasOwn(tabNames,b.dataset.tab)&&state.view==='overview'&&current()){
+  if(b.dataset.taskDestination)openTaskDestination(state.goal,b.dataset.tab,b.dataset.taskDestination,b.dataset.stepId);
+  else {openGoal(state.goal,b.dataset.tab);$('.goal-tabs [aria-selected=true]')?.focus();}
+ }
  if(b.dataset.filter){state.filter=b.dataset.filter;render(true);}
  if(b.dataset.mention){targets[state.goal]=b.dataset.mention;openGoal(state.goal,'discussion');$('#chat-input')?.focus();}
  if(b.dataset.action){if(busy)return;busy=true;ownsAction=true;b.disabled=true;const g=current(),extra={};if(b.dataset.action==='approve'){extra.version=g.version;extra.approvalId=g.approval.id;}if(b.dataset.mismatch)extra.mismatch=true;await act(b.dataset.action,extra);if(b.dataset.action==='facts'){state.tab='tasks';render(true);}if(b.dataset.action==='observe'||b.dataset.action==='complete'){state.tab='review';render(true);}toast('操作已记录');}
@@ -404,14 +571,14 @@ async function updateRunPreview(){
  $('#run-diagnosis').textContent=diagnosis;
  $('#run-title').textContent=r.agentName+' · '+(pick?'等待商品报价':runNames[r.status]);
  $('#run-meta').textContent=['运行 '+r.id,r.configVersion!=null?'配置 v'+r.configVersion:r.goalVersion!=null?'计划 v'+r.goalVersion:'',r.durationMs!=null?r.durationMs+' ms':''].filter(Boolean).join(' · ');
- const button=$('#run-pick-action');button.hidden=!goal;button.dataset.goal=goal?.id||'';button.textContent=active?'查看自动采集进度':'查看当前任务';
+ const button=$('#run-pick-action');button.hidden=!goal;button.dataset.goal=goal?.id||'';button.dataset.stepId=active?node.id:'';button.textContent=active?'查看自动采集进度':goal?taskDestination(goal).label:'';
  if($('#run-data').dataset.run!==r.id){$('#run-data').dataset.run=r.id;$('#run-data').open=!pick;}
  $('#run-input').textContent=JSON.stringify(r.input,null,2);$('#run-output').textContent=JSON.stringify({status:r.status,error:r.error||undefined,result:r.result,trace:r.trace},null,2);}
 }
 $('#close-config').onclick=()=>{$('#agent-config-dialog').close();testRunId=null;};$('#cfg-adapter').onchange=updateAdapterFields;
 $('#agent-config-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const input={revision:configEditing.revision,enabled:$('#cfg-enabled').checked,settings:{[configEditing.id==='product'?'minGrossMargin':'targetProfitRate']:Number($('#cfg-threshold').value)}};for(const key of ['name','role','adapter','timeoutMs','endpoint','secretEnv','instructions'])input[key]=$('#cfg-'+key).value;const result=await api('agents/'+configEditing.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});configEditing=result;$('#config-revision').textContent='已保存版本 v'+result.revision;$('#config-error').textContent='';toast('配置已保存，后续调用使用新版本');await refresh();}catch(err){$('#config-error').textContent=err.message;}finally{b.disabled=false;}};
 $('#test-agent').onclick=async()=>{const b=$('#test-agent');b.disabled=true;try{let input;try{input=JSON.parse($('#agent-test-input').value);}catch{throw new Error('测试输入不是有效JSON');}const r=await post(`agents/${configEditing.id}/test`,{input});testRunId=r.id;await updateRunPreview();await refresh();}catch(err){$('#agent-test-result').textContent=err.message;b.disabled=false;}};
-$('#run-pick-action').onclick=e=>{const id=e.currentTarget.dataset.goal;if(!id)return;$('#run-dialog').close();runPreviewId=null;openGoal(id,'tasks');document.querySelector('.pick-import')?.focus();};
+$('#run-pick-action').onclick=e=>{const button=e.currentTarget,g=state.goals.find(g=>g.id===button.dataset.goal);if(!g)return;$('#run-dialog').close();runPreviewId=null;const next=button.dataset.stepId?{tab:'tasks',focus:'intervention',node:button.dataset.stepId}:taskDestination(g);openTaskDestination(g.id,next.tab,next.focus,next.node);};
 $('#close-run').onclick=()=>{$('#run-dialog').close();runPreviewId=null;};
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.config)await openConfig(b.dataset.config);if(b.dataset.run){runPreviewId=b.dataset.run;$('#run-input').textContent='正在载入输入…';$('#run-output').textContent='正在载入结果…';$('#run-diagnosis').textContent='';$('#run-pick-action').hidden=true;delete $('#run-data').dataset.run;$('#run-dialog').showModal();await updateRunPreview();}if(b.dataset.fillData){const values=b.dataset.fillData==='listing'?{material:'黄铜（演示）',connector:'G1/2（演示）',cost:12,stock:200,source:'内置虚构商品样例'}:{netSales:3000,goods:1200,fees:150,fulfillment:300,ads:600,returns:150,other:0,source:'内置虚构经营账单',window:'演示第1–7天'};for(const [k,v] of Object.entries(values))$('#field-'+k).value=v;toast('已填入演示数据，请核对后保存');}}catch(err){toast(err.message);}});
 document.addEventListener('submit',async e=>{if(!['facts-form','ledger-form'].includes(e.target.id))return;e.preventDefault();const form=e.target,id=form.dataset.goal,b=e.submitter;b.disabled=true;busy=true;try{const data=Object.fromEntries(new FormData(form));const g=state.goals.find(g=>g.id===id);await act(form.id==='facts-form'?'facts':'ledger',form.id==='facts-form'?{facts:data,confirmed:data.confirmed==='on',expectedVersion:g.version}:{financials:data,expectedVersion:g.version},id);state.tab='tasks';render(true);toast('资料已保存，请确认当前版本计划');}catch(err){$('#data-error').textContent=err.message;}finally{b.disabled=false;busy=false;}});
