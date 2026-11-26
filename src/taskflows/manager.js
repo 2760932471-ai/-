@@ -7,9 +7,10 @@ import {randomUUID} from 'node:crypto';
 import {flowDefaults,flowTemplates,flowCapabilities,flowEmployees,assignFlowCapability} from './catalog.js';
 import {validateFlow,proposeFlow,reconcileFlow} from './planner.js';
 import {buildGoalContract,goalContractVersion} from './contract.js';
+import {audiencePreparation,inspectAudience,normalizeAudienceData} from './audience.js';
 import {researchComparison} from './inquiry.js';
 import {reviewDeliverables} from './review.js';
-import {evaluatePlanChecks} from './acceptance.js';
+import {attachAcceptanceChecks,evaluatePlanChecks} from './acceptance.js';
 import {selectionCheckpoint,profitComparison,deliveryFiles,invalidateBranches} from './deliveries.js';
 import {publicModel,requireChatModel} from '../workforce/model.js';
 import {executeSkill} from '../workforce/skills.js';
@@ -22,6 +23,10 @@ const fail=message=>{throw Object.assign(new Error(message),{status:409});};
 const output=(title,body,evidence='本次实际执行结果')=>({status:'succeeded',summary:title,missing:[],artifacts:[{title,body,evidence}]});
 const quoteWait=count=>'已保存 '+count+'/2 件不同商品的有效报价，还需 '+(2-count)+' 件。每件须包含商品名称、页面报价和 1688 商品详情链接。';
 const blocked=message=>({status:'needs_input',summary:message,missing:[message],artifacts:[]});
+function readyDeliverables(goal){
+ return goal.flow.nodes.filter(n=>n.status==='succeeded'&&n.capability!=='evidence.collect')
+  .flatMap(n=>deliveryFiles(goal,n)).slice(-4);
+}
 export function createTaskflowManager({getData,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill,offerSearch=searchPublicOffers,offerDetail=fetchOfferDetail}){
  let pumping=false;
  const settings=()=>({...flowDefaults(),...getData().flowSettings});
@@ -105,6 +110,16 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   const auto=!input.intent||input.intent==='auto';
   if(!auto&&!(selected&&['discuss','discussion'].includes(input.intent)))return input;
   if(auto&&g.flow.status==='awaiting_context')return {...input,intent:'scenario',routedVersion:g.version};
+  if(auto&&!g.paused&&g.flow.status==='blocked'){
+   const blockedNodes=g.flow.nodes.filter(n=>['needs_input','needs_capability','failed'].includes(n.status));
+   if(blockedNodes.length&&/^(?:请|那就)?(?:继续|接着做|继续执行|继续吧|为什么卡住了?|卡在哪里|怎么卡住了)[啊呀啦吧呢。？?！!\s]*$/.test(text)){
+    return {...input,intent:'blockedStatus',routedVersion:g.version};
+   }
+   const questions=blockedNodes.filter(n=>n.question);
+   if(questions.length===1&&messageRoute(g,text)==='discussion'&&!/[?？]$/.test(text)){
+    return {...input,intent:'answerStep',stepId:questions[0].id,runId:questions[0].runId,routedVersion:g.version};
+   }
+  }
   const blockedPick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='needs_input');
   if(auto&&blockedPick&&/https:\/\/detail\.1688\.com\/offer\/\d{1,24}\.html/.test(text)&&!/[？?]/.test(text.replace(/https:\/\/\S+/g,'')))return {...input,intent:'offerLinks',routedVersion:g.version};
   let route=auto?messageRoute(g,text):'discussion';
@@ -165,7 +180,25 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const m={id:randomUUID(),role:'human',author:'你',text:input.text.trim(),intent:input.intent||'discuss',replyTo:input.replyTo||null,...modelInfo,at:now()};g.messages.push(m);
    if(input.routedVersion&&input.routedVersion!==g.version)fail('目标刚刚更新，请重新发送这条消息');
    const target=imageTarget(g.flow.nodes,m.text);
-   if(m.intent==='offerLinks'){
+   if(m.intent==='blockedStatus'){
+    const steps=g.flow.nodes.filter(n=>['needs_input','needs_capability','failed'].includes(n.status));
+    const resume=/^(?:请|那就)?(?:继续(?:执行)?|接着做)[吧啊呀啦。！!\s]*$/.test(m.text);
+    const analysis=steps.find(n=>n.capability==='analysis.reason'&&n.status==='needs_input'&&n.error?.includes('连接总控模型'));
+    if(resume&&analysis&&!g.paused&&g.stage!=='completed'&&!g.flow.model&&g.flow.calls<g.flow.policy.maxCalls&&currentModel()){
+     await action(d,g,{kind:'retry',expectedVersion:g.version,nodeId:analysis.id});
+     event(g,'分析模型已就绪，正在从原步骤继续。');
+     return g;
+    }
+    const ready=readyDeliverables(g);
+    const result=ready.length?'已准备好'+ready.map(a=>'「'+a.title+'」').join('、')+'。\n\n':'';
+    event(g,result+(steps.length?steps.map(n=>'「'+n.title+'」'+(n.error||n.missing?.join('、')||'需要处理后才能继续。')).join('\n'):'任务状态已更新，请查看当前进度。'));
+    g.messages.at(-1).artifactIds=ready.map(a=>a.id);
+   }else if(m.intent==='answerStep'){
+    const step=g.flow.nodes.find(n=>n.id===input.stepId&&n.status==='needs_input'&&n.question&&n.runId===input.runId);
+    if(!step||g.paused||g.stage==='completed')fail('问题状态已更新，请查看当前步骤。');
+    step.clarification={question:step.question,answer:m.text};
+    delete step.question;step.status='pending';step.error=null;step.missing=[];sync(g);
+   }else if(m.intent==='offerLinks'){
     const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688'&&n.status==='needs_input');
     if(!pick||g.stage==='completed')fail('选品任务状态已更新。');
     const ids=[...m.text.matchAll(/https:\/\/detail\.1688\.com\/offer\/(\d{1,24})\.html/g)].map(match=>match[1]);
@@ -173,9 +206,17 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     if(!pick.submittedSkus.length)fail('请提供 1688 商品详情链接。');
     pick.status='pending';pick.error=null;pick.missing=[];sync(g);event(g,'已收到商品链接，会核对详情页中的商品编号、品类和报价。');
    }else if(m.intent==='scenario'){
-    if(g.flow.status!=='awaiting_context')fail('使用场景已收到，请刷新讨论。');
-    g.scenario={question:g.flow.question,answer:m.text};g.flow.status='planning';delete g.flow.question;
-    event(g,'已收到。我会结合这次用途比较方案，并在交付时说明依据和仍需核实的条件。');sync(g);
+    if(g.flow.status!=='awaiting_context')fail('任务信息已更新，请刷新讨论。');
+    const needsObject=['category','subject'].includes(g.flow.questionKind)||/品类或搜索关键词|你希望我处理什么对象/.test(g.flow.question||'');
+    const noDetail=/^(?:请|你)?(?:继续(?:执行|处理|吧)?|开始吧|好的?|行|可以|默认|随便|不知道|不确定|你来定|你决定|按现有信息(?:判断|继续)?)[。！!\s]*$/.test(m.text);
+    const noChoice=g.flow.questionKind==='outcome'&&/^(?:请|那就)?(?:继续(?:执行|吧)?|好[的啊]?|行)[。！!\s]*$/.test(m.text);
+    if(needsObject&&noDetail||noChoice){
+     event(g,g.flow.question);
+    }else{
+     g.scenario={question:g.flow.question,kind:g.flow.questionKind,answer:m.text};
+     g.flow.status='planning';delete g.flow.question;delete g.flow.questionKind;
+     event(g,'收到，我会结合这次补充继续处理。');sync(g);
+    }
    }else if(m.intent==='image'&&!target&&g.flow.status.startsWith('planning')&&imageOutputs(businessBrief(g)).length){
     (g.flow.earlyImageEdits??=[]).push(m.text);event(g,'已把修改要求加入本次制图。');
    }else if(target&&(m.intent==='image'||m.intent==='change'&&messageRoute(g,m.text)==='image')){
@@ -299,6 +340,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    if(g.paused||g.stage==='completed')fail('当前不能更新业务资料');
    if(!input.data||typeof input.data!=='object'||Array.isArray(input.data)||JSON.stringify(input.data).length>100000)throw new Error('资料需为不超过 100KB 的 JSON 对象');
    const denied=['__proto__','constructor','prototype'];if(Object.keys(input.data).some(k=>denied.includes(k)))throw new Error('资料字段无效');
+   if(Object.hasOwn(input.data,'crmAudience'))input.data={...input.data,crmAudience:normalizeAudienceData(input.data.crmAudience)};
    const changes=Object.keys(input.data).filter(key=>JSON.stringify(input.data[key])!==JSON.stringify(g.skillData[key]));
    if(!changes.length)return g;
    g.skillData={...g.skillData,...input.data};
@@ -341,7 +383,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   await transaction(d=>{const g=find(d,id);if(g.version!==snapshot.version)return;
    if(error){g.flow.status='planning_failed';g.flow.error=error;event(g,'任务流规划未完成：'+error);sync(g);return;}
    if(proposed.question){
-    g.flow.question=proposed.question;g.flow.clarificationVersion=goalContractVersion;g.flow.status='awaiting_context';
+    g.flow.question=proposed.question;g.flow.questionKind=proposed.questionKind;g.flow.clarificationVersion=goalContractVersion;g.flow.status='awaiting_context';
     event(g,proposed.question);sync(g);return;
    }
    g.flow.previousMethods=previousMethods;g.flow.plan=proposed;g.flow.nodes=proposed.nodes.map(n=>({...n,assignment:assignFlowCapability(n.capability,d.employees,g.assignedEmployeeId),status:'pending',attempts:0,artifactIds:[]}));const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
@@ -350,7 +392,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     const n=imageTarget(g.flow.nodes,text);if(n)(n.imageEdits??=[]).push(text);
    }
    delete g.flow.earlyImageEdits;delete g.flow.pickCheckpoint;g.flow.status='running';g.flow.error=null;
-   event(g,(proposed.planner==='model'?'总控模型':'基础组合器')+'已'+(proposed.source==='template'?'选择任务流：':'创建任务流：')+proposed.name+'。'+proposed.rationale+' 独立分支可并行执行；新能力设计保留并先验证。');sync(g);
+   event(g,(proposed.planner==='model'?'总控模型':'基础组合器')+'已'+(proposed.source==='template'?'选择任务流：':'创建任务流：')+proposed.name+'。'+proposed.rationale,'flow-activity');sync(g);
   });
  }
  async function enrich(offer,refresh=false){
@@ -370,11 +412,28 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   n.dependsOn.forEach(visit);
   const steps=g.flow.nodes.filter(step=>upstream.has(step.id));
   const files=new Set(steps.flatMap(step=>step.artifactIds));
-  const observations=g.artifacts.filter(a=>a.version===g.version&&a.status!=='superseded'&&files.has(a.id));
+  const observations=g.artifacts.filter(a=>a.version===g.version&&a.status!=='superseded'&&files.has(a.id)).map(a=>a.summaryBody?{...a,body:a.summaryBody}:a);
   const brief=businessBrief(g);
   const workspaceOnly=g.flow.plan.contract?.decision?.sources==='workspace';
   const researchStep=steps.find(step=>step.capability==='research.compare'&&step.status==='succeeded');
   const input={...inputs(g),...(g.skillData?.financials?{financials:g.skillData.financials}:{}),observations,research:researchStep?.investigation,taskMemory:taskMemory(g,steps),question:n.objective,knowledgeRecall:g.flow.nodes.find(x=>x.recall)?.recall};
+  if(n.capability.startsWith('audience.')){
+   const audience=g.flow.plan.contract?.decision?.audience;
+   if(!audience)return blocked('当前目标缺少可用的客群筛选要求，请说明使用的客户资料和目标客群。');
+   if(n.capability==='audience.prepare')return output(audience.wantsCopy?'客群筛选口径与邀约草稿':'客群筛选口径',audiencePreparation(audience),'本轮任务要求');
+   const selectionNode=n.capability==='audience.select'?n:steps.find(step=>step.capability==='audience.select');
+   const data=g.skillData?.crmAudience,selection=inspectAudience(audience,data,selectionNode?.clarification?.answer);
+   if(selection.missing)return {...blocked(selection.missing),question:selection.question};
+   if(n.capability==='audience.select'){
+    const result=output('CRM 客群筛选结果',selection.body,data.source);
+    result.artifacts[0].summaryBody=selection.summary;
+    return result;
+   }
+   if(n.capability==='audience.contact'){
+    if(!selection.contactable)return output('触达结果 · 未发送','当前报表中允许本次触达的匹配客户为 0 人，本次发送 0 条。',data.source);
+    return blocked('筛选出 '+selection.contactable+' 位允许触达的客户。当前任务没有可执行的 CRM 营销发送渠道，尚未发送消息。可下载筛选结果与邀约草稿，在已授权渠道中核对后发送。');
+   }
+  }
   if(n.capability==='delivery.review')return reviewDeliverables({goal:g,steps,files:observations,imageJobs:d.imageJobs||[]});
   if(n.capability==='research.compare'){
    const pick=steps.find(step=>step.capability==='sourcing.1688'&&step.status==='succeeded');
@@ -532,8 +591,13 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   if(!input.candidates&&rows.length)input.candidates=rows.map(r=>({sku:r.sku,name:r.title,price:r.price,source:r.url,facts:r.facts,photo:r.photo}));
   if(discovery?.status==='found'&&!input.candidates)input.candidates=discovery.candidates;
   if(n.capability==='analysis.reason'){
-   const model=g.flow.model;if(!model&&!researchStep)return blocked('此步需要连接总控模型来解释资料。选择已通过连接测试的模型后，可以从本步继续。');
-   return analyzeDecision({goal:g,node:n,input:{...input,goalData:g.skillData},modelCall,knowledge,integrations});
+   const {crmAudience,...goalData}=g.skillData||{};
+   if(!g.flow.model&&!researchStep){
+    const hasSource=observations.some(file=>file.body&&!file.body.startsWith('当前没有匹配资料'))||Object.keys(goalData).length>0;
+    const reason=hasSource?'本轮已有资料，但尚未形成分析结论。':'本轮没有找到可引用的业务资料，尚不能给出有依据的结论。';
+    return blocked(reason+'此步需要连接总控模型'+(hasSource?'解读已有资料。':'进行补查和判断，也可以先在资料页补充来源。'));
+   }
+   return analyzeDecision({goal:g,node:n,input:{...input,goalData},modelCall,knowledge,integrations});
   }
   if(n.capability.startsWith('copy.')&&ranked.length){
    const prep=prepareContent(d,{...g,text:brief,research:discovery},{rankedCandidates});
@@ -643,7 +707,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  }
  async function execute(id,nodeId){
   const snapshot=await transaction(d=>{const g=find(d,id),n=g.flow.nodes.find(n=>n.id===nodeId);if(g.paused||g.flow.refreshNodes?.length||!n||!runnable(g,n)||!dependenciesReady(g.flow.nodes,n))return null;
-   if(g.flow.calls>=g.flow.policy.maxCalls){n.status='needs_input';n.error='已达到本轮调用上限，请检查运行记录后重新规划';sync(g);return null;}
+   if(g.flow.calls>=g.flow.policy.maxCalls){
+    const reason='已达到本轮调用上限（'+g.flow.policy.maxCalls+' 次），请查看已有交付，再决定是否重新规划。';
+    if(n.error!==reason)event(g,'「'+n.title+'」暂时无法继续。'+reason);
+    n.status='needs_input';n.error=reason;n.missing=[reason];sync(g);return null;
+   }
    n.assignment=assignFlowCapability(n.capability,d.employees,g.assignedEmployeeId);n.status='running';n.attempts++;n.startedAt=now();n.runId=randomUUID();g.flow.calls++;d.runs.unshift({id:n.runId,agentId:'taskflow',agentName:n.assignment.employeeName,purpose:'taskflow',goalId:g.id,goalVersion:g.version,flowNodeId:n.id,status:'running',createdAt:now(),startedAt:now(),input:{objective:n.objective,capability:n.capability,dependsOn:n.dependsOn,assignment:n.assignment}});sync(g);return {g,n};});if(!snapshot)return;
   let result,error;try{const live=find(getData(),id);if(live.version!==snapshot.g.version||live.paused)throw new Error('目标暂停或已更新');sources.resolve(live);let goal=snapshot.g;
    if(['analysis.reason','research.compare'].includes(snapshot.n.capability)&&goal.flow.model){
@@ -658,6 +726,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   }catch(e){error=String(e.message).slice(0,1000);result=null;}
   await transaction(d=>{const g=find(d,id),r=d.runs.find(r=>r.id===snapshot.n.runId);if(g.version!==snapshot.g.version){r.status='discarded';r.error='目标已变更，旧结果不应用';r.finishedAt=now();return;}
    const n=g.flow.nodes.find(n=>n.id===nodeId);n.status=error?'failed':result.continueAnalysis?'pending':result.status;n.error=error||(['needs_input','needs_capability'].includes(result.status)?result.summary:null);n.finishedAt=now();n.missing=result?.missing||[];
+   if(result?.question)n.question=result.question;else delete n.question;
 
    if(result?.recheckedOffer&&n.capability==='research.compare'){
     const pick=g.flow.nodes.find(step=>step.capability==='sourcing.1688'&&step.status==='succeeded');
@@ -668,7 +737,10 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    Object.assign(r,{status:result?.continueAnalysis?'succeeded':n.status,result:result||null,error:n.error,finishedAt:n.finishedAt});if(result?.report&&!g.flow.refreshNodes?.length)g.messages.push({id:randomUUID(),role:'coordinator',author:'目标总控',at:now(),text:result.report.text,artifactIds:result.report.artifactIds||result.report.imageIds,links:result.report.source?[{title:'查看所选商品',url:result.report.source,snippet:''}]:[],reportVersion:g.version});
    else if(!g.flow.refreshNodes?.length){
     const text=n.title+'：'+(n.error||result.summary);
-    if(!n.error?.includes('所选商品的参考图')||snapshot.n.error!==n.error)event(g,text);
+    if(!n.error?.includes('所选商品的参考图')||snapshot.n.error!==n.error){
+     event(g,text,n.status==='succeeded'||result?.continueAnalysis?'flow-activity':undefined);
+     if(n.error)g.messages.at(-1).artifactIds=readyDeliverables(g).map(a=>a.id);
+    }
    }
    sync(g);
   });
@@ -684,6 +756,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   if(!job||job.status==='unknown'||job.status==='succeeded'&&n.status==='failed')n.imageUnconfirmed=true;
   const r=d.runs.find(r=>r.id===n.runId);
   if(r){r.status=n.status;r.error=n.error;r.finishedAt=now();r.result={status:n.status,summary:n.error||'图片已生成并交付',artifacts:deliveryFiles(g,n)};}
+  if(n.error)event(g,'「'+n.title+'」未能交付。'+n.error);
   sync(g);
  } });}
  function deliveryProblems(g,d=getData()){
@@ -714,7 +787,15 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   let keepSku=flow.refreshKeepSku;
   if((flow.plan.contract?.version||0)<goalContractVersion){
    if(!affected.size)keepSku=goalSelection(g).winner?.sku;
-   const contract=buildGoalContract(g);
+   const previousDecision=flow.plan.contract?.decision;
+   const contract=buildGoalContract(g,{
+    modelQuestions:previousDecision?.questions,
+    researchRequested:flow.plan.planner==='model'&&flow.nodes.some(node=>node.capability==='research.compare'),
+    reviewRequested:flow.plan.planner==='model'&&flow.nodes.some(node=>node.capability==='delivery.review')
+   });
+   if(contract.decision.sources==='workspace'&&previousDecision?.sources!=='workspace'){
+    for(const step of flow.nodes.filter(node=>node.capability==='evidence.collect'))affected.add(step.id);
+   }
    let updated;
    try{updated=reconcileFlow(contract,{...flow.plan,nodes:flow.nodes},flow.policy);}
    catch(error){flow.status='planning_failed';flow.error=String(error.message);sync(g);return;}
@@ -730,7 +811,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     if(changed&&!/^(image|copy)\./.test(spec.capability))affected.add(spec.id);
     return {...old,...spec,assignment:old.assignment||assignFlowCapability(spec.capability,d.employees,g.assignedEmployeeId)};
    });
-   flow.plan={...flow.plan,...updated,contract};
+   flow.plan=attachAcceptanceChecks({...flow.plan,...updated,contract},flow.plan,contract);
    if(updated.corrections.length){
     affected.add(flow.nodes.find(n=>n.capability==='result.compile').id);
     event(g,'已按原目标补齐执行计划，继续使用本轮已取得的资料。');

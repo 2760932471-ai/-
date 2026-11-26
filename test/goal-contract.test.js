@@ -98,3 +98,14 @@ test('comparison criteria can come from the user and respect workspace-only inve
  assert.deepEqual(step(result,'analysis.reason').dependsOn,['research.compare']);
  assert.equal(step(result,'delivery.review'),undefined);
 });
+
+test('contextual references use current materials and goal clarification retains the original request',()=>{
+ assert.match(build('帮我安排一下这个').question,/什么对象/);
+ assert.match(build('帮我做个方案').question,/什么对象/);
+ assert.match(build('处理一下',{version:2,artifacts:[{version:1,status:'superseded'}]}).question,/什么对象/);
+ assert.equal(build('处理一下',{version:2,artifacts:[{version:2,status:'draft',title:'活动清单'}]}).question,null);
+ const goal=build('帮我做个方案，不要作图',{scenario:{kind:'goal',question:'你希望我处理什么对象？',answer:'对比两个 CRM 平台的迁移成本'}});
+ assert.equal(goal.question,null);
+ assert.ok(goal.requirements.some(n=>n.capability==='research.compare'));
+ assert.ok(goal.excludedCapabilities.includes('image.main'));
+});

@@ -1,8 +1,9 @@
 import {businessBrief,sourcingIntent} from '../../public/sourcing.js';
 import {requestParts,requestedImages,requestedSkills,asksForMethod} from '../../public/goal-language.js';
 import {decisionBrief} from './brief.js';
+import {audienceRequest} from './audience.js';
 
-export const goalContractVersion=2;
+export const goalContractVersion=3;
 
 // Each requested output maps to an executable capability and an observable acceptance condition.
 const outputs = [
@@ -22,25 +23,33 @@ const comparisonGoal=/比较|对比|权衡|取舍|二选一|选型|哪个更|哪
 const nonProduct=/方案|系统|软件|选址|路线|方法|策略|供应链模式|服务商|平台选型/;
 const publicUse=/淘宝|天猫|京东|闲鱼|拼多多|上架|商品详情页|对外|投放|广告|发布|促销|推广|招商|展会|官宣/;
 
+// Concrete work already attached to this task can resolve references such as
+// “这个”. Default workspace names and superseded files cannot.
+export function hasTaskMaterial(goal){
+ return Boolean(goal.scope?.product||goal.references?.length||goal.proposal?.title||
+  Object.values(goal.skillData||{}).some(value=>value!=null&&typeof value==='object'&&Object.keys(value).length)||
+  goal.artifacts?.some(file=>file.status!=='superseded'&&file.version===goal.version));
+}
+
 function clarification(goal,criteria,request){
  if(criteria&&!criteria.query)return '这次要在 1688 筛选什么商品？请告诉我品类或搜索关键词。';
- if(!goal.scenario?.answer&&!goal.scope?.product&&!goal.artifacts?.length&&
-  !request.replace(/请|能不能|可以|麻烦|帮我|帮忙|给我|先|再|你|来|把|做|看|搞|处理|分析|研究|优化|比较|一下|这个|那个|这件事|它|下|吧|吗|呢|了|[\s，]/gu,''))
+ const subject=request.replace(/(?:一份|一个|份|个)?(?:具体|简单|详细|完整)?(?:方案|计划|建议)(?:出来)?$/,'').replace(/你来定|你决定|按默认|你看着办|随便|都行|想办法|能不能|可以|麻烦|帮我|帮忙|给我|先|再|你|来|把|做|看看|看|搞|处理|跟进|弄|安排|改善|调整|改进|分析|研究|优化|比较|推进|提升|一下|这个|那个|这件事|这块|那块|的事|它|下|吧|吗|呢|了|请|[\s，]/gu,'');
+ if(!subject&&!hasTaskMaterial(goal))
   return '你希望我处理什么对象？给我一个名称、一句话描述或一份资料即可。';
  return null;
 }
 
 export function buildGoalContract(goal,{modelQuestions=[],researchRequested=false,reviewRequested=false}={}){
- const clarificationAnswer=goal.scenario?.question?.startsWith('你希望我处理什么对象')?goal.scenario.answer?.trim():null;
- const brief=businessBrief(clarificationAnswer?{...goal,text:clarificationAnswer,scenario:null}:goal),criteria=sourcingIntent(brief);
+ const brief=businessBrief(goal),criteria=sourcingIntent(brief);
  // Scenario answers constrain an existing decision; they are not additional requested deliverables.
  const {requested,excluded}=requestParts(brief.split('；使用场景：')[0]);
  const positive=requested.replaceAll('咸鱼','闲鱼');
  const actions=positive.split('，').filter(clause=>!asksForMethod(clause)).join('，');
+ const audience=audienceRequest(positive,excluded);
  const skills=requestedSkills(actions).filter(skill=>skill.capability!=='commerce.sku_profit'||!criteria||/账单|订单明细/.test(actions));
- const compare=!criteria&&(researchRequested||!skills.length&&comparisonGoal.test(actions)&&(!comparison.test(actions)||nonProduct.test(actions)));
+ const compare=!audience&&!criteria&&(researchRequested||!skills.length&&comparisonGoal.test(actions)&&(!comparison.test(actions)||nonProduct.test(actions)));
  const profitDecision=!!criteria&&(profitComparison.test(positive)||criteria.periodGoal||criteria.minUnitMargin!=null||criteria.minMarginRate!=null);
- const decision=decisionBrief([actions,requestParts(goal.scenario?.answer).requested].filter(Boolean).join('，'),criteria,{compare,profit:profitDecision,excluded,modelQuestions});
+ const decision=decisionBrief([actions,requestParts(goal.scenario?.answer).requested].filter(Boolean).join('，'),criteria,{compare,profit:profitDecision,excluded,modelQuestions:audience?[]:modelQuestions});
  const requirements=[],pending=[],excludedCapabilities=new Set();
  const replaced=new Set(skills.flatMap(skill=>skill.supersedes));
  function add(id,capability,title,acceptance,dependsOn,extra={}){
@@ -49,6 +58,14 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
  }
  add('evidence','evidence.collect','收集相关证据','记录本次查到的资料及其来源，标记缺失或矛盾的信息。',[]);
  const upstream=['evidence.collect'];
+ if(audience){
+  decision.audience=audience;
+  decision.sources='workspace';
+  add('audiencePrepare','audience.prepare',audience.wantsCopy?'准备客户筛选条件与营销资料':'准备客户筛选条件','列出可核对的人群条件、所需字段和本次可先交付的资料。',[]);
+  if(audience.wantsSelection)add('audienceSelect','audience.select','筛选 CRM 客户','仅从本工作空间可用的客户数据筛选，并注明筛选依据、数量和缺失字段。',['audience.prepare']);
+  if(audience.wantsOutreach)add('audienceContact','audience.contact','核实客户触达结果','确认可用渠道、接收范围与真实发送结果。',['audience.select']);
+  excludedCapabilities.add('analysis.reason');
+ }
  if(criteria){
   add('pick1688','sourcing.1688','筛选 1688 商品报价','比较至少两款有详情链接的同类商品，保留 SKU、报价、规格和起订条件。',upstream);
   if(criteria.maxMinimumOrder||criteria.smallTrial)pending.push('核对各款起订数量、单位与试单条件。');
@@ -74,9 +91,10 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
  const images=requestedImages(requested),excludedImages=requestedImages(excluded);
  const imagesOnly=/(?:仅|只)(?:需要|需|要|做|改|生成|制作).{0,6}(?:主图|海报|详情图)/.test(requested);
  for(const output of outputs){
-  const wanted=output.imageKind?images.includes(output.imageKind):output.matches.test(actions);
+  const audienceCopy=audience&&audience.wantsCopy&&output.id==='selling'&&!/卖点|商品文案|产品文案/.test(actions);
+  const wanted=output.imageKind?images.includes(output.imageKind):!audienceCopy&&output.matches.test(actions);
   if(wanted)add(output.id,output.capability,output.title,output.acceptance,[selected]);
-  else if(imagesOnly||(output.imageKind?excludedImages.includes(output.imageKind):output.matches.test(excluded)))excludedCapabilities.add(output.capability);
+  else if(audienceCopy||imagesOnly||(output.imageKind?excludedImages.includes(output.imageKind):output.matches.test(excluded)))excludedCapabilities.add(output.capability);
  }
  for(const skill of skills){
   const after=skill.after.filter(cap=>requirements.some(n=>n.capability===cap));
@@ -87,7 +105,9 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
  for(const cap of replaced)excludedCapabilities.add(cap);
  if(!criteria&&(imagesOnly||/(?:选品|选货|重新(?:选|搜)|1688)/.test(excluded)))excludedCapabilities.add('sourcing.1688');
  if(!profit.test(positive)&&profit.test(excluded))excludedCapabilities.add('finance.calculate');
- const unresolvedRequests=actions.split('，').filter(s=>/(?:发(?:送)?(?:一封)?邮件|导出.{0,8}(?:PPT|PDF|Excel|幻灯片)|(?:制作|生成|剪辑|输出)(?![^，]*脚本).{0,6}(?:成片|视频)|(?:直接|自动|立即)(?:下单|付款|发布|上架))/.test(s));
+ const unresolvedRequests=actions.split('，').filter(s=>
+  (!audience?.wantsOutreach&&/发(?:送)?(?:一封)?邮件/.test(s))||
+  /导出.{0,8}(?:PPT|PDF|Excel|幻灯片)|(?:制作|生成|剪辑|输出)(?![^，]*脚本).{0,6}(?:成片|视频)|(?:直接|自动|立即)(?:下单|付款|发布|上架)/.test(s));
  const drafts=requirements.filter(r=>/^(?:copy|image)\./.test(r.capability)&&r.capability!=='copy.image_brief');
  if(drafts.length&&(publicUse.test(actions)||criteria&&drafts.some(r=>r.capability.startsWith('copy.'))||reviewRequested)){
   const reviewed=requirements.filter(r=>r.capability==='content.review').map(r=>r.capability);
@@ -97,6 +117,12 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
   add('analysis','analysis.reason','比较备选并给出判断','结合已收集的证据说明推荐、适用条件和最可能改变结论的依据。',['research.compare']);
  }else if(requirements.length===1){
   add('analysis','analysis.reason','分析目标并提出执行方法','列出带依据的判断、假设、反例及会改变结论的信息。',upstream,{fallback:true});
+ }
+ // The CRM helper works directly on the local report. Searching the web or
+ // knowledge base would not resolve missing customer rows or delivery receipts.
+ if(audience&&requirements.every(req=>req.capability==='evidence.collect'||req.capability.startsWith('audience.'))){
+  requirements.splice(requirements.findIndex(req=>req.capability==='evidence.collect'),1);
+  excludedCapabilities.add('evidence.collect');
  }
  const leaves=requirements.filter(n=>!requirements.some(other=>other.dependsOn.includes(n.capability)));
  add('summary','result.compile','核验与汇总','逐项核验请求的交付物，给出建议、依据、限制与仍待确认的事项。',leaves.map(n=>n.capability));

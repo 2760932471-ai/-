@@ -1,4 +1,6 @@
-# AI数字员工协作工作台 · V0.34.0
+# AI数字员工协作工作台 · V0.35.0
+
+任务讨论里的「处理过程」可展开查看实际执行记录。总控根据已有资料和交付目标安排步骤。有部分工作能做时先交付，遇到会改变结果的关键缺口时在原讨论里询问。比如从 CRM 筛选客户并营销，总控会先交付筛选条件和邀约草稿，可继续导入脱敏客户标签 CSV 核对人选。缺少发送渠道时，讨论会注明尚未发送。
 
 总控从简短目标中提取交付物和比较条件，直接启动能做的调查。指定销售季节时，会分别调查同规格零售价和同期动销，把可核实的商品数据带进利润比较、文案与主图。缺少可比销量时会标明推荐成立的条件。
 
@@ -14,11 +16,9 @@ V0.27 的通用分析可以针对影响决策的问题补查一轮知识库与�
 
 在任务讨论中直接发送改图意见即可沿用已选商品和参考图重新出图。知识库支持 JPG、PNG、WebP 图片（8 MB）以及 MP4、WebM 视频（32 MB），通过标题、说明和字幕检索并打开原件。
 
-[下载 V0.34.0 启动包](deliverables/ai-platform-0.34.0.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
+[下载 V0.35.0 启动包](deliverables/ai-platform-0.35.0.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
 
 图片生成支持 Codex 桥接。服务端完成 `npm run setup:codex` 和 `npx --no-install codex login --device-auth` 后，用 `ENABLE_CODEX_LOCAL=1 npm start` 启动。在「AI基础能力配置 → 图片生成」选择「Codex 桥接 · ChatGPT 账户」，启用并保存。「检查 Codex 连接」读取登录状态与账户服务，不生成图片。目标任务通过原生图片工具生成，收到 PNG 后交付；模型或账户没有生图权限时会显示失败。
-
-V0.19.2：任务流页新增“单商品出图体验”，银色水龙头概念样张可直接查看、下载；一键创建主图＋详情图目标。样张为预先生成，不冒充实时结果；完整后端需图片服务。
 
 V0.19.1：移除重复的“工作应用”入口；旧链接转到任务流。底层内容与分析能力保留，由目标总控调度。
 
@@ -161,7 +161,7 @@ npm run pack
 npm run deploy:preview
 ```
 
-`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.34.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
+`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.35.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
 
 `src/workforce/`包含能力目录、Skill、员工配置、模型/API/Codex适配、执行循环与团队任务。`public/workforce.js`为员工和能力中心界面。旧版规则与模拟发布保留兼容，V0.2说明及PRD中未实现条款不能当作本版已交付能力。
 

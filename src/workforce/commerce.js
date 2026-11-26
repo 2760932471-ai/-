@@ -1,3 +1,4 @@
+import {readBusinessTable} from '../../public/business-csv.js';
 const missing=fields=>({status:'needs_input',summary:'业务数据尚不完整，请补齐后重试。',missing:fields,artifacts:[],metrics:{}});
 const round=n=>Math.round((n+Number.EPSILON)*100)/100;
 const signedAmount=v=>v!==''&&v!=null&&typeof v!=='boolean'&&Number.isFinite(Number(v))&&Math.abs(Number(v))<=1e9;
@@ -17,18 +18,10 @@ export const recipes=[
 ];
 export function matchingRecipes(text){return recipes.filter(r=>new RegExp(r.keywords,'i').test(text));}
 export function parseBusinessCsv(raw,required){
- if(typeof raw!=='string'||!raw.trim()||raw.length>80000)throw new Error('请提供不超过 80000 字符的 CSV');
- const rows=[];let row=[],cell='',quoted=false,closed=false;const s=raw.replace(/^\uFEFF/,'');
- for(let i=0;i<s.length;i++){const c=s[i];if(quoted){if(c==='"'){if(s[i+1]==='"'){cell+='"';i++;}else{quoted=false;closed=true;}}else cell+=c;continue;}
-  if(c==='"'){if(cell||closed)throw new Error('CSV 引号格式错误');quoted=true;continue;}
-  if(c===','||c==='\n'||c==='\r'){row.push(cell.trim());cell='';closed=false;if(c!==','){if(row.some(Boolean))rows.push(row);row=[];if(c==='\r'&&s[i+1]==='\n')i++;}continue;}
-  if(closed&&c.trim())throw new Error('CSV 闭合引号后只能是分隔符');cell+=c;
- }
- if(quoted)throw new Error('CSV 引号未闭合');row.push(cell.trim());if(row.some(Boolean))rows.push(row);
- if(rows.length<2||rows.length>201)throw new Error('CSV 需要表头和 1–200 条数据');
- const header=rows.shift();if(new Set(header).size!==header.length||header.length>30)throw new Error('CSV 表头重复或过多');
+ const {header,rows}=readBusinessTable(raw);
+ if(!rows.length)throw new Error('CSV 需要表头和 1–200 条数据');
  const absent=required.filter(k=>!header.includes(k));if(absent.length)throw new Error('CSV 缺少列：'+absent.join('、'));
- return rows.map((r,i)=>{if(r.length!==header.length)throw new Error(`第 ${i+2} 行列数与表头不同`);return Object.fromEntries(header.map((k,j)=>[k,r[j]]));});
+ return rows.map(row=>Object.fromEntries(header.map((k,j)=>[k,row[j]])));
 }
 export function commerceSample(id){
  if(id==='commerce.sku_profit')return {commerce:{csv:'sku,netSales,goods,fees,fulfillment,ads,returns,other\nDEMO-A,10000,4000,500,800,2500,200,100\nDEMO-B,3000,1600,150,400,1200,200,50',source:'虚构演示账单',period:'演示月份'}};

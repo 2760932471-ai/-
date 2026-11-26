@@ -9,7 +9,7 @@ export function taskMemory(goal, nodes = goal.flow?.nodes || []) {
   attempts: node.sourceAttempts,
   files: (node.artifactIds || []).flatMap(id => {
    const file = goal.artifacts?.find(a => a.id === id && a.version === goal.version && a.status !== 'superseded');
-   return file ? [{id, title: file.title, evidence: file.evidence?.slice(0, 300), excerpt: file.body?.slice(0, 500)}] : [];
+   return file ? [{id, title: file.title, evidence: file.evidence?.slice(0, 300), excerpt: (file.summaryBody??file.body)?.slice(0, 500)}] : [];
   })
  }));
  const memory = {version: goal.version, steps};

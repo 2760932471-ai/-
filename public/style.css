@@ -123,7 +123,6 @@ button,a{-webkit-tap-highlight-color:transparent}
 #flow-settings-form button,.flow-panel button,.flow-template-grid button{min-height:44px;}
 @media(max-width:600px){.flow-panel{padding:14px;}.flow-node-grid,.flow-template-grid{grid-template-columns:1fr;}.flow-panel .section-title{flex-wrap:wrap;}}
 
-.product-demo-image{display:block;width:100%;max-height:640px;object-fit:contain;border:1px solid #e2e4ea;border-radius:10px;background:#f7f7f8;margin:16px 0;}.product-demo-card .section-title{flex-wrap:wrap;gap:12px}.product-demo-card a.secondary{display:inline-flex;align-items:center;min-height:44px;text-decoration:none;}
 
 #login-screen{min-height:100dvh;display:grid;place-items:center;padding:20px}.login-card{width:min(100%,400px);padding:28px}.login-card p{margin:12px 0}.login-card form{display:grid;gap:12px}
 
@@ -344,10 +343,26 @@ main.conversation-page {padding:0}
 .chat-log .chat-message:not(.human) .message-bubble {background:#f4f5f7}
 .chat-log .chat-message.human .message-bubble {background:#e8efff}
 .chat-log .chat-message.coordinator .avatar {background:#263247;color:white;border-radius:9px}
-.flow-activity {margin:8px 0 18px 38px;color:#546176}
-.flow-activity>summary {min-height:44px;cursor:pointer;align-content:center;font-size:13px}
-.flow-activity>summary span {color:#697485;margin-left:6px}
-.flow-activity[open] {padding-left:14px;border-left:2px solid #d6deec}
+.chat-log .message-actions {margin:0;gap:8px}
+.chat-log .message-action-icon {display:inline-flex;align-items:center;gap:5px;width:auto;height:30px;min-height:30px;min-width:0;padding:0 6px;border:0;background:transparent;border-radius:6px;color:var(--muted);font-size:12px;font-weight:400;line-height:1;cursor:pointer}
+.chat-log .message-action-icon svg {width:16px;height:16px;flex:none}
+.flow-activity {margin:0 0 14px 40px;color:var(--muted);max-width:76ch}
+.flow-activity>summary {display:inline-flex;align-items:center;gap:8px;list-style:none;cursor:pointer;min-height:36px;padding:0 6px;border-radius:6px;font-size:14px;line-height:1.4}
+.flow-activity>summary::-webkit-details-marker {display:none}
+.flow-activity>summary small {font-size:12px;font-variant-numeric:tabular-nums}
+.flow-activity>summary svg {width:14px;height:14px;flex:none;transition:transform .15s ease}
+.flow-activity[open]>summary svg {transform:rotate(90deg)}
+.flow-activity>ol {margin:4px 0 0 7px;padding:0 0 0 16px;border-inline-start:2px solid var(--line);list-style:none}
+.flow-activity li {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:12px}
+.flow-activity li + li {margin-top:10px}
+.flow-activity li p {margin:0;font-size:14px;line-height:1.6;white-space:pre-line;overflow-wrap:anywhere}
+@media(hover:hover){
+ .flow-activity>summary:hover,.chat-log .message-action-icon:hover {color:var(--primary);background:var(--tint)}
+ .flow-activity li .message-actions {opacity:0}
+ .flow-activity li:is(:hover,:focus-within) .message-actions {opacity:1}
+}
+.flow-activity>summary:focus-visible,.chat-log .message-action-icon:focus-visible {outline:2px solid var(--primary);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.flow-activity>summary svg {transition:none}}
 .conversation-page .flow-attention {border:1px solid #cad7f3;border-inline-start:3px solid var(--primary);border-radius:12px;background:#f3f6ff;padding:16px}
 .report-summary {margin:8px 0 18px;border-top:1px solid var(--line);padding-top:14px}
 .report-summary.has-pictures {display:grid;grid-template-columns:1fr minmax(140px,38%);align-items:center;gap:16px}
@@ -376,7 +391,9 @@ main.conversation-page {padding:0}
  .conversation-page .chat-log {padding:12px}
  .conversation-page .chat-composer {margin:5px 9px 7px;padding:7px 10px}
  .report-summary.has-pictures {grid-template-columns:1fr}
- .flow-activity {margin-left:8px}
+ .flow-activity {margin-left:34px}
+ .flow-activity li {column-gap:6px;align-items:center}
+ .flow-activity>summary,.chat-log .message-action-icon {min-height:44px;min-width:44px}
 }
 .flow-composer {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center}
 .flow-composer textarea,.flow-composer .reply-draft,.flow-composer #chat-error {grid-column:1/-1}

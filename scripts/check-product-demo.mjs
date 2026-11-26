@@ -4,7 +4,15 @@ try{
  if(!offline){child=spawn(process.execPath,['--import','./scripts/fixtures/gemini-platform.mjs','src/server.js'],{env:{...process.env,PORT:'3092',DATA_DIR:dir,CODESPACES:'true',IMAGE_SECRET_TEST:'fake-test-key',AGENT_ALLOWED_HOSTS:'generativelanguage.googleapis.com'},stdio:['ignore','pipe','pipe']});await once(child.stdout,'data');}
  browser=await chromium.launch({executablePath:'/usr/bin/chromium',args:['--no-sandbox']});const page=await browser.newPage({viewport:{width:1440,height:1000}});page.on('pageerror',e=>errors.push(e.message));
  if(offline){const html=await readFile('deliverables/ai-platform-preview.html','utf8');await page.route(base+'/**',r=>r.fulfill({contentType:'text/html',body:html}));await page.context().setOffline(true);}else{const r=await page.request.put(base+'/api/images/config',{data:{revision:0,enabled:true,provider:'gemini',endpoint:'https://generativelanguage.googleapis.com/v1beta',model:'gemini-2.5-flash-image',secretEnv:'IMAGE_SECRET_TEST'}});assert(r.ok());}
- await page.goto(base+'/#flows');await page.locator('.product-demo-image').waitFor();await page.waitForFunction(()=>document.querySelector('.product-demo-image')?.naturalWidth>0);assert.match(await page.locator('.product-demo-card').innerText(),/预先生成/);await page.screenshot({path:'/tmp/product-demo-showcase.png'});await page.locator('[data-product-demo]').click();await page.locator('.goal-tabs [data-tab=tasks]').click();await page.locator('.flow-panel').waitFor();
+ await page.goto(base+'/#flows');
+ await page.getByRole('heading',{name:'任务流与总控'}).waitFor();
+ assert.equal(await page.getByRole('heading',{name:'商品图片制作示例'}).count(),0);
+ await page.locator('.sidebar-create').click();
+ await page.locator('#goal').fill('为银色台盆水龙头生成商品主图和详情图。使用白灰背景，做成概念图，保留完整轮廓。');
+ await page.locator('#submit-task').click();
+ await page.locator('#task-dialog').waitFor({state:'hidden'});
+ await page.locator('.goal-tabs [data-tab=tasks]').click();
+ await page.locator('.flow-panel').waitFor();
  if(!offline){await page.waitForFunction(()=>document.querySelector('.flow-panel')?.innerText.includes('待验收'));await page.locator('.goal-tabs [data-tab=artifacts]').click();await page.waitForFunction(()=>document.querySelectorAll('.image-thumbnail img').length>=2);assert.equal(await page.locator('.image-thumbnail img').count(),2);const goals=await page.request.get(base+'/api/goals').then(r=>r.json());const g=goals.find(g=>g.mode==='flow');assert(g.flow.nodes.some(n=>n.capability==='image.main'&&n.status==='succeeded'));assert(g.flow.nodes.some(n=>n.capability==='image.detail'&&n.status==='succeeded'));}
  else{await page.waitForFunction(()=>document.querySelector('.flow-panel')?.innerText.includes('图片服务未就绪'));}
  if(!offline){
@@ -17,5 +25,5 @@ try{
   await dialog.waitFor({state:'detached'});
   await page.waitForFunction(()=>document.querySelector('.chat-log')?.innerText.includes('详情图 · 图片已生成'));
  }
- await page.setViewportSize({width:375,height:812});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);console.log('PASS '+(offline?'offline sample visible, backend limitation explicit':'server sample and two actual mock image deliveries')+'; mobile layout');
+ await page.setViewportSize({width:375,height:812});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);console.log('PASS '+(offline?'offline image task reports missing image service':'task produces main and detail images through the mock service')+'; mobile layout');
 }finally{await browser?.close();if(child&&child.exitCode===null){child.kill();await once(child,'exit');}await rm(dir,{recursive:true,force:true});}

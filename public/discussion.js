@@ -45,7 +45,11 @@ export function createDiscussionUI({state,api,esc,receive,render,targets,drafts,
    if(error)error.textContent='';
   }
  });
- function controls(m,g){if(!['human','agent','coordinator'].includes(m.role))return '';return `<div class="message-actions"><button class="message-action-icon" data-chat-reply="${m.id}" aria-label="引用回复" title="引用回复"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 5-6 6 6 6M3 11h10a7 7 0 0 1 7 7"/></svg><span>引用</span></button></div>`;}
+ function controls(m){
+  if(!['human','agent','coordinator'].includes(m.role))return '';
+  const quoteIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h6v6l-4 5H4.5l2.2-5H4zM14 6.5h6v6l-4 5h-1.5l2.2-5H14z"/></svg>';
+  return `<div class="message-actions"><button type="button" class="message-action-icon" data-chat-reply="${esc(m.id)}" aria-label="引用回复" title="引用这条消息">${quoteIcon}<span>引用</span></button></div>`;
+ }
  function hide(){menu=[];anchor=null;const m=$('#mention-menu');if(m)m.hidden=true;const input=$('#chat-input');if(input){input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');}}
  function candidates(g,query=''){
   const employees=state.workforce?.employees||[],members=people(g),ready=employees.filter(e=>members.includes(e.id)&&e.readiness.ready);
@@ -81,7 +85,7 @@ export function createDiscussionUI({state,api,esc,receive,render,targets,drafts,
   if(b.hasAttribute('data-chat-pick')){select(Number(b.dataset.chatPick));return;}
   if(b.hasAttribute('data-chat-close')){$('#discussion-dialog').close();editing=null;}
   if(b.dataset.chatReply){targets[g.id]='coordinator';replyIds.set(g.id,b.dataset.chatReply);render(true);$('#chat-input')?.focus();}
-  if(b.dataset.chatUnreply){replyIds.delete(g.id);render(true);}
+  if(b.dataset.chatUnreply){replyIds.delete(g.id);render(true);$('#chat-input')?.focus();}
   if(b.dataset.chatPin||b.dataset.chatExclude){const s=settings(g),id=b.dataset.chatPin||b.dataset.chatExclude,key=b.dataset.chatPin?'pinnedIds':'excludedIds',other=b.dataset.chatPin?'excludedIds':'pinnedIds';s[key]=s[key].includes(id)?s[key].filter(x=>x!==id):[...s[key],id];s[other]=s[other].filter(x=>x!==id);b.disabled=true;receive(await post(g,{kind:'chatContext',...s}));}
   if(b.dataset.chatContext)await context(g);
   if(b.dataset.chatInvite){mount();editing=g.id;$('#discussion-dialog-title').textContent='邀请员工加入讨论';$('#discussion-error').textContent='';$('#discussion-dialog-body').innerHTML='<p class="field-hint">加入后可以 @ 提问，不会自动加入执行计划。</p><div class="invite-list">'+state.workforce.employees.filter(e=>!people(g).includes(e.id)).map(e=>`<button class="secondary" data-chat-add="${e.id}" ${e.readiness.ready?'':'disabled'}><strong>${esc(e.name)}</strong><small>${e.readiness.ready?esc(e.skillIds.map(id=>state.workforce.skills.find(s=>s.id===id)?.name||id).join('、')):'配置未就绪'}</small></button>`).join('')+'</div>';$('#discussion-dialog').showModal();}

@@ -1,4 +1,6 @@
-export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts,openGoal}){
+import {readBusinessTable} from './business-csv.js';
+
+export function createFlowsUI({expandedPanels,readQuotes,pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts}){
  const labels={awaiting_context:'等你补充任务信息',planning:'正在规划',planning_running:'模型规划中',planning_failed:'规划未完成',running:'执行中',pending:'等待前置任务',succeeded:'已完成',failed:'执行失败',needs_input:'需要处理',needs_capability:'新能力待验证',waiting_external:'等待图片结果',blocked:'存在阻塞',review:'待验收',completed:'已验收'};
  const label=s=>labels[s]||s;
  function researchProgress(n){
@@ -20,6 +22,7 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
    step.capability==='research.compare'&&step.status==='succeeded'&&!step.investigation?.observations?.length);
  }
  function nodeIssue(n){
+  if(n.question&&n.error)return n.error;
   const missing=(n.missing||[]).filter(Boolean);
   if(missing.length)return missing.join('；');
   if(n.status==='needs_input'&&n.capability==='product.compare'&&/业务输入/.test(n.error||''))return '比较至少需要两个有来源的候选商品。请核对商品编号和报价。';
@@ -30,6 +33,15 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   if(g.flow.calls>=g.flow.policy?.maxCalls)return '<small>本轮调用次数已用完。</small><button class="secondary" data-flow-replan="'+esc(g.id)+'">重新规划</button>';
   const id=esc(n.id),goal=esc(g.id);
   const retry='<button class="secondary" data-flow-retry="'+id+'" data-goal="'+goal+'">从此步继续</button>';
+  if(n.capability==='audience.select'||n.capability==='audience.contact'){
+   const select=n.capability==='audience.select';
+   const firstImport=select&&!n.question;
+   const upload='<button class="'+(firstImport?'primary':'secondary')+'" data-crm-import="'+goal+'">'+(firstImport?'导入 CRM 标签表':'更新 CRM 标签表')+'</button>';
+   if(n.question)return '<button class="primary" data-tab="discussion" data-task-destination="reply">回复筛选条件</button>'+upload;
+   const files='<button class="'+(select?'text-button':'primary')+'" data-tab="artifacts">查看已有交付物</button>';
+   return select?upload+files:files+upload;
+  }
+  if(n.question)return '<button class="primary" data-tab="discussion" data-task-destination="reply">回复问题</button>';
   if(n.status==='needs_input'&&n.capability==='product.compare')return '<button class="primary" data-offer-input="'+id+'" data-goal="'+goal+'">读取或补入候选报价</button><button class="text-button" data-view="ai-config/sources">管理供应商来源</button>'+retry;
   if(n.status==='needs_capability')return '<button class="secondary" data-flow-replan="'+goal+'">换一种方法重新规划</button>';
   if(n.capability==='sourcing.1688')return n.status==='failed'?retry:'';
@@ -125,8 +137,58 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   };dialog.showModal();
  }
  document.addEventListener('click',e=>{const b=e.target.closest('[data-offer-input]');if(b)enterOffers(state.goals.find(g=>g.id===b.dataset.goal),b.dataset.offerInput);});
- function showcase(){return `<section class="product-demo-card panel" aria-label="单商品出图体验"><div class="section-title"><div><h2>商品图片制作示例</h2><p>银色台盆水龙头 · 商品主图 + 详情图片模块</p></div>${badge('概念样例')}</div><img class="product-demo-image" src="/product-demo.png" alt="银色水龙头的主图和详情图概念效果样张" loading="lazy"><p class="field-hint">这是预先生成的概念效果样张，不是本次实时生成结果，也不是供应商实拍。未确认材质、性能、认证或在售信息。</p><div class="action-buttons"><button class="primary" data-product-demo>用这款商品开始出图</button><a class="secondary" href="/product-demo.png" download="水龙头概念效果样张.png">下载效果样张</a></div><p class="field-hint">创建后自动整理画面要求，生成 1 张主图和 1 张竖版详情图片模块，最终在交付物中查看和下载。真实出图需完整后端和图片服务；静态预览会如实显示连接缺口。</p></section>`;}
- function page(){const d=state.flows;if(!d)return '<p>正在加载任务流…</p>';const c=d.settings;return `<div class="page-heading flow-page-heading"><div><h1>任务流与总控</h1><p>选择一个方法开始，或直接提出目标，由总控规划步骤。</p></div><button class="primary" data-new>新建任务</button></div><div class="section-title"><h2>可复用任务流</h2><span>${d.templates.length} 个模板</span></div><div class="flow-template-grid">${d.templates.map(t=>`<article class="panel flow-template"><div class="template-heading"><h3>${esc(t.name)}</h3>${t.sourceGoal?'<small>来自已验收任务</small>':''}</div><p>${esc(t.description||t.rationale)}</p><div class="template-controls"><details><summary>${t.nodes.length} 个步骤</summary><ol>${t.nodes.map(n=>`<li>${esc(n.title)}</li>`).join('')}</ol></details><button class="secondary" data-flow-template="${esc(t.id)}">使用任务流 →</button></div></article>`).join('')}</div>${showcase()}<section class="panel"><div class="section-title"><h2>总控执行设置</h2>${badge(d.modelReady?'模型可用':'基础组合')}</div><form id="flow-settings-form"><label>规划与分析模型<select name="modelId"><option value="">基础组合 · 不调用规划模型</option>${(state.workforce?.models||[]).map(m=>`<option value="${esc(m.id)}" ${m.id===c.modelId?'selected':''}>${esc(m.name)}${m.credentialConfigured&&m.lastTest?.status==='succeeded'?'':' · 待连接测试'}</option>`).join('')}</select></label><p class="field-hint">选择模型后，总控可判断模板适用性、生成新任务流与能力构想；业务数据只发给所选模型服务。</p><div class="data-fields"><label>并行任务上限<input name="parallel" type="number" min="1" max="4" value="${c.parallel}" required></label><label>每条流程步骤上限<input name="maxNodes" type="number" min="2" max="16" value="${c.maxNodes}" required></label><label>每轮执行调用上限<input name="maxCalls" type="number" min="4" max="40" value="${c.maxCalls}" required></label></div><p class="field-hint">上限控制运行资源，不限制可以提出什么方案；不是精确费用预算。已有执行使用创建时的设置快照。</p><p class="form-error" id="flow-settings-error" role="alert"></p><button class="primary" type="submit">保存总控设置</button></form></section><section class="panel"><h3>开放构思，验证后执行</h3><p>允许新分析方法、新流程和新能力设计。当前能执行已连接工具、代码 Skill 与模型分析；新代码的自动隔离构建尚未接通，会保留方案并显示待验证。</p><p>真实店铺修改仍通过店铺操作入口授权。不会把任务流生成成功当成业务执行成功。</p></section>`;}
+ function openAudienceImport(goal){
+  const dialog=document.createElement('dialog');
+  dialog.setAttribute('aria-labelledby','crm-import-title');
+  dialog.innerHTML=`<form><div class="dialog-head"><h2 id="crm-import-title">导入 CRM 标签表</h2><button type="button" class="icon-btn" aria-label="关闭">×</button></div>
+   <p>从 CRM 导出脱敏编号、标签和可触达状态。文件在浏览器中解析，保存后从客户筛选步骤继续。</p>
+   <label>CSV 文件<input type="file" name="file" accept=".csv,text/csv" aria-describedby="crm-columns" required></label>
+   <p id="crm-columns" class="field-hint">UTF-8 编码。必填列为「脱敏编号、标签」，多个标签用竖线 | 分隔。「可触达」可填是、否，或留空。</p>
+   <details><summary>查看 CSV 格式</summary><pre>脱敏编号,标签,可触达
+C001,年轻|女性|白领,是</pre><small>英文列名也可使用 id、tags、contactable。</small></details>
+   <label>资料来源<input name="source" required maxlength="120" placeholder="例如：11 月会员标签报表"></label>
+   <p class="form-error" role="alert"></p><button type="submit" class="primary">保存并继续筛选</button></form>`;
+  const form=dialog.querySelector('form'),error=form.querySelector('[role=alert]');
+  const fileInput=form.elements.file,source=form.elements.source;
+  fileInput.onchange=()=>{error.textContent='';if(!source.value.trim())source.value=fileInput.files[0]?.name.replace(/\.csv$/i,'').slice(0,120)||'';};
+  form.onsubmit=async event=>{
+   event.preventDefault();
+   const button=event.submitter;
+   if(button.disabled)return;
+   button.disabled=true;error.textContent='';
+   try{
+    const file=fileInput.files[0];
+    if(!file||file.size>400000)throw new Error('请选择小于 400 KB 的 UTF-8 CSV 文件。');
+    const text=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());
+    const {header,rows}=readBusinessTable(text,{maxRows:2000,maxChars:100000});
+    const aliases=new Map([['脱敏编号','id'],['标签','tags'],['可触达','contactable'],['id','id'],['tags','tags'],['contactable','contactable']]);
+    const columns=header.map(name=>aliases.get(name.toLowerCase()));
+    if(columns.includes(undefined)||new Set(columns).size!==columns.length||!columns.includes('id')||!columns.includes('tags')){
+     throw new Error('请仅保留「脱敏编号、标签、可触达」三列，其中可触达可以省略。');
+    }
+    const records=rows.map((values,index)=>{
+     const cell=name=>values[columns.indexOf(name)]||'';
+     const id=cell('id'),tags=cell('tags').split(/[|｜]/u).map(value=>value.trim()).filter(Boolean);
+     const allowed=cell('contactable').toLowerCase();
+     if(!allowed)return {id,tags};
+     if(!['是','否','true','false'].includes(allowed))throw new Error('第 '+(index+2)+' 行的可触达应为「是」「否」或空白。');
+     return {id,tags,contactable:allowed==='是'||allowed==='true'};
+    });
+    await act('inputs',{data:{crmAudience:{source:source.value.trim(),records}},expectedVersion:goal.version},goal.id);
+    dialog.close();toast('已导入 '+records.length+' 条客户标签');await refresh();
+   }catch(issue){error.textContent=issue instanceof TypeError&&/encod/i.test(issue.message)?'文件编码有误，请另存为 UTF-8 CSV。':issue.message;}
+   finally{button.disabled=false;}
+  };
+  dialog.querySelector('.icon-btn').onclick=()=>dialog.close();
+  document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.showModal();
+ }
+ document.addEventListener('click',event=>{
+  const button=event.target.closest('[data-crm-import]');
+  if(!button)return;
+  const goal=state.goals.find(item=>item.id===button.dataset.crmImport);
+  if(goal)openAudienceImport(goal);
+ });
+ function page(){const d=state.flows;if(!d)return '<p>正在加载任务流…</p>';const c=d.settings;return `<div class="page-heading flow-page-heading"><div><h1>任务流与总控</h1><p>选择一个方法开始，或直接提出目标，由总控规划步骤。</p></div><button class="primary" data-new>新建任务</button></div><div class="section-title"><h2>可复用任务流</h2><span>${d.templates.length} 个模板</span></div><div class="flow-template-grid">${d.templates.map(t=>`<article class="panel flow-template"><div class="template-heading"><h3>${esc(t.name)}</h3>${t.sourceGoal?'<small>来自已验收任务</small>':''}</div><p>${esc(t.description||t.rationale)}</p><div class="template-controls"><details><summary>${t.nodes.length} 个步骤</summary><ol>${t.nodes.map(n=>`<li>${esc(n.title)}</li>`).join('')}</ol></details><button class="secondary" data-flow-template="${esc(t.id)}">使用任务流 →</button></div></article>`).join('')}</div><section class="panel"><div class="section-title"><h2>总控执行设置</h2>${badge(d.modelReady?'模型可用':'基础组合')}</div><form id="flow-settings-form"><label>规划与分析模型<select name="modelId"><option value="">基础组合 · 不调用规划模型</option>${(state.workforce?.models||[]).map(m=>`<option value="${esc(m.id)}" ${m.id===c.modelId?'selected':''}>${esc(m.name)}${m.credentialConfigured&&m.lastTest?.status==='succeeded'?'':' · 待连接测试'}</option>`).join('')}</select></label><p class="field-hint">选择模型后，总控可判断模板适用性、生成新任务流与能力构想；业务数据只发给所选模型服务。</p><div class="data-fields"><label>并行任务上限<input name="parallel" type="number" min="1" max="4" value="${c.parallel}" required></label><label>每条流程步骤上限<input name="maxNodes" type="number" min="2" max="16" value="${c.maxNodes}" required></label><label>每轮执行调用上限<input name="maxCalls" type="number" min="4" max="40" value="${c.maxCalls}" required></label></div><p class="field-hint">上限控制运行资源，不限制可以提出什么方案；不是精确费用预算。已有执行使用创建时的设置快照。</p><p class="form-error" id="flow-settings-error" role="alert"></p><button class="primary" type="submit">保存总控设置</button></form></section><section class="panel"><h3>开放构思，验证后执行</h3><p>允许新分析方法、新流程和新能力设计。当前能执行已连接工具、代码 Skill 与模型分析；新代码的自动隔离构建尚未接通，会保留方案并显示待验证。</p><p>真实店铺修改仍通过店铺操作入口授权。不会把任务流生成成功当成业务执行成功。</p></section>`;}
  function remakeAction(g){
   if(g.paused||g.stage==='completed'||!g.flow?.nodes.some(n=>n.capability==='sourcing.1688'&&n.offers?.length))return '';
   const main=g.flow.nodes.find(n=>n.capability==='image.main'&&n.status==='succeeded');
@@ -139,27 +201,23 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
   b.disabled=true;
   try{await act('remakeMain',{previousImageJob:b.dataset.remakeMain},b.dataset.goal);}catch(err){toast(err.message);}finally{b.disabled=false;}
  });
- const openActivity=new Set();
  function disclosure(key){
-  return `data-flow-activity="${esc(key)}" ${openActivity.has(key)?'open':''}`;
+  return `data-flow-activity="${esc(key)}" ${expandedPanels.has(key)?'open':''}`;
  }
- document.addEventListener('toggle',e=>{
-  const key=e.target.dataset?.flowActivity;
-  if(key&&e.target.isConnected){if(e.target.open)openActivity.add(key);else openActivity.delete(key);}
- },true);
  function discussionMessages(g,messageView){
   const parts=[],entries=[];
   const receipts=new Set(g.flow.nodes.flatMap(n=>(n.artifactIds||[]).map(id=>n.title+'：'+g.artifacts.find(a=>a.id===id)?.title)));
   function flush(){
-   if(entries.length>1){
+   if(entries.length){
     const key=g.id+'/'+entries[0].id;
-    parts.push(`<details class="flow-activity" ${disclosure(key)}><summary>执行记录 <span>${entries.length} 条</span></summary>${entries.map(m=>messageView(m,g)).join('')}</details>`);
-   }else if(entries.length)parts.push(messageView(entries[0],g));
+    const items=entries.map(m=>`<li><p>${esc(m.text)}</p>${discussionUI.controls(m)}</li>`).join('');
+    parts.push(`<details class="flow-activity" ${disclosure(key)}><summary><span>处理过程</span><small>${entries.length} 条记录</small><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg></summary><ol>${items}</ol></details>`);
+   }
    entries.length=0;
   }
   for(const m of g.messages){
    const receipt=m.role==='coordinator'&&!m.reportVersion&&!m.artifactIds?.length&&!m.links?.length&&!m.replyTo&&
-    (receipts.has(m.text)||/^(基础组合器|总控模型)已(创建|选择)任务流/.test(m.text));
+    (m.card==='flow-activity'||receipts.has(m.text)||/^(基础组合器|总控模型)已(创建|选择)任务流/.test(m.text));
    if(receipt)entries.push(m);
    else{flush();parts.push(messageView(m,g));}
   }
@@ -182,6 +240,6 @@ export function createFlowsUI({readQuotes,pickBrowser,state,api,esc,badge,act,re
  }
  function facts(g){return `<div class="tab-scroll"><h3>目标上下文与资料</h3><p>优先读取已接入的知识和来源；补充资料是可选入口，不要求重复整理卖点或受众。</p>${knowledgeUI.goal(g)}${sourcesUI.goal(g)}<details><summary>补充结构化业务数据（高级）</summary><form id="flow-data-form" data-goal="${g.id}"><label>业务数据 JSON<textarea name="data" rows="8" spellcheck="false">${esc(JSON.stringify(g.skillData||{},null,2))}</textarea></label><p class="field-hint">用于已有账单、候选商品等结构化数据。保存后会新建计划版本。</p><p class="form-error" role="alert"></p><button class="secondary" type="submit">保存并重新规划</button></form></details></div>`;}
  document.addEventListener('submit',async e=>{if(!['flow-settings-form','flow-data-form'].includes(e.target.id))return;e.preventDefault();const f=e.target,b=e.submitter;b.disabled=true;try{const values=Object.fromEntries(new FormData(f));if(f.id==='flow-settings-form')await api('flows/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:state.flows.settings.revision,modelId:values.modelId,parallel:Number(values.parallel),maxNodes:Number(values.maxNodes),maxCalls:Number(values.maxCalls)})});else await act('inputs',{data:JSON.parse(values.data)},f.dataset.goal);await refresh();toast('已保存');}catch(error){f.querySelector('.form-error').textContent=error.message;}finally{b.disabled=false;}});
- document.addEventListener('click',async e=>{const start=e.target.closest('[data-product-demo]');if(start){start.disabled=true;try{const g=await api('goals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({executionMode:'flow',requestId:globalThis.crypto?.randomUUID?.()||'product-demo-'+Date.now(),text:'为一款银色台盆水龙头制作商品主图和详情图。概念设计：圆柱形主体、短弯出水嘴、单杆把手，白灰背景和少量蓝色点缀；主图突出商品，详情图片模块展示外观细节和台盆搭配。全渠道通用，明确标注概念图，不添加未经确认的材质、尺寸、性能、认证、售价或保修声明。'})});receive(g);openGoal(g.id);}catch(error){toast(error.message);}finally{start.disabled=false;}return;}const b=e.target.closest('[data-flow-replan],[data-flow-retry],[data-flow-save],[data-flow-template]');if(!b)return;b.disabled=true;try{if(b.dataset.flowTemplate){const t=state.flows.templates.find(t=>t.id===b.dataset.flowTemplate);openCreate('按“'+t.name+'”的方法，完成：');return;}const id=b.dataset.flowReplan||b.dataset.flowSave||b.dataset.goal;if(b.dataset.previousImage&&!window.confirm('将重新提交一次生图，可能产生用量。已有选品结果会保留。确认继续？'))return;if(b.dataset.flowSave){await api(`flows/goals/${id}/template`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:state.goals.find(g=>g.id===id).version})});await refresh();toast('已沉淀为可复用任务流');}else await act(b.dataset.flowReplan?'replan':'retry',b.dataset.flowRetry?{nodeId:b.dataset.flowRetry,previousImageJob:b.dataset.previousImage,confirmUnknown:!!b.dataset.previousImage}:{},id);}catch(error){toast(error.message);}finally{b.disabled=false;}});
- return {panel,page,discussion,remakeAction,context,facts,showcase,label,nodeIssue,researchProgress,needsResearchSources};
+ document.addEventListener('click',async e=>{const b=e.target.closest('[data-flow-replan],[data-flow-retry],[data-flow-save],[data-flow-template]');if(!b)return;b.disabled=true;try{if(b.dataset.flowTemplate){const t=state.flows.templates.find(t=>t.id===b.dataset.flowTemplate);openCreate('按“'+t.name+'”的方法，完成：');return;}const id=b.dataset.flowReplan||b.dataset.flowSave||b.dataset.goal;if(b.dataset.previousImage&&!window.confirm('将重新提交一次生图，可能产生用量。已有选品结果会保留。确认继续？'))return;if(b.dataset.flowSave){await api(`flows/goals/${id}/template`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:state.goals.find(g=>g.id===id).version})});await refresh();toast('已沉淀为可复用任务流');}else await act(b.dataset.flowReplan?'replan':'retry',b.dataset.flowRetry?{nodeId:b.dataset.flowRetry,previousImageJob:b.dataset.previousImage,confirmUnknown:!!b.dataset.previousImage}:{},id);}catch(error){toast(error.message);}finally{b.disabled=false;}});
+ return {panel,page,discussion,remakeAction,context,facts,label,nodeIssue,researchProgress,needsResearchSources};
 }

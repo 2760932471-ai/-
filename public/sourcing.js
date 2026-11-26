@@ -24,6 +24,10 @@ function decisionPriority(text){
 
 export function businessBrief(goal){
  let text=goal.text;
+ // An answer that specifies the task changes what is to be executed. A
+ // preference (such as a trial order) only refines the existing brief.
+ const clarified=['subject','outcome','goal'].includes(goal.scenario?.kind)||goal.scenario?.question?.startsWith('你希望我处理什么对象');
+ if(clarified&&goal.scenario?.answer)text+='；'+goal.scenario.answer;
  const {requested,excluded}=requestParts(text);
  // Delegating a bare product name can imply sourcing. Explicit channels,
  // analyses and edits already specify the work and keep their own inputs.
@@ -37,7 +41,7 @@ export function businessBrief(goal){
   const category=goal.scope?.product||reply;
   if(category&&category.length<=60&&!/不知道|不确定|默认|直接判断|随便/.test(category))text+='；品类：'+category;
  }
- return goal.scenario?.answer ? text+'；使用场景：'+goal.scenario.answer : text;
+ return goal.scenario?.answer&&!clarified ? text+'；使用场景：'+goal.scenario.answer : text;
 }
 
 // Goal creation, browser discovery and execution need the same category and price basis.

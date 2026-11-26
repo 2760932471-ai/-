@@ -10,6 +10,9 @@ function moduleBundle(name,source,prelude=''){
 // the server. Bind their real named imports so new runtime dependencies cannot
 // silently become undefined only in the downloadable preview.
 const planningModules={
+ 'public/business-csv.js':'previewBusinessCsv',
+ 'public/flows.js':'previewFlowsUI',
+ 'src/taskflows/audience.js':'previewAudience',
  'src/taskflows/inquiry.js':'previewFlowInquiry',
  'src/taskflows/acceptance.js':'previewFlowAcceptance',
  'src/taskflows/brief.js':'previewFlowBrief',
@@ -56,7 +59,8 @@ export function defaultConfigs(){return structuredClone(seeds);}
 export async function invokeAgent(config,input){if(!config.enabled)throw new Error('Agent已停用');if(config.adapter!=='builtin')throw new Error('外部Agent需要运行完整后端；免安装预览不会发送网络请求');return validateOutput(await builtins[config.id](input,config));}
 `,"const {builtins,seeds}=previewBuiltins;const process={env:{}};const isIP=s=>s.includes(':')?6:/^\\d+(?:\\.\\d+){3}$/.test(s)?4:0;");
 const catalog=moduleBundle('previewCatalog',await read('src/workforce/catalog.js'));
-const commerce=moduleBundle('previewCommerce',await read('src/workforce/commerce.js'));
+const businessCsv=await planningBundle('public/business-csv.js');
+const commerce=await planningBundle('src/workforce/commerce.js');
 const external=moduleBundle('previewExternal',await read('src/workforce/external.js'),'const process={env:{}};');
 const starter=moduleBundle('previewStarter',await read('src/workforce/starter-skills.js'));
 const conversation=moduleBundle('previewConversation',await read('src/workforce/conversation.js'));
@@ -106,14 +110,14 @@ const sourcing=await planningBundle('public/sourcing.js');
 const offerCards=moduleBundle('previewOfferCards',await read('public/offer-cards.js'));
 const pickBrowser=await planningBundle('public/pick-browser.js');
 const flowCatalog=await planningBundle('src/taskflows/catalog.js');
+const audience=await planningBundle('src/taskflows/audience.js');
 const flowContract=await planningBundle('src/taskflows/contract.js');
 const flowDeliveries=await planningBundle('src/taskflows/deliveries.js');
 const flowPlanner=await planningBundle('src/taskflows/planner.js');
 const flowMemory=await planningBundle('src/taskflows/memory.js');
 const decision=moduleBundle('previewDecision',await read('src/taskflows/decision.js'),'const {parseBusinessCsv}=previewCommerce;');
 const flowManager=await planningBundle('src/taskflows/manager.js');
-const demoImage='data:image/png;base64,'+(await readFile(new URL('public/product-demo.png',root))).toString('base64');
-const flowsUI=moduleBundle('previewFlowsUI',(await read('public/flows.js')).replaceAll('/product-demo.png',demoImage));
+const flowsUI=await planningBundle('public/flows.js');
 const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const {createTaskflowManager}=previewFlowManager;const {prepareContent,imageOutputs,assertContentEvidence}=previewContentPreparation;const {createProductionManager}=previewProduction;const {createImages}=previewImages;const imageFiles=()=>({save:async()=>{},read:async()=>{throw new Error('预览没有生成图片');}});const {createStoreOperations}=previewStoreOperations;const {createIntegrations}=previewIntegrations;const {createResearchManager,researchInputs,assertResearch,collectResearch,isResearchGoal}=previewResearch;const {contentPacks,validateCopyBrief}=previewContent;const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {createPlanningManager,assertPlanCurrent}=previewPlanning;const {discussionMembers,contextSettings,selectConversation}=previewConversation;const {runEmployee}=previewEmployeeRuntime;const {callModel,requireChatModel}=previewModel;const {executeSkill,skillDefinitions}=previewSkills;const {externalDefinitions,externalBlockers,publicExternal}=previewExternal;const invokeExternal=async()=>{throw new Error('静态预览不能调用外部 Agent，请启动完整后端');};const {initialSources,createSourceManager}=previewSources;const {initialKnowledge,createKnowledgeManager}=previewKnowledge;`);
 const workspaces=moduleBundle('previewWorkspaces',await read('src/workspaces.js'),`const randomUUID=previewUUID;const {readFile,writeFile,mkdir,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createPlatform}=previewPlatform;`);
 const bootstrap=`
@@ -190,7 +194,7 @@ let app=await read('public/app.js');
 if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
 app=app.replace(/^import .*;\n/gm,'').replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
 const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['目标、任务与协作空间已保存到服务端','目标、任务与协作空间已保存到当前浏览器'],['服务端持久化','浏览器本地保存'],['使用服务端已保存的配置','使用当前浏览器已保存的配置'],['后端自动执行','浏览器规则执行'],['数据保存在后端','数据保存在当前浏览器'],['等待后端执行','等待本地执行'],['代码 / HTTP 能力','本地代码能力']];
-let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,goalLanguage,deliveryReview,contentPreparation,production,content,selectsUI,contentUI,skills,employees,model,runtime,planning,planningUI,matching,research,team,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,marketComparison,sourcing,offerCards,pickBrowser,flowCatalog,flowBrief,flowContract,flowDeliveries,flowAcceptance,flowPlanner,flowMemory,flowInquiry,decision,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,businessCsv,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,goalLanguage,deliveryReview,contentPreparation,production,content,selectsUI,contentUI,skills,employees,model,runtime,planning,planningUI,matching,research,team,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,marketComparison,sourcing,offerCards,pickBrowser,audience,flowCatalog,flowBrief,flowContract,flowDeliveries,flowAcceptance,flowPlanner,flowMemory,flowInquiry,decision,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
 for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
 code=code.replaceAll('href="/cloud-browser.zip"', 'href="data:application/zip;base64,'+(await readFile(new URL('public/cloud-browser.zip',root))).toString('base64')+'"');
 let html=await read('public/index.html');const css=[await read('public/style.css'),await read('public/shell.css'),await read('public/employees.css')].join('\n');

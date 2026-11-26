@@ -9,6 +9,9 @@ const skillInputs={
  'service.evidence':['question','serviceQuestion','knowledgeRecall.hits']
 };
 export const flowCapabilities=[
+ {id:'audience.prepare',name:'准备客群筛选与营销材料',description:'按任务目标编写客户标签筛选口径，按需求拟定邀约草稿。',executor:'audience',roleIds:['analysis'],inputs:['goal'],outputs:['audience.criteria']},
+ {id:'audience.select',name:'筛选 CRM 客群',description:'在本地核对提供的脱敏报表和目标标签，列明匹配客户与可触达人数。',executor:'audience',roleIds:['analysis'],inputs:['crmAudience','audience.criteria'],outputs:['audience.list']},
+ {id:'audience.contact',name:'核对营销触达条件',description:'检查本次客群和可用发送方式，记录实际触达状态。',executor:'audience',roleIds:['coordination'],inputs:['audience.list'],outputs:['audience.deliveryStatus']},
  {id:'sourcing.1688',name:'1688 商品筛选',description:'按场景和采购条件比较可核对的报价，保存商品编号、来源及选款依据。',
   executor:'sourcing',roleIds:['selection'],inputs:['goal'],outputs:['sourcing.quotes','selected.sku']},
  {id:'sourcing.profit',name:'比较候选商品收益',description:'核对各款的计价单位、售价与费用。交付利润比较及影响结论的条件。',

@@ -48,7 +48,9 @@ test('a newly connected reasoning model resumes an existing plan and keeps the c
  const evidence=initial.flow.nodes.find(n=>n.capability==='evidence.collect');
  assert.equal(step.status,'needs_input');
  const model=await connectModel(t,p);
- await act(p,goal,'retry',{nodeId:step.id});
+ await act(p,goal,'message',{text:'为什么卡住了？'});
+ assert.equal(get(p,goal).flow.nodes.find(n=>n.id===step.id).status,'needs_input');
+ await act(p,goal,'message',{text:'继续'});
  for(let i=0;i<4&&get(p,goal).stage!=='review';i++)await p.pump();
  const finished=get(p,goal);
  assert.equal(finished.stage,'review');
@@ -196,6 +198,11 @@ test('a missing category can be clarified after restart together with optional b
  await p.pump();assert.equal(get(p,g).flow.status,'awaiting_context');
  await p.pump();assert.equal(get(p,g).messages.filter(m=>m.text.includes('品类或搜索关键词')).length,1);
  p=await createPlatform(dir,options);
+ await act(p,g,'message',{text:'继续'});
+ await p.pump();
+ assert.equal(get(p,g).flow.status,'awaiting_context');
+ assert.equal(get(p,g).flow.questionKind,'category');
+ assert.equal(get(p,g).scenario?.answer,undefined);
  await act(p,g,'message',{text:'猫粮，给老客补货，优先考虑复购，售价30元，其他成本2元'});
  for(let i=0;i<4;i++)await p.pump();
  const goal=get(p,g),report=goal.artifacts.find(a=>a.title==='选品交付报告');
@@ -232,4 +239,30 @@ test('trial orders compare confirmed minimum quantities only in the same unit',a
  const rows=[{sku:'A',price:10,terms:'20袋起订',repurchase:20},{sku:'B',price:15,terms:'起订量：2袋',repurchase:20}];
  assert.equal(decisionOrder(rows,criteria,text)[0].sku,'B');
  assert.equal(decisionOrder([rows[0],{...rows[1],terms:'2箱起订'}],criteria,text)[0].sku,'A');
+});
+
+test('a concrete user decision pauses only its analysis step and resumes from a chat reply',async t=>{
+ const question='这次预算按一家门店还是两家门店计算？';
+ const {p}=await make(t,{modelCall:async(model,messages)=>{
+  if(messages.length===1)return {message:{content:'正常'}};
+  const args=JSON.parse(messages[1].content);
+  if(args.templates)return {message:{content:JSON.stringify(basicFlow({text:'分析门店预算'}))}};
+  const answer=args.clarification?{conclusion:'按两家门店核算。'}:{conclusion:'门店数量影响本轮预算。',blockingQuestion:question};
+  return {message:{content:JSON.stringify(answer)}};
+ }});
+ await connectModel(t,p);
+ const g=await create(p,'分析门店预算');
+ for(let i=0;i<4&&get(p,g).flow.status!=='blocked';i++)await p.pump();
+ const step=get(p,g).flow.nodes.find(n=>n.capability==='analysis.reason');
+ assert.equal(step.question,question);
+ const status=await act(p,g,'message',{text:'继续'});
+ assert.match(status.messages.at(-1).text,/一家门店还是两家/);
+ assert.equal(status.flow.nodes.find(n=>n.id===step.id).status,'needs_input');
+ await act(p,g,'message',{text:'按两家门店计算'});
+ for(let i=0;i<4&&get(p,g).stage!=='review';i++)await p.pump();
+ const done=get(p,g);
+ assert.equal(done.stage,'review');
+ assert.equal(done.version,1);
+ assert.equal(done.flow.nodes.find(n=>n.capability==='evidence.collect').attempts,1);
+ assert.match(done.artifacts.at(-1).body,/两家门店/);
 });

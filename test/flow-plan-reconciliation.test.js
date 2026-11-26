@@ -116,3 +116,25 @@ test('a model authors task-specific checks for a library shift recommendation an
  state.artifacts.find(a=>a.taskId==='decision').status='superseded';
  assert.ok(evaluatePlanChecks(state,plan,nodes).failures.some(note=>note.includes('decision')));
 });
+
+test('a decision-changing ambiguity can be clarified once, while a preference, available inputs or independent work keep the task moving',async()=>{
+ const ask={clarification:{missing:'outcome',alternatives:['整理交接材料','核查尚未交接的事项'],question:'你要我整理交接材料，还是核对尚未交接的事项？'},nodes:[]};
+ const ambiguous=goal('处理交接事项');
+ const propose=(request,reply)=>proposeFlow(request,flowDefaults(),model,async()=>({message:{content:JSON.stringify(reply)}}));
+ const result=await propose(ambiguous,ask);
+ assert.equal(result.question,ask.clarification.question);
+ assert.equal(result.questionKind,'outcome');
+ for(const sufficient of [
+  goal('处理交接事项，交付形式你来决定'),
+  {...ambiguous,version:2,artifacts:[{version:2,status:'draft',title:'交接清单'}]},
+  goal('计算库存覆盖天数，并处理交接事项'),
+  {...ambiguous,scenario:{kind:'goal',question:result.question,answer:'用库存数据计算库存覆盖天数，不需要作图。'}}
+ ]){
+  const plan=await propose(sufficient,ask);
+  assert.equal(plan.question,undefined);
+  assert.ok(plan.nodes.length);
+ }
+ const response=await propose({...ambiguous,scenario:{kind:'goal',answer:'计算库存覆盖天数'}},ask);
+ assert.ok(response.nodes.some(n=>n.capability==='inventory.coverage'));
+ assert.match(response.contract.brief,/处理交接事项/);
+});

@@ -59,7 +59,10 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   const run={id:randomUUID(),agentId,agentName:config.name,configVersion:config.revision,config,status:'queued',input,createdAt:now(),...meta};d.runs.unshift(run);return run;
  }
  function needsAutoContent(g){try{validateCopyBrief(g.skillData?.copyBrief);return false;}catch{return true;}}
- function inputs(g){return {...g.skillData,...(needsAutoContent(g)?{autoContent:prepareContent(data,g)}:{}),...researchInputs(data,g),knowledge:g.knowledge,references:sources.resolve(g),webResearch:g.webResearch?.goalVersion===g.version&&g.webResearch.revision===data.searchConfig?.revision?g.webResearch:undefined,goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,...(g.mode==='team'||g.discussionMode==='employees'?selectConversation(g,{text:g.text}):{conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text}))}),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({id:a.id,agent:a.agent,agentName:a.agentName,runId:a.runId,version:a.version,title:a.title,body:a.body,evidence:a.evidence}))};}
+ function inputs(g){
+  // CRM rows are evaluated locally by audience.select. Other workers receive the aggregate result.
+  const {crmAudience,...shareableData}=g.skillData||{};
+  return {...shareableData,...(needsAutoContent(g)?{autoContent:prepareContent(data,g)}:{}),...researchInputs(data,g),knowledge:g.knowledge,references:sources.resolve(g),webResearch:g.webResearch?.goalVersion===g.version&&g.webResearch.revision===data.searchConfig?.revision?g.webResearch:undefined,goal:g.text,kind:g.kind,scope:g.scope,facts:g.facts,proposal:g.proposal,financials:g.financials||undefined,...(g.mode==='team'||g.discussionMode==='employees'?selectConversation(g,{text:g.text}):{conversation:g.messages.slice(-12).map(m=>({author:m.author,text:m.text}))}),observations:g.artifacts.filter(a=>a.version===g.version).map(a=>({id:a.id,agent:a.agent,agentName:a.agentName,runId:a.runId,version:a.version,title:a.title,body:a.summaryBody??a.body,evidence:a.evidence}))};}
  function schedule(d,g){
   if(g.mode==='team')return team.schedule(d,g);
   if(g.mode!=='platform'||g.paused||g.stage!=='draft'||['queued','running','failed','needs_input','waiting_resume'].includes(g.runtime?.status))return;
