@@ -1,13 +1,6 @@
 import {skillDefinitions} from '../workforce/skills.js';
-import {skillRequestPatterns} from '../../public/goal-language.js';
+import {employeeProfileFit,skillRequestPatterns} from '../../public/goal-language.js';
 
-// Workspace input keys are also used to resume only the work affected by an edit.
-const skillInputs={
- 'finance.calculate':['financials','facts','proposal'],
- 'content.review':['reviewText','proposal','observations'],
- 'service.triage':['question','serviceQuestion'],
- 'service.evidence':['question','serviceQuestion','knowledgeRecall.hits']
-};
 export const flowCapabilities=[
  {id:'audience.prepare',name:'准备客群筛选与营销材料',description:'按任务目标编写客户标签筛选口径，按需求拟定邀约草稿。',executor:'audience',roleIds:['analysis'],inputs:['goal'],outputs:['audience.criteria']},
  {id:'audience.select',name:'筛选 CRM 客群',description:'在本地核对提供的脱敏报表和目标标签，列明匹配客户与可触达人数。',executor:'audience',roleIds:['analysis'],inputs:['crmAudience','audience.criteria'],outputs:['audience.list']},
@@ -30,16 +23,16 @@ export const flowCapabilities=[
   executor:'image',roleIds:['creative'],inputs:['goal'],outputs:['image.main.png']},
  {id:'image.detail',name:'生成详情图片模块',description:'生成竖版详情图片模块，需要图片服务，不是整张详情长图。',
   executor:'image',roleIds:['creative'],inputs:['goal'],outputs:['image.detail.png']},
- ...skillDefinitions.map(({id,name,description,roleIds,requires})=>({id,name,description,roleIds,executor:'skill',inputs:id.startsWith('copy.')?['copyBrief','autoContent']:skillInputs[id]||requires,outputs:['artifacts'],acceptance:skillRequestPatterns.find(request=>request.capability===id)?.acceptance})),
+ ...skillDefinitions.map(skill=>({...skill,executor:'skill',acceptance:skillRequestPatterns.find(request=>request.capability===skill.id)?.acceptance||skill.description})),
  {id:'result.compile',name:'核验并汇总结果',description:'汇总前序任务的真实交付物、来源和限制，不将未执行任务标为完成。',
   executor:'compile',roleIds:['coordination'],inputs:['artifacts'],outputs:['delivery.report']},
 ];
 export const flowEmployees=[
- {id:'flow-sourcing',roleId:'selection',name:'选品分析员',instructions:'从货源平台核对同类商品的报价和来源，结合售价与费用比较候选。',skillIds:['sourcing.1688','sourcing.profit','market.offers']},
- {id:'flow-visual',roleId:'creative',name:'商品视觉设计师',instructions:'使用已连接的图片服务制作商品主图与详情图，保留商品依据和图片版本。',skillIds:['image.main','image.detail']}
+ {id:'flow-sourcing',roleId:'selection',name:'选品分析员',instructions:'从货源平台核对同类商品的报价和来源，结合售价与费用比较候选。',profile:{tone:'standard',channel:'general',persona:'结论附上数据来源和待核实的条件。',strategy:'比较同规格的采购成本、零售价和履约费用，核对会改变推荐结果的关键信息。'},skillIds:['sourcing.1688','sourcing.profit','market.offers']},
+ {id:'flow-visual',roleId:'creative',name:'商品视觉设计师',instructions:'使用已连接的图片服务制作商品主图与详情图，保留商品依据和图片版本。',profile:{tone:'standard',channel:'general',persona:'以商品实物和使用场景清楚表达卖点。',strategy:'先核对所选商品和素材，再决定画面重点和可以使用的文案。'},skillIds:['image.main','image.detail']}
 ].map(role=>({...role,enabled:true,mode:'flow',readiness:{ready:true,label:'任务流岗位',blockers:[]}}));
 
-export function assignFlowCapability(capability, employees=[], preferredEmployeeId=null){
+export function assignFlowCapability(capability, employees=[], preferredEmployeeId=null,request=''){
  const definition=flowCapabilities.find(item=>item.id===capability);
  if(!definition)return {employeeId:null,employeeName:'待验证能力',executor:'unverified',reason:'该能力尚未登记可用的执行方式'};
 
@@ -50,8 +43,11 @@ export function assignFlowCapability(capability, employees=[], preferredEmployee
   return index<0?definition.roleIds.length:index;
  };
  const eligible=candidates.filter(e=>e.enabled&&e.readiness?.ready!==false&&e.skillIds?.includes(capability));
- const assigned=eligible.find(e=>e.id===preferredEmployeeId)||eligible.sort((a,b)=>rolePriority(a)-rolePriority(b)||a.skillIds.length-b.skillIds.length||a.id.localeCompare(b.id))[0];
- if(assigned)return {employeeId:assigned.id,employeeName:assigned.name,executor:definition.executor,reason:'已装配「'+definition.name+'」'};
+ const assigned=eligible.find(e=>e.id===preferredEmployeeId)||eligible.sort((a,b)=>
+  employeeProfileFit(b,request)-employeeProfileFit(a,request)||rolePriority(a)-rolePriority(b)||
+  a.skillIds.length-b.skillIds.length||a.id.localeCompare(b.id))[0];
+ if(assigned)return {employeeId:assigned.id,employeeName:assigned.name,executor:definition.executor,
+  ...(assigned.profile?{profile:structuredClone(assigned.profile),employeeRevision:assigned.revision}:{}),reason:'已装配「'+definition.name+'」'};
  return {employeeId:null,employeeName:'目标总控',executor:definition.executor,reason:'由总控直接调用「'+definition.name+'」'};
 }
 const node=(id,title,capability,dependsOn=[])=>({id,title,capability,dependsOn,objective:title,acceptance:'交付可检查的结果并说明来源与限制',required:true});

@@ -1,3 +1,4 @@
+import {serviceQuestionFromGoal} from '../../public/goal-language.js';
 import {readBusinessTable} from '../../public/business-csv.js';
 const missing=fields=>({status:'needs_input',summary:'业务数据尚不完整，请补齐后重试。',missing:fields,artifacts:[],metrics:{}});
 const round=n=>Math.round((n+Number.EPSILON)*100)/100;
@@ -8,7 +9,7 @@ export const commerceDefinitions=[
  {id:'commerce.sku_profit',name:'SKU 盈亏诊断',description:'导入逐 SKU 收入费用 CSV，计算贡献利润、亏损排序、广告前利润和费用结构，输出排查建议。',roleIds:['profit','analysis'],requires:['commerce.csv','commerce.source','commerce.period'],version:1},
  {id:'campaign.discount',name:'促销折扣测算',description:'比较多个折扣方案的单件贡献、活动总贡献、保本销量和最高保本折扣；不假设折扣会提升销量。',roleIds:['campaign','profit'],requires:['campaign'],version:1},
  {id:'inventory.replenish',name:'批量补货建议',description:'按库存、在途、日销、交期、安全天数、复核周期、MOQ 和整箱量生成补货数量与风险清单。',roleIds:['supply','merchandise'],requires:['replenishment.csv','replenishment.source'],version:1},
- {id:'service.evidence',name:'售后证据答复',description:'从本轮知识召回中选择有词项匹配的政策片段，形成带出处的答复草案；缺依据转人工，不承诺退款或换货。',roleIds:['service','risk'],requires:['serviceQuestion 或 question','knowledgeRecall.hits'],version:1}
+ {id:'service.evidence',inputs:['question','serviceQuestion','knowledgeRecall.hits'],name:'售后证据答复',description:'从本轮知识召回中选择有词项匹配的政策片段，形成带出处的答复草案；缺依据转人工，不承诺退款或换货。',roleIds:['service','risk'],requires:['serviceQuestion 或 question','knowledgeRecall.hits'],version:1}
 ];
 export const recipes=[
  {id:'sku-profit',name:'查清哪些商品在亏钱',employeeName:'SKU 盈亏分析员',roleId:'profit',skillIds:['commerce.sku_profit'],kind:'analysis',goal:'分析本月各 SKU 盈亏，列出亏损商品、主要费用和优先排查事项',input:'逐 SKU 收入费用 CSV、账单来源与期间',output:'逐 SKU 利润表、亏损优先级、费用核对清单',keywords:'亏损|盈亏|SKU利润|商品利润|哪些商品|经营诊断'},
@@ -16,7 +17,10 @@ export const recipes=[
  {id:'replenish',name:'生成商品补货清单',employeeName:'库存补货分析员',roleId:'supply',skillIds:['inventory.replenish'],kind:'analysis',goal:'核对库存、销量和供货周期，整理优先补货商品与建议采购数量',input:'逐 SKU 库存与补货参数 CSV',output:'补货数量、断货风险和到货假设',keywords:'补货|断货|采购数量|库存风险'},
  {id:'service',name:'根据政策准备售后答复',employeeName:'售后知识答复员',roleId:'service',skillIds:['service.evidence'],kind:'analysis',goal:'根据知识库政策，回答客户的售后问题并注明依据，缺少资料交人工确认',input:'客户问题、已启用的政策知识库',output:'证据片段、答复草案与人工确认项',keywords:'售后|客服|客户.*问题|退换货|退款政策'}
 ];
-export function matchingRecipes(text){return recipes.filter(r=>new RegExp(r.keywords,'i').test(text));}
+export function matchingRecipes(text){
+ const receptionOnly=/接待|分诊|话术|口吻|语气|安抚/.test(text)&&!/政策|知识库|条款|凭据|引[用证]|依据/.test(text);
+ return recipes.filter(r=>!(r.id==='service'&&receptionOnly)&&new RegExp(r.keywords,'i').test(text));
+}
 export function parseBusinessCsv(raw,required){
  const {header,rows}=readBusinessTable(raw);
  if(!rows.length)throw new Error('CSV 需要表头和 1–200 条数据');
@@ -58,10 +62,13 @@ export async function executeCommerce(id,input){
   return report('补货建议与断货风险清单',`日销期间：${d.period}\nSKU | 库存覆盖天数 | 目标库存 | 建议补货 | 交期内风险\n${suggestions.map(r=>`${r.sku} | ${r.coverageDays??'零日销，无法外推'} | ${r.target} | ${r.order} | ${r.risk?'现货可能不足':'按当前假设未触发'}`).join('\n')}\n\n目标库存 = 日销 ×（交期 + 安全天数 + 复核周期）；扣现货和在途后，按 MOQ 与整箱量向上取整。假定在途可在目标周期内到货，需核对 ETA；未预测销量变化、未判断真实供应商交期、未创建采购单。零日销不自动补货。`,d.source,{replenishment:suggestions});
  }
  if(id==='service.evidence'){
-  const question=input.question||input.serviceQuestion||'',hits=input.knowledgeRecall?.hits||[];if(!question.trim())return missing(['客户具体问题']);if(!hits.length)return missing(['未召回政策依据，请补充或启用知识库；转人工确认']);
+  const question=input.question||input.serviceQuestion||serviceQuestionFromGoal(input.goal),hits=input.knowledgeRecall?.hits||[];if(!question.trim())return missing(['客户具体问题']);if(!hits.length)return missing(['未召回政策依据，请补充或启用知识库；转人工确认']);
   const terms=[...question.matchAll(/[a-z0-9]+|[\p{Script=Han}]{2}/giu)].map(m=>m[0].toLowerCase());
   const useful=hits.filter(h=>terms.some(t=>(h.text||'').toLowerCase().includes(t))).slice(0,3);if(!useful.length)return missing(['召回片段与客户问题无词项匹配，请调整问题或转人工']);
-  return report('售后答复草案（政策证据摘录）',`客户问题：${question}\n\n可供客服核对的原文：\n${useful.map(h=>`[${h.title} v${h.revision} / 切片 ${h.ordinal}]\n${h.text}\n来源：${h.source}`).join('\n\n')}\n\n建议答复：您好，已找到与您问题相关的处理说明，以上政策需要结合您的订单与实际情况核对。请补充订单编号及问题凭证，我们确认适用条件后再说明处理方案。\n\n这是证据摘录与确认话术，未自动判断退款/换货资格、未承诺时效或金额、未向客户发送消息。存在政策冲突时必须交人工核对。`,useful.map(h=>`${h.title} v${h.revision} #${h.ordinal}`).join('；'),{citationIds:useful.map(h=>h.id),requiresHumanReview:true});
+  const reply=input.employeeProfile?.tone==='concise'?'请提供订单编号及问题凭证，我会按上面的政策条款核对适用条件。':
+   input.employeeProfile?.tone==='empathetic'?'我理解您希望尽快弄清处理办法。我们找到了上面的政策说明，您可以先发订单编号和问题凭证，我来帮您核对哪一条适用。':
+   '您好，已找到与您问题相关的处理说明，以上政策需要结合您的订单与实际情况核对。请补充订单编号及问题凭证，我们确认适用条件后再说明处理方案。';
+  return report('售后答复草案（政策证据摘录）',`客户问题：${question}\n\n可供客服核对的原文：\n${useful.map(h=>`[${h.title} v${h.revision} / 切片 ${h.ordinal}]\n${h.text}\n来源：${h.source}`).join('\n\n')}\n\n建议答复：${reply}\n\n这是证据摘录与确认话术，未自动判断退款/换货资格、未承诺时效或金额、未向客户发送消息。存在政策冲突时必须交人工核对。`,useful.map(h=>`${h.title} v${h.revision} #${h.ordinal}`).join('；'),{citationIds:useful.map(h=>h.id),requiresHumanReview:true});
  }
  throw new Error('业务 Skill 不存在');
 }

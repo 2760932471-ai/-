@@ -13,7 +13,7 @@
 .emp-tools label{font-size:12px;font-weight:580;color:var(--staff-muted)}
 .emp-tools input,.emp-tools select{display:block;min-height:40px;margin:5px 0 0;font-size:14px;background-color:#fff;border:1px solid var(--staff-line);border-radius:9px}
 .emp-tools input{width:min(340px,100%);padding:8px 12px}.emp-tools label:first-child{width:min(340px,100%)}
-.emp-tools label:last-child{width:155px}
+.emp-tools label:not(:first-child){width:155px}.emp-tools label:first-child{margin-right:auto}
 .staff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(265px,100%),1fr));gap:16px}
 .staff-card,.emp-box,.emp-rows{background:#fff;border:1px solid var(--staff-line);border-radius:13px}
 .staff-card{padding:21px;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
@@ -40,4 +40,31 @@
 .emp-rows small{display:block;color:var(--staff-muted);margin-top:3px}.emp-rows b{font-weight:600}
 .emp-empty,.emp-box{padding:20px}.staff-view .emp-empty{color:var(--staff-muted);border:1px dashed var(--staff-line);border-radius:12px;font-size:14px}
 .emp-box .emp-actions{margin-top:14px}
+.emp-style{font-size:12px;font-weight:600;color:var(--staff-accent);overflow-wrap:anywhere}
+.emp-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.emp-section-head h2{margin:0}.emp-section-head button{min-height:44px}
+.emp-profile{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 28px;margin:0;padding:18px 20px;border:1px solid var(--staff-line);background:#fff;border-radius:13px}
+.emp-profile dt{font-size:12px;color:var(--staff-muted);margin-bottom:4px}
+.emp-profile dd{margin:0;color:var(--ink);line-height:1.65;white-space:pre-line;overflow-wrap:anywhere}
+#employee-dialog{width:min(720px,calc(100vw - 24px));padding:0;max-height:90dvh;overflow-y:auto}
+#employee-form{padding:22px 24px 0}
+#employee-form .employee-profile-form{padding:0 0 14px}
+#employee-form summary{display:list-item;cursor:pointer;color:var(--ink);font-weight:600;line-height:1.55;padding-block:12px}
+#employee-form summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+#employee-form #employee-profile-details,#employee-form #employee-execution{border-block:1px solid var(--line);margin-block:12px}
+#employee-form #employee-execution[open]{padding-bottom:12px}
+#employee-form .dialog-footer{justify-content:flex-end}
+@media(max-width:500px){.emp-profile{grid-template-columns:1fr;gap:12px}.emp-profile div{display:grid;grid-template-columns:5em 1fr;gap:10px}.emp-profile dt{margin-top:2px}#employee-form .employee-profile-form{padding-inline:12px}}
 @media(max-width:650px){.staff-view{padding:22px 16px}.emp-tools{gap:10px}.emp-tabs{gap:20px}.emp-head{align-items:flex-start}.emp-head>.primary{flex:none}.emp-card-line{align-self:stretch}.emp-rows>div,.emp-rows>button{padding:12px;gap:10px}}
+
+#role-brief-dialog{width:min(590px,calc(100vw - 24px))}
+#role-brief-form [hidden],#employee-form [hidden]{display:none!important}
+#role-brief-form textarea,#employee-form textarea{resize:vertical}
+#role-brief-form .dialog-footer{justify-content:flex-end}
+#role-current-draft,#role-revise{margin-right:auto}
+.employee-scope-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.employee-scope-fields label:nth-child(n+3){grid-column:1/-1}
+.employee-skill-summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
+.employee-skill-summary span{color:var(--muted)}
+#employee-form .dialog-footer{position:sticky;bottom:0;z-index:1;flex-wrap:wrap;gap:8px;margin:14px -24px 0;padding:12px 24px;background:#fff}
+@media(max-width:650px){.emp-tools{display:grid;grid-template-columns:1fr 1fr}.emp-tools label:first-child{grid-column:1/-1}.emp-tools label:first-child,.emp-tools label:not(:first-child){width:100%}.emp-tools input{width:100%}.employee-scope-fields{grid-template-columns:1fr}}

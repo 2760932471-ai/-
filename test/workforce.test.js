@@ -13,13 +13,18 @@ const make=async options=>createPlatform(await mkdtemp(path.join(os.tmpdir(),'wo
 const startInput={requestId:'workforce-test-001',text:'为角阀准备资料、内容与经营测算',kind:'listing',permission:'draft',employeeIds:defaultEmployees().slice(0,4).map(e=>e.id)};
 const tool=(name,args='{}')=>({message:{role:'assistant',content:null,tool_calls:[{id:'call-1',type:'function',function:{name,arguments:args}}]}});
 const answer={message:{role:'assistant',content:'根据实际校验结果形成草案，尚未发布。'}};
-test('V2.4 catalog separates 12 roles, 134 planned entries and 21 executable skills',()=>{
- assert.equal(roles.length,12);assert.equal(capabilities.length,134);assert.equal(new Set(capabilities.map(c=>c.id)).size,134);assert.equal(skillDefinitions.length,21);
+test('catalog separates 12 roles, 134 capability entries and 25 executable skills',()=>{
+ assert.equal(roles.length,12);assert.equal(capabilities.length,134);assert.equal(new Set(capabilities.map(c=>c.id)).size,134);assert.equal(skillDefinitions.length,25);
  assert.equal(capabilities.filter(c=>c.state==='implemented').length,1);assert(capabilities.filter(c=>c.state==='planned').length>100);
  for(const c of capabilities)for(const id of c.skillIds)assert(skillDefinitions.some(s=>s.id===id));
 });
 test('all code skills compute sample inputs and refuse missing facts; formulas handle boundaries',async()=>{
- for(const s of skillDefinitions){const result=await executeSkill(s.id,skillSample(s.id));assert.equal(result.status,'succeeded',s.id);assert(result.artifacts.length);assert.equal((await executeSkill(s.id,{})).status,'needs_input',s.id);}
+ for(const s of skillDefinitions){
+  const result=await executeSkill(s.id,skillSample(s.id));
+  if(s.sideEffect==='read'){assert.equal(result.status,'needs_input',s.id);assert.match(result.summary,/网页读取服务/);}
+  else {assert.equal(result.status,'succeeded',s.id);assert(result.artifacts.length);}
+  assert.equal((await executeSkill(s.id,{})).status,'needs_input',s.id);
+ }
  assert.equal((await executeSkill('finance.calculate',skillSample('finance.calculate'))).metrics.profit,1600);
  assert.equal((await executeSkill('price.break_even',skillSample('price.break_even'))).metrics.breakEven,18.95);
  const zero=skillSample('inventory.coverage');zero.inventory.dailySales=0;assert.equal((await executeSkill('inventory.coverage',zero)).metrics.days,null);
@@ -115,4 +120,19 @@ test('Codex without tools preserves the planner JSON for normal taskflow validat
  }};}}
  const r=await callLocalCodex({timeoutMs:1000},[{role:'system',content:'只返回任务流 JSON'}],[],{CodexClass:FakeCodex});
  assert.equal(r.message.content,answer);
+});
+
+test('standalone skill runs use the supplied input and keep configuration samples separate',async()=>{
+ const p=await make();
+ await assert.rejects(()=>p.workforce.runSkill('service.triage'),/运行所用的资料/);
+ await assert.rejects(()=>p.workforce.runSkill('unknown.skill',{}),/不存在/);
+ const noData=await p.workforce.runSkill('service.triage',{});
+ const mine=await p.workforce.runSkill('service.triage',{serviceQuestion:'快递到了，杯子在运输中破损了。'});
+ const sample=await p.workforce.testSkill('service.triage');
+ for(let i=0;i<3;i++)await p.pump();
+ assert.equal(p.run(noData.id).status,'needs_input');
+ assert.equal(p.run(mine.id).purpose,'skill_run');
+ assert.match(p.run(mine.id).result.artifacts[0].body,/杯子在运输中破损了/);
+ assert.equal(p.run(sample.id).purpose,'skill_test');
+ assert.equal(p.run(sample.id).status,'succeeded');
 });

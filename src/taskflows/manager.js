@@ -1,3 +1,4 @@
+import {employeeProfileForTask,serviceQuestionFromGoal,webSkillInput} from '../../public/goal-language.js';
 import {offerPhoto,offerPhotos} from '../../public/offer-photos.js';
 import {businessBrief,decisionOrder,selectedOffer,sourcingPriority,goalSelection,comparisonSummary,offerFacts,sourcingReport,sourcingIntent,cleanOffers} from '../../public/sourcing.js';
 import {searchPublicOffers,fetchOfferDetail} from './offer-search.js';
@@ -8,6 +9,9 @@ import {flowDefaults,flowTemplates,flowCapabilities,flowEmployees,assignFlowCapa
 import {validateFlow,proposeFlow,reconcileFlow} from './planner.js';
 import {buildGoalContract,goalContractVersion} from './contract.js';
 import {audiencePreparation,inspectAudience,normalizeAudienceData} from './audience.js';
+import {attachedSkillText} from '../../public/goal-language.js';
+import {generalInput} from '../workforce/general-skills.js';
+import {applyDiscussionSkill,createDiscussionSkills,discussionSkillRequest} from './discussion-skills.js';
 import {researchComparison} from './inquiry.js';
 import {reviewDeliverables} from './review.js';
 import {attachAcceptanceChecks,evaluatePlanChecks} from './acceptance.js';
@@ -17,6 +21,8 @@ import {executeSkill} from '../workforce/skills.js';
 import {prepareContent,assertContentEvidence,imageOutputs} from '../workforce/content-preparation.js';
 import {collectResearch,assertResearch} from '../workforce/research.js';
 const discussionReply=Symbol('discussionReply');
+const skillRequest=Symbol('skillRequest');
+const skillDataReply=Symbol('skillDataReply');
 const chatModelRevision=Symbol('chatModelRevision');
 const now=()=>new Date().toISOString();
 const fail=message=>{throw Object.assign(new Error(message),{status:409});};
@@ -27,8 +33,9 @@ function readyDeliverables(goal){
  return goal.flow.nodes.filter(n=>n.status==='succeeded'&&n.capability!=='evidence.collect')
   .flatMap(n=>deliveryFiles(goal,n)).slice(-4);
 }
-export function createTaskflowManager({getData,transaction,inputs,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill,offerSearch=searchPublicOffers,offerDetail=fetchOfferDetail}){
+export function createTaskflowManager({getData,transaction,inputs,enqueue,event,knowledge,sources,integrations,images,modelCall,skillCall=executeSkill,offerSearch=searchPublicOffers,offerDetail=fetchOfferDetail}){
  let pumping=false;
+ const chatSkills=createDiscussionSkills({inputs,enqueue});
  const settings=()=>({...flowDefaults(),...getData().flowSettings});
  const find=(d,id)=>d.goals.find(g=>g.id===id&&g.mode==='flow')||fail('任务流目标不存在');
  const currentModel=()=>{const id=settings().modelId,m=getData().models.find(m=>m.id===id);return m&&publicModel(m).credentialConfigured&&m.lastTest?.status==='succeeded'&&m.lastTest.revision===m.revision?m:null;};
@@ -36,6 +43,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  function create(d,input){
   if(typeof input.text!=='string'||!input.text.trim()||input.text.length>2000)throw new Error('请填写 1–2000 字目标');
   const id=randomUUID(),text=input.text.trim(),g={id,roomId:randomUUID(),text,kind:'analysis',mode:'flow',members:[],participants:[],createdAt:now(),updatedAt:now(),version:1,stage:'plan',paused:false,repliesPaused:false,scope:{store:'未关联店铺',sku:'目标范围',product:'',platform:'按目标选择资料来源'},criterion:'交付符合各任务验收标准的实际结果；说明来源、假设与限制',permission:'draft',owner:'你',coordinator:'目标总控',facts:{confirmed:false},proposal:null,messages:[{id:randomUUID(),role:'human',author:'你',text,at:now()}],queue:[],artifacts:[],audit:[],tasks:[],skillData:{},knowledge:{baseIds:d.knowledge.bases.filter(b=>b.enabled).map(b=>b.id),mode:'bm25',topK:8},runtime:{status:'idle',completed:[]},flow:{status:'planning',version:1,plan:null,nodes:[],calls:0,planningAttempts:0,history:[]}};
+  const attached=attachedSkillText(text);
+  if(attached){
+   g.text=attached.title;
+   g.skillData=generalInput(attached.capability,attached.raw,'任务内提供的原文');
+  }
   if(input.assignedEmployeeId){
    const assignee=flowEmployees.find(e=>e.id===input.assignedEmployeeId);
    if(!assignee)throw new Error('该岗位无法接收流程任务');
@@ -109,6 +121,12 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   if(selected)input={...input,[chatModelRevision]:selected.revision};
   const auto=!input.intent||input.intent==='auto';
   if(!auto&&!(selected&&['discuss','discussion'].includes(input.intent)))return input;
+  if(auto&&g.stage!=='completed'){
+   const request=discussionSkillRequest(text);
+   if(request)return {...input,intent:'runSkills',[skillRequest]:request,routedVersion:g.version};
+   const reply=chatSkills.reply(getData(),g,text,input.replyTo);
+   if(reply)return {...input,intent:'supplySkill',[skillDataReply]:reply,routedVersion:g.version};
+  }
   if(auto&&g.flow.status==='awaiting_context')return {...input,intent:'scenario',routedVersion:g.version};
   if(auto&&!g.paused&&g.flow.status==='blocked'){
    const blockedNodes=g.flow.nodes.filter(n=>['needs_input','needs_capability','failed'].includes(n.status));
@@ -116,7 +134,8 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     return {...input,intent:'blockedStatus',routedVersion:g.version};
    }
    const questions=blockedNodes.filter(n=>n.question);
-   if(questions.length===1&&messageRoute(g,text)==='discussion'&&!/[?？]$/.test(text)){
+   const pastedMaterial=questions.length===1&&['table.profile','document.outline'].includes(questions[0].capability)&&text.includes('\n');
+   if(questions.length===1&&(pastedMaterial||messageRoute(g,text)==='discussion'&&!/[?？]$/.test(text))){
     return {...input,intent:'answerStep',stepId:questions[0].id,runId:questions[0].runId,routedVersion:g.version};
    }
   }
@@ -175,12 +194,26 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   if(!['message','pauseReplies'].includes(kind)&&input.expectedVersion!==g.version)fail('目标版本已更新，请刷新后重试');
   if(kind==='message'){
    if(typeof input.text!=='string'||!input.text.trim()||input.text.length>2000)throw new Error('请输入 1–2000 字消息');
+   if(input.requestId){
+    if(typeof input.requestId!=='string'||!/^[-\w]{8,100}$/.test(input.requestId))throw Error('消息请求编号无效');
+    const prior=g.messages.find(msg=>msg.role==='human'&&msg.requestId===input.requestId);
+    if(prior){if(prior.text!==input.text.trim())fail('消息请求不能更换内容');return g;}
+   }
    const selected=input[chatModelRevision]!=null?requireChatModel(d,input.chatModelId,input[chatModelRevision]):null;
    const modelInfo=selected?{chatModelId:selected.id,chatModelRevision:selected.revision,chatModelName:selected.name}:{};
    const m={id:randomUUID(),role:'human',author:'你',text:input.text.trim(),intent:input.intent||'discuss',replyTo:input.replyTo||null,...modelInfo,at:now()};g.messages.push(m);
    if(input.routedVersion&&input.routedVersion!==g.version)fail('目标刚刚更新，请重新发送这条消息');
    const target=imageTarget(g.flow.nodes,m.text);
-   if(m.intent==='blockedStatus'){
+   if(input.requestId)m.requestId=input.requestId;
+   if(input[skillRequest]){
+    if(g.stage==='completed')fail('目标已验收，请新建任务。');
+    chatSkills.queue(d,g,m,input[skillRequest]);
+    if(g.paused||g.repliesPaused)event(g,'追加技能已排队，恢复后执行。');
+   }else if(input[skillDataReply]){
+    const {runId,extra}=input[skillDataReply],run=d.runs.find(r=>r.id===runId&&r.goalId===g.id&&r.goalVersion===g.version&&r.status==='needs_input'&&!r.resumedBy);
+    if(!run||g.stage==='completed')fail('这次技能所需的资料已更新，请查看任务讨论。');
+    chatSkills.resume(d,g,run,extra);
+   }else if(m.intent==='blockedStatus'){
     const steps=g.flow.nodes.filter(n=>['needs_input','needs_capability','failed'].includes(n.status));
     const resume=/^(?:请|那就)?(?:继续(?:执行)?|接着做)[吧啊呀啦。！!\s]*$/.test(m.text);
     const analysis=steps.find(n=>n.capability==='analysis.reason'&&n.status==='needs_input'&&n.error?.includes('连接总控模型'));
@@ -196,6 +229,8 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    }else if(m.intent==='answerStep'){
     const step=g.flow.nodes.find(n=>n.id===input.stepId&&n.status==='needs_input'&&n.question&&n.runId===input.runId);
     if(!step||g.paused||g.stage==='completed')fail('问题状态已更新，请查看当前步骤。');
+    const material=generalInput(step.capability,m.text,'任务讨论中补充的资料');
+    if(material)return action(d,g,{kind:'inputs',data:material,expectedVersion:g.version});
     step.clarification={question:step.question,answer:m.text};
     delete step.question;step.status='pending';step.error=null;step.missing=[];sync(g);
    }else if(m.intent==='offerLinks'){
@@ -344,6 +379,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const changes=Object.keys(input.data).filter(key=>JSON.stringify(input.data[key])!==JSON.stringify(g.skillData[key]));
    if(!changes.length)return g;
    g.skillData={...g.skillData,...input.data};
+   chatSkills.onInputs(d,g,changes);
    const affected=g.flow.nodes.filter(n=>{
     const declared=flowCapabilities.find(cap=>cap.id===n.capability)?.inputs||[];
     const keys=declared.flatMap(path=>path.split(/\s+或\s+/)).map(path=>path.split(/[.\s]/)[0]);
@@ -365,7 +401,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const checked=evaluatePlanChecks(g,g.flow.plan,g.flow.nodes);
    if(checked.failures.length)fail(checked.failures.join('\n'));
    g.stage='completed';g.flow.status='completed';
-   g.artifacts.filter(a=>a.version===g.version&&a.status==='draft').forEach(a=>a.status='accepted');
+   g.artifacts.filter(a=>a.version===g.version&&a.status==='draft'&&a.origin!=='discussion_skill').forEach(a=>a.status='accepted');
    event(g,'目标已验收，任务流与结果已留存。');
   }else throw new Error('任务流模式不支持此操作');
   g.updatedAt=now();g.audit.push({id:randomUUID(),action:kind,at:now(),version:g.version});return g;
@@ -379,14 +415,14 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
  async function saveTemplate(id,input){return transaction(d=>{const g=find(d,id);if(g.version!==input.expectedVersion)fail('目标版本已变化');if(g.stage!=='completed')fail('验收目标后才可沉淀为复用模板');const plan=validateFlow(g.flow.plan,settings());d.flowTemplates??=[];const existing=d.flowTemplates.find(t=>t.sourceGoal===g.id&&t.sourceVersion===g.version);if(existing)return existing;const t={...plan,id:randomUUID(),description:plan.rationale,sourceGoal:g.id,sourceVersion:g.version,createdAt:now()};d.flowTemplates.push(t);return t;});}
  async function plan(id){
   const snapshot=await transaction(d=>{const g=find(d,id);if(g.paused||g.flow.status!=='planning')return null;g.flow.status='planning_running';g.flow.planningAttempts++;g.flow.policy=structuredClone(settings());g.flow.model=currentModel()?structuredClone(currentModel()):null;sync(g);return g;});if(!snapshot)return;
-  let proposed,error,previousMethods;try{previousMethods=relatedMethods(snapshot,getData().goals,buildGoalContract(snapshot).requirements.map(n=>n.capability));proposed=await proposeFlow(snapshot,snapshot.flow.policy,snapshot.flow.model,modelCall,getData().flowTemplates||[],previousMethods);}catch(e){error=String(e.message).slice(0,800);}
+  let proposed,error,previousMethods;try{previousMethods=relatedMethods(snapshot,getData().goals,buildGoalContract(snapshot).requirements.map(n=>n.capability));proposed=await proposeFlow(snapshot,snapshot.flow.policy,snapshot.flow.model,modelCall,getData().flowTemplates||[],previousMethods,getData().employees);}catch(e){error=String(e.message).slice(0,800);}
   await transaction(d=>{const g=find(d,id);if(g.version!==snapshot.version)return;
    if(error){g.flow.status='planning_failed';g.flow.error=error;event(g,'任务流规划未完成：'+error);sync(g);return;}
    if(proposed.question){
     g.flow.question=proposed.question;g.flow.questionKind=proposed.questionKind;g.flow.clarificationVersion=goalContractVersion;g.flow.status='awaiting_context';
     event(g,proposed.question);sync(g);return;
    }
-   g.flow.previousMethods=previousMethods;g.flow.plan=proposed;g.flow.nodes=proposed.nodes.map(n=>({...n,assignment:assignFlowCapability(n.capability,d.employees,g.assignedEmployeeId),status:'pending',attempts:0,artifactIds:[]}));const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
+   g.flow.previousMethods=previousMethods;g.flow.plan=proposed;g.flow.nodes=proposed.nodes.map(n=>({...n,assignment:assignFlowCapability(n.capability,d.employees,g.assignedEmployeeId,businessBrief(g)),status:'pending',attempts:0,artifactIds:[]}));const pick=g.flow.nodes.find(n=>n.capability==='sourcing.1688');
    if(pick&&g.flow.pickCheckpoint)Object.assign(pick,g.flow.pickCheckpoint);
    for(const text of g.flow.earlyImageEdits||[]){
     const n=imageTarget(g.flow.nodes,text);if(n)(n.imageEdits??=[]).push(text);
@@ -417,6 +453,22 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
   const workspaceOnly=g.flow.plan.contract?.decision?.sources==='workspace';
   const researchStep=steps.find(step=>step.capability==='research.compare'&&step.status==='succeeded');
   const input={...inputs(g),...(g.skillData?.financials?{financials:g.skillData.financials}:{}),observations,research:researchStep?.investigation,taskMemory:taskMemory(g,steps),question:n.objective,knowledgeRecall:g.flow.nodes.find(x=>x.recall)?.recall};
+  input.employeeProfile=employeeProfileForTask(n.assignment?.profile,g.text);
+  if(n.capability.startsWith('service.'))input.question=input.serviceQuestion||serviceQuestionFromGoal(g.text);
+  if(n.capability==='web.search'||n.capability==='web.read'){
+   if(workspaceOnly)return blocked('本任务限定仅使用工作空间资料，未访问公开网页。');
+   const material=webSkillInput(n.capability,g.text,input);
+   if(n.clarification?.answer){
+    if(n.capability==='web.search')material.query=n.clarification.answer.trim();
+    else material.url=webSkillInput(n.capability,n.clarification.answer).url;
+   }
+   if(n.capability==='web.read'&&!material.url){
+    const search=steps.find(step=>step.capability==='web.search'&&step.status==='succeeded');
+    const sources=search&&d.runs.find(r=>r.id===search.runId)?.result?.metrics?.sources;
+    if(sources?.length)material.url=sources[0].url;
+   }
+   return skillCall(n.capability,material);
+  }
   if(n.capability.startsWith('audience.')){
    const audience=g.flow.plan.contract?.decision?.audience;
    if(!audience)return blocked('当前目标缺少可用的客群筛选要求，请说明使用的客户资料和目标客群。');
@@ -597,7 +649,9 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     const reason=hasSource?'本轮已有资料，但尚未形成分析结论。':'本轮没有找到可引用的业务资料，尚不能给出有依据的结论。';
     return blocked(reason+'此步需要连接总控模型'+(hasSource?'解读已有资料。':'进行补查和判断，也可以先在资料页补充来源。'));
    }
-   return analyzeDecision({goal:g,node:n,input:{...input,goalData},modelCall,knowledge,integrations});
+   const webSources=steps.filter(step=>step.status==='succeeded'&&step.capability==='web.search')
+    .flatMap(step=>d.runs.find(run=>run.id===step.runId)?.result?.metrics?.sources||[]);
+   return analyzeDecision({goal:g,node:n,input:{...input,goalData,webSources},modelCall,knowledge,integrations,skillCall,toolCatalog:flowCapabilities});
   }
   if(n.capability.startsWith('copy.')&&ranked.length){
    const prep=prepareContent(d,{...g,text:brief,research:discovery},{rankedCandidates});
@@ -712,7 +766,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
     if(n.error!==reason)event(g,'「'+n.title+'」暂时无法继续。'+reason);
     n.status='needs_input';n.error=reason;n.missing=[reason];sync(g);return null;
    }
-   n.assignment=assignFlowCapability(n.capability,d.employees,g.assignedEmployeeId);n.status='running';n.attempts++;n.startedAt=now();n.runId=randomUUID();g.flow.calls++;d.runs.unshift({id:n.runId,agentId:'taskflow',agentName:n.assignment.employeeName,purpose:'taskflow',goalId:g.id,goalVersion:g.version,flowNodeId:n.id,status:'running',createdAt:now(),startedAt:now(),input:{objective:n.objective,capability:n.capability,dependsOn:n.dependsOn,assignment:n.assignment}});sync(g);return {g,n};});if(!snapshot)return;
+   // Keep the settings accepted in this plan. Reassign only when the previous
+   // employee is no longer eligible, e.g. disabled or the skill was removed.
+   const assigned=assignFlowCapability(n.capability,d.employees,n.assignment?.employeeId||g.assignedEmployeeId,businessBrief(g));
+   if(!n.assignment?.profile||n.assignment.employeeId!==assigned.employeeId)n.assignment=assigned;
+   n.status='running';n.attempts++;n.startedAt=now();n.runId=randomUUID();g.flow.calls++;d.runs.unshift({id:n.runId,agentId:'taskflow',agentName:n.assignment.employeeName,purpose:'taskflow',goalId:g.id,goalVersion:g.version,flowNodeId:n.id,status:'running',createdAt:now(),startedAt:now(),input:{objective:n.objective,capability:n.capability,dependsOn:n.dependsOn,assignment:n.assignment}});sync(g);return {g,n};});if(!snapshot)return;
   let result,error;try{const live=find(getData(),id);if(live.version!==snapshot.g.version||live.paused)throw new Error('目标暂停或已更新');sources.resolve(live);let goal=snapshot.g;
    if(['analysis.reason','research.compare'].includes(snapshot.n.capability)&&goal.flow.model){
     const current=getData().models.find(m=>m.id===goal.flow.model.id);
@@ -734,6 +792,7 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    }
    if(result)for(const key of ['recall','discovery','preparation','imageJobId','selection','offers','offerSource','decisionCheck','sourceAttempts','investigation','web','detailChecked','detailDeadline','photoAttempts','nextPhotoTry'])if(result[key])n[key]=result[key];
    for(const a of result?.artifacts||[]){const artifact={...a,id:randomUUID(),goalId:id,taskId:nodeId,version:g.version,status:'draft',agent:'taskflow',agentName:n.title,runId:n.runId};g.artifacts.push(artifact);n.artifactIds.push(artifact.id);}
+   if(result?.trace?.length)r.trace=result.trace;
    Object.assign(r,{status:result?.continueAnalysis?'succeeded':n.status,result:result||null,error:n.error,finishedAt:n.finishedAt});if(result?.report&&!g.flow.refreshNodes?.length)g.messages.push({id:randomUUID(),role:'coordinator',author:'目标总控',at:now(),text:result.report.text,artifactIds:result.report.artifactIds||result.report.imageIds,links:result.report.source?[{title:'查看所选商品',url:result.report.source,snippet:''}]:[],reportVersion:g.version});
    else if(!g.flow.refreshNodes?.length){
     const text=n.title+'：'+(n.error||result.summary);
@@ -805,11 +864,11 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    }
    flow.nodes=updated.nodes.map(spec=>{
     const old=previous.get(spec.id);
-    if(!old)return {...spec,assignment:assignFlowCapability(spec.capability,d.employees,g.assignedEmployeeId),status:'pending',artifactIds:[],attempts:0};
+    if(!old)return {...spec,assignment:assignFlowCapability(spec.capability,d.employees,g.assignedEmployeeId,businessBrief(g)),status:'pending',artifactIds:[],attempts:0};
     const changed=spec.dependsOn.some(id=>!old.dependsOn.includes(id));
     // A matching product photo or copy remains reusable after adding the profit calculation.
     if(changed&&!/^(image|copy)\./.test(spec.capability))affected.add(spec.id);
-    return {...old,...spec,assignment:old.assignment||assignFlowCapability(spec.capability,d.employees,g.assignedEmployeeId)};
+    return {...old,...spec,assignment:old.assignment||assignFlowCapability(spec.capability,d.employees,g.assignedEmployeeId,businessBrief(g))};
    });
    flow.plan=attachAcceptanceChecks({...flow.plan,...updated,contract},flow.plan,contract);
    if(updated.corrections.length){
@@ -857,5 +916,5 @@ export function createTaskflowManager({getData,transaction,inputs,event,knowledg
    const ready=g.flow.nodes.filter(n=>runnable(g,n)&&dependenciesReady(g.flow.nodes,n)).slice(0,Math.max(0,g.flow.policy.parallel-running));for(const n of ready)if(jobs.length<settings().parallel)jobs.push([g.id,n.id]);
   }await Promise.allSettled(jobs.map(([id,n])=>execute(id,n)));
  }finally{pumping=false;}}
- return {view,create,action,pump,saveSettings,saveTemplate,routeMessage,restoreImageEdit};
+ return {view,create,action,pump,saveSettings,saveTemplate,routeMessage,restoreImageEdit,applyDiscussionSkill};
 }

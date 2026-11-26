@@ -1,20 +1,23 @@
 import {contentDefinitions,contentSample,executeContent} from './content.js';
 import {starterDefinitions,starterSample,executeStarter} from './starter-skills.js';
 import {commerceDefinitions,commerceSample,executeCommerce} from './commerce.js';
+import {generalDefinitions,generalSample,executeGeneral} from './general-skills.js';
 import {productAgent,insightAgent} from '../agents/builtins.js';
 export const skillDefinitions=[
- ...contentDefinitions,...commerceDefinitions,...starterDefinitions,
- {id:'product.validate',name:'商品资料校验',description:'校验已确认商品字段、成本、库存和售价；不判断真实安装兼容性。',roleIds:['merchandise','selection','risk'],requires:['scope.sku','facts','proposal'],version:1},
- {id:'product.draft',name:'商品草案编排',description:'以确认事实生成商品文字草案；不发布商品。',roleIds:['merchandise','creative'],requires:['scope.sku','facts','proposal'],version:1},
- {id:'finance.calculate',name:'贡献利润核算',description:'计算录入账单的贡献利润；上新时仅计算采购价差并注明限制。',roleIds:['profit','analysis','selection'],requires:['financials 或商品成本/售价'],version:1},
- {id:'content.outline',name:'详情页结构草拟',description:'基于核验参数生成图文模块大纲；不生成图片或视频。',roleIds:['creative','merchandise'],requires:['facts','scope','proposal'],version:1},
- {id:'content.review',name:'宣传声明初筛',description:'检查有限的绝对化宣传词并列出人工核验项；不保证平台合规。',roleIds:['creative','risk'],requires:['proposal 或 observations'],version:1},
- {id:'task.brief',name:'任务与交付整理',description:'整理用户目标、范围、前序成果和待确认项。',roleIds:['coordination','analysis'],requires:['goal'],version:1},
- {id:'selection.score',name:'候选商品评分',description:'按已提供的需求、竞争优势、利润、供货和可控风险评分加权。',roleIds:['selection','research'],requires:['candidates'],version:1},
- {id:'product.compare',name:'商品参数比较',description:'逐项比较用户提供的候选参数和价格，保留来源。',roleIds:['selection','research','merchandise'],requires:['candidates'],version:1},
- {id:'price.break_even',name:'单件保本价测算',description:'按采购、履约、广告、售后、其他成本及平台费率测算保本价。',roleIds:['profit','selection'],requires:['unitCosts'],version:1},
- {id:'inventory.coverage',name:'库存覆盖测算',description:'按可售库存、日销量、供货周期和安全天数计算覆盖与缺货风险。',roleIds:['supply','merchandise'],requires:['inventory'],version:1}
-].map(s=>({...s,type:'code',sideEffect:'none',inputPolicy:'只读取已保存业务资料，模型不能覆盖输入事实',outputSchema:'{status,summary,missing,artifacts,metrics}'}));
+ {id:'web.search',name:'网页搜索',aliases:['联网搜索','搜索公开资料','搜网页','上网查'],description:'用搜索引擎查找公开网页，支持工作空间配置的搜索服务，返回可查阅的标题、网址和摘要。',roleIds:['research','analysis'],requires:['query'],outputs:['artifacts','web.results'],sideEffect:'read',version:1},
+ {id:'web.read',name:'网页正文读取',aliases:['阅读网页','读链接','打开网页','网页正文提取'],description:'打开指定的公开网页，提取标题、可读正文和来源网址；页面需要登录或抓取失败时说明缺口。',roleIds:['research','analysis'],requires:['url'],outputs:['artifacts','web.page'],sideEffect:'read',version:1},
+ ...contentDefinitions,...commerceDefinitions,...starterDefinitions,...generalDefinitions,
+ {id:'product.validate',aliases:['商品资料核验','校验商品资料'],name:'商品资料校验',description:'校验已确认商品字段、成本、库存和售价；不判断真实安装兼容性。',roleIds:['merchandise','selection','risk'],requires:['scope.sku','facts','proposal'],version:1},
+ {id:'product.draft',aliases:['商品上新草案','生成商品草案'],name:'商品草案编排',description:'以确认事实生成商品文字草案；不发布商品。',roleIds:['merchandise','creative'],requires:['scope.sku','facts','proposal'],version:1},
+ {id:'finance.calculate',aliases:['贡献利润','经营盈亏核算'],inputs:['financials','facts','proposal'],name:'贡献利润核算',description:'计算录入账单的贡献利润；上新时仅计算采购价差并注明限制。',roleIds:['profit','analysis','selection'],requires:['financials 或商品成本/售价'],version:1},
+ {id:'content.outline',aliases:['详情页大纲','详情页结构大纲'],name:'详情页结构草拟',description:'基于核验参数生成图文模块大纲；不生成图片或视频。',roleIds:['creative','merchandise'],requires:['facts','scope','proposal'],version:1},
+ {id:'content.review',aliases:['宣传词初筛','广告词初筛'],inputs:['reviewText','proposal','observations'],name:'宣传声明初筛',description:'检查有限的绝对化宣传词并列出人工核验项；不保证平台合规。',roleIds:['creative','risk'],requires:['proposal 或 observations'],version:1},
+ {id:'task.brief',aliases:['任务简报','整理交付摘要'],name:'任务与交付整理',description:'整理用户目标、范围、前序成果和待确认项。',roleIds:['coordination','analysis'],requires:['goal'],version:1},
+ {id:'selection.score',aliases:['候选商品打分','选品评分'],name:'候选商品评分',description:'按已提供的需求、竞争优势、利润、供货和可控风险评分加权。',roleIds:['selection','research'],requires:['candidates'],version:1},
+ {id:'product.compare',aliases:['商品对比表','商品参数对比'],name:'商品参数比较',description:'逐项比较用户提供的候选参数和价格，保留来源。',roleIds:['selection','research','merchandise'],requires:['candidates'],version:1},
+ {id:'price.break_even',aliases:['单件保本价','保本售价'],name:'单件保本价测算',description:'按采购、履约、广告、售后、其他成本及平台费率测算保本价。',roleIds:['profit','selection'],requires:['unitCosts'],version:1},
+ {id:'inventory.coverage',aliases:['库存还能卖几天','库存覆盖天数'],name:'库存覆盖测算',description:'按可售库存、日销量、供货周期和安全天数计算覆盖与缺货风险。',roleIds:['supply','merchandise'],requires:['inventory'],version:1}
+].map(s=>({aliases:[],inputs:s.requires,outputs:['artifacts','metrics'],sideEffect:'none',...s,type:'code',inputPolicy:'只读取已保存业务资料，模型不能覆盖输入事实',outputSchema:'{status,summary,missing,artifacts,metrics}'}));
 const missing=fields=>({status:'needs_input',summary:'需要补充业务输入才能继续。',missing:fields,artifacts:[],metrics:{}});
 const result=(title,body,evidence,metrics={})=>({status:'succeeded',summary:title,missing:[],artifacts:[{title,body,evidence}],metrics});
 const finite=v=>v!==''&&v!==null&&v!==undefined&&typeof v!=='boolean'&&Number.isFinite(Number(v))&&Number(v)>=0&&Number(v)<=1e12;
@@ -22,6 +25,9 @@ const citations=input=>(input.references||[]).map(r=>`- ${r.title}（${r.sourceN
 const knowledgeCitations=input=>input.knowledgeRecall?(input.knowledgeRecall.hits.map(r=>`[${r.title} v${r.revision} · 切片 ${r.ordinal}] ${r.text}\n来源：${r.source}`).join('\n\n')||'未召回相关知识，不能据此补全未知事实'):'未启用知识库检索';
 const money=n=>Math.round((n+Number.EPSILON)*100)/100;
 export function skillSample(id){
+ if(id==='web.search')return {query:'GitHub Pages 官方文档'};
+ if(id==='web.read')return {url:'https://example.com/'};
+ if(generalDefinitions.some(skill=>skill.id===id))return generalSample(id);
  if(contentDefinitions.some(s=>s.id===id))return contentSample();
  if(starterDefinitions.some(s=>s.id===id))return starterSample(id);
  if(commerceDefinitions.some(s=>s.id===id))return commerceSample(id);
@@ -33,6 +39,11 @@ export function skillSample(id){
  return common;
 }
 export async function executeSkill(id,input){
+ if(id==='web.search'||id==='web.read'){
+  const reason='联网技能需通过工作空间的网页读取服务运行。';
+  return {status:'needs_input',summary:reason,missing:[reason],artifacts:[],metrics:{}};
+ }
+ if(generalDefinitions.some(skill=>skill.id===id))return executeGeneral(id,input);
  if(contentDefinitions.some(s=>s.id===id))return executeContent(id,input);
  if(starterDefinitions.some(s=>s.id===id))return executeStarter(id,input);
  if(commerceDefinitions.some(s=>s.id===id))return executeCommerce(id,input);
@@ -73,6 +84,8 @@ export async function executeSkill(id,input){
 }
 
 export function skillInputHint(id){if(id.startsWith('copy.'))return '内容制作资料：商品名称、渠道、受众、已核验特点及来源；在资料页填写并确认';return ({
+ 'table.profile':'带列名的 CSV，可附来源名称',
+ 'document.outline':'要整理的纯文本或 Markdown 原文，可附来源名称',
  'product.validate':'已确认的商品规格、来源、成本、库存和拟定售价',
  'product.draft':'已确认的商品规格、来源、标题与售价',
  'finance.calculate':'净销售额、各项成本费用、账单来源与期间；上新时可先填写成本和售价',

@@ -8,7 +8,7 @@ export const contentPacks=[
  {id:'video',name:'短视频脚本',employeeName:'短视频脚本数字员工',output:'30 / 60 秒分镜、画面、口播与字幕',description:'围绕商品事实组织镜头节奏，明确拍摄所需素材。'},
  {id:'image_brief',name:'主图设计简报',employeeName:'主图策划数字员工',output:'3 版构图方向、画面文字与素材清单',description:'准备可交给设计师的制作要求；本能力不生成图片。'}
 ].map(p=>({...p,skillId:'copy.'+p.id,employeeId:'employee-copy-'+p.id}));
-export const contentDefinitions=contentPacks.map(p=>({id:p.skillId,name:p.name+'编排',description:p.description+'可从已有资料自动提取并编排；输出需审核。',roleIds:['creative','merchandise'],requires:['商品名称；渠道默认全渠道，受众与特点可由系统从已有资料自动整理'],version:1}));
+export const contentDefinitions=contentPacks.map(p=>({id:p.skillId,name:p.name+'编排',inputs:['copyBrief','autoContent'],description:p.description+'可从已有资料自动提取并编排；输出需审核。',roleIds:['creative','merchandise'],requires:['商品名称；渠道默认全渠道，受众与特点可由系统从已有资料自动整理'],version:1}));
 export function validateCopyBrief(value,preparation){
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('请填写内容制作资料');
  value={...value,channel:normalizeChannel(value.channel)};

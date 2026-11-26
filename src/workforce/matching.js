@@ -4,10 +4,12 @@ import {employeeReadiness} from './employees.js';
 import {publicModel} from './model.js';
 import {publicExternal} from './external.js';
 import {matchingRecipes} from './commerce.js';
+import {employeeProfileFit,resolveCatalogSkillRequests} from '../../public/goal-language.js';
 
 // Bounded local capability routing. No claim of semantic model reasoning or market access.
 export function matchingKey(d,g){return JSON.stringify([g.text,d.employees.map(e=>[e.id,e.revision,e.enabled,e.skillIds,e.modelId,e.mode]),d.models.map(m=>publicModel(m)),d.externalSkills.map(s=>publicExternal(s))]);}
 export function matchMembers(d,text){
+ const explicit=resolveCatalogSkillRequests(String(text||''),skillDefinitions);
  text=String(text||'').replace(/(?:不需要|不要|不做|无需|不用)[^，。；\n]*/g,'');
  const required=[],add=id=>{if(!required.includes(id))required.push(id);};
  const selection=isSelectionGoal(text),listing=/(上新|上架|发布商品|商品.{0,6}草案)/.test(text);
@@ -23,6 +25,7 @@ export function matchMembers(d,text){
  if(/推广|广告|转化率|漏斗/.test(text))add('traffic.funnel');
  if(/售后|客服|客户.*问题|退货|退款/.test(text)&&!required.includes('service.evidence'))add('service.triage');
  if(/合规|宣传审核|审核文案|检查文案/.test(text))add('content.review');
+ for(const skill of explicit)add(skill.capability);
  const recognized=required.length>0;add('task.brief');
  const ready=d.employees.filter(e=>employeeReadiness(e,d.models.map(publicModel),d.externalSkills.map(publicExternal)).ready);
  const steps=[],missing=[];
@@ -30,6 +33,7 @@ export function matchMembers(d,text){
   const definition=skillDefinitions.find(s=>s.id===skillId);
   // Prefer a focused capability set, then reuse a suitable selected member. Stable ID breaks ties.
   const candidates=ready.filter(e=>e.skillIds.includes(skillId)).sort((a,b)=>
+   employeeProfileFit(b,text)-employeeProfileFit(a,text)||
    (a.skillIds.filter(id=>!required.includes(id)).length-b.skillIds.filter(id=>!required.includes(id)).length)||
    (a.skillIds.length-b.skillIds.length)||
    (Number(!steps.some(s=>s.employeeId===a.id))-Number(!steps.some(s=>s.employeeId===b.id)))||a.id.localeCompare(b.id));

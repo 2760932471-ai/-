@@ -1,9 +1,10 @@
 import {businessBrief,sourcingIntent} from '../../public/sourcing.js';
-import {requestParts,requestedImages,requestedSkills,asksForMethod} from '../../public/goal-language.js';
+import {requestParts,requestedImages,resolveCatalogSkillRequests,asksForMethod} from '../../public/goal-language.js';
+import {skillDefinitions} from '../workforce/skills.js';
 import {decisionBrief} from './brief.js';
 import {audienceRequest} from './audience.js';
 
-export const goalContractVersion=3;
+export const goalContractVersion=4;
 
 // Each requested output maps to an executable capability and an observable acceptance condition.
 const outputs = [
@@ -22,6 +23,7 @@ const financialCalculation=/(?:核算|计算|测算|算一下|算算|算出).{0,
 const comparisonGoal=/比较|对比|权衡|取舍|二选一|选型|哪个更|哪种更|哪家更|如何选|怎么选|值不值得|是否值得|要不要|适不适合|可行性|(?:选出|挑选|推荐).{0,8}(?:最合适|最优|方案|服务商|系统|工具)/;
 const nonProduct=/方案|系统|软件|选址|路线|方法|策略|供应链模式|服务商|平台选型/;
 const publicUse=/淘宝|天猫|京东|闲鱼|拼多多|上架|商品详情页|对外|投放|广告|发布|促销|推广|招商|展会|官宣/;
+const localSkills=new Set(['table.profile','document.outline','service.triage','traffic.funnel','web.read','web.search']);
 
 // Concrete work already attached to this task can resolve references such as
 // “这个”. Default workspace names and superseded files cannot.
@@ -46,14 +48,14 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
  const positive=requested.replaceAll('咸鱼','闲鱼');
  const actions=positive.split('，').filter(clause=>!asksForMethod(clause)).join('，');
  const audience=audienceRequest(positive,excluded);
- const skills=requestedSkills(actions).filter(skill=>skill.capability!=='commerce.sku_profit'||!criteria||/账单|订单明细/.test(actions));
+ const skills=resolveCatalogSkillRequests(brief.split('；使用场景：')[0],skillDefinitions).filter(skill=>skill.capability!=='commerce.sku_profit'||!criteria||/账单|订单明细/.test(actions));
  const compare=!audience&&!criteria&&(researchRequested||!skills.length&&comparisonGoal.test(actions)&&(!comparison.test(actions)||nonProduct.test(actions)));
  const profitDecision=!!criteria&&(profitComparison.test(positive)||criteria.periodGoal||criteria.minUnitMargin!=null||criteria.minMarginRate!=null);
  const decision=decisionBrief([actions,requestParts(goal.scenario?.answer).requested].filter(Boolean).join('，'),criteria,{compare,profit:profitDecision,excluded,modelQuestions:audience?[]:modelQuestions});
  const requirements=[],pending=[],excludedCapabilities=new Set();
  const replaced=new Set(skills.flatMap(skill=>skill.supersedes));
  function add(id,capability,title,acceptance,dependsOn,extra={}){
-  if(replaced.has(capability))return;
+  if(replaced.has(capability)||requirements.some(req=>req.capability===capability))return;
   requirements.push({id,capability,title,objective:title,acceptance,dependsOn,...extra});
  }
  add('evidence','evidence.collect','收集相关证据','记录本次查到的资料及其来源，标记缺失或矛盾的信息。',[]);
@@ -98,10 +100,12 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
  }
  for(const skill of skills){
   const after=skill.after.filter(cap=>requirements.some(n=>n.capability===cap));
-  const consumesSelection=skill.capability==='copy.image_brief'||skill.capability==='price.break_even';
-  add(skill.id,skill.capability,skill.title,skill.acceptance,after.length?after:consumesSelection?[selected]:upstream);
+  if(skill.capability==='web.read'&&skills.some(s=>s.capability==='web.search')&&!/https?:\/\//i.test(goal.text))after.push('web.search');
+  const consumesSelection=skill.capability==='copy.image_brief'||criteria&&skill.capability==='price.break_even';
+  const localMaterial=localSkills.has(skill.capability);
+  add(skill.id,skill.capability,skill.title,skill.acceptance,after.length?after:consumesSelection?[selected]:localMaterial?[]:upstream);
  }
- for(const skill of requestedSkills(excluded))if(!skills.some(s=>s.capability===skill.capability))excludedCapabilities.add(skill.capability);
+ for(const skill of resolveCatalogSkillRequests(excluded,skillDefinitions))if(!skills.some(s=>s.capability===skill.capability))excludedCapabilities.add(skill.capability);
  for(const cap of replaced)excludedCapabilities.add(cap);
  if(!criteria&&(imagesOnly||/(?:选品|选货|重新(?:选|搜)|1688)/.test(excluded)))excludedCapabilities.add('sourcing.1688');
  if(!profit.test(positive)&&profit.test(excluded))excludedCapabilities.add('finance.calculate');
@@ -118,12 +122,14 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
  }else if(requirements.length===1){
   add('analysis','analysis.reason','分析目标并提出执行方法','列出带依据的判断、假设、反例及会改变结论的信息。',upstream,{fallback:true});
  }
- // The CRM helper works directly on the local report. Searching the web or
- // knowledge base would not resolve missing customer rows or delivery receipts.
- if(audience&&requirements.every(req=>req.capability==='evidence.collect'||req.capability.startsWith('audience.'))){
+ // These skills operate on supplied material; an external search cannot supply it.
+ if(skills.some(req=>req.capability==='service.evidence')&&!skills.some(req=>req.capability.startsWith('web.'))&&requirements.every(req=>req.capability==='evidence.collect'||req.capability==='service.evidence'||localSkills.has(req.capability)))decision.sources='workspace';
+ if(!unresolvedRequests.length&&requirements.every(req=>req.capability==='evidence.collect'||localSkills.has(req.capability)||req.capability.startsWith('audience.'))){
   requirements.splice(requirements.findIndex(req=>req.capability==='evidence.collect'),1);
   excludedCapabilities.add('evidence.collect');
+  if(!requirements.some(req=>req.capability.startsWith('web.')))decision.sources='workspace';
  }
+ if(decision.sources==='workspace'){excludedCapabilities.add('web.search');excludedCapabilities.add('web.read');}
  const leaves=requirements.filter(n=>!requirements.some(other=>other.dependsOn.includes(n.capability)));
  add('summary','result.compile','核验与汇总','逐项核验请求的交付物，给出建议、依据、限制与仍待确认的事项。',leaves.map(n=>n.capability));
  decision.unknowns=[...pending,...decision.questions.map(question=>question.query)];

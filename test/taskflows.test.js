@@ -266,3 +266,49 @@ test('a concrete user decision pauses only its analysis step and resumes from a 
  assert.equal(done.flow.nodes.find(n=>n.capability==='evidence.collect').attempts,1);
  assert.match(done.artifacts.at(-1).body,/两家门店/);
 });
+
+test('the coordinator discovers tools during analysis, reads a search result after restart and cites the actual page',async t=>{
+ const url='https://example.com/rules',executed=[];
+ const options={
+  webPageRead:async address=>{
+   executed.push(address);
+   if(address===url)return {url,type:'text/plain',text:'生效规则为首件 7 元。'};
+   assert.equal(new URL(address).searchParams.get('q'),'公开运费规则');
+   return {url:address,text:'<rss><channel><item><title>运费规则</title><link>'+url+'</link><description>查看阶梯收费</description></item></channel></rss>'};
+  },
+  modelCall:async (_model,messages)=>{
+   if(messages.length===1)return {message:{content:'连接正常'}};
+   const payload=JSON.parse(messages[1].content);
+   let answer;
+   if(payload.templates)answer=basicFlow({text:'评估门店运费'});
+   else if(!payload.toolResults.length){
+    assert.ok(payload.tools.some(tool=>tool.id==='web.search'));
+    answer={tool:{id:'web.search',query:'公开运费规则'},why:'确定费用依据'};
+   }else if(payload.toolResults.length===1){
+    assert.ok(payload.readTargets.includes(url));
+    answer={tool:{id:'web.read',url},why:'核对每件费用'};
+   }else{
+    assert.match(payload.toolResults[1].observations[0].body,/首件 7 元/);
+    answer={conclusion:'按规则条款，每单首件计 7 元。'};
+   }
+   return {message:{content:JSON.stringify(answer)}};
+  }};
+ let {p,dir}=await make(t,options);
+ await connectModel(t,p);
+ const goal=await create(p,'评估门店运费对报价的影响');
+ await p.pump();await p.pump();
+ const analysis=get(p,goal).flow.nodes.find(n=>n.capability==='analysis.reason');
+ assert.equal(analysis.investigation.tool.id,'web.search');
+ assert.equal(executed.length,0);
+ p=await createPlatform(dir,options);
+ for(let i=0;i<8&&get(p,goal).stage!=='review';i++)await p.pump();
+ assert.equal(get(p,goal).stage,'review');
+ assert.equal(executed.length,2);
+ assert.equal(new URL(executed[0]).searchParams.get('q'),'公开运费规则');
+ assert.equal(executed[1],url);
+ const current=get(p,goal).flow.nodes.find(n=>n.id===analysis.id);
+ assert.equal(current.investigation.toolResults.length,2);
+ assert.ok(p.runs().some(r=>r.trace?.some(event=>event.skillId==='web.read')));
+ assert.match(get(p,goal).artifacts.at(-1).body,/每单首件计 7 元/);
+ assert.match(get(p,goal).artifacts.at(-1).body,/https:\/\/example.com\/rules/);
+});

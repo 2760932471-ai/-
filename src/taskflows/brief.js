@@ -1,3 +1,4 @@
+import {workspaceSourcesOnly} from '../../public/goal-language.js';
 // Use the goal's own constraints for investigation. Unknown costs or preferences
 // remain assumptions until evidence or a user correction resolves them.
 const dimensions=[
@@ -39,7 +40,7 @@ export function decisionBrief(request,criteria,{compare=false,profit=false,exclu
   add('alternatives',subject+' 备选方案 适用条件');
   add('criterion',[subject,...measures.slice(0,3),'真实案例 实施限制'].join(' '));
  }
- const workspaceOnly=/(?:联网|上网|外部搜|网络搜|公开搜|公网上搜)/.test(excluded)||/(?:仅|只)(?:使用|用|查|根据|参考|依据|按|分析)(?:我们(?:的)?|我(?:的)?|你(?:的)?)?(?:本地|现有|已有|内部|附件|知识库|提供的)/.test(request);
+ const workspaceOnly=workspaceSourcesOnly(request,excluded);
  return {kind:criteria?'sourcing':compare||questions.length?'comparison':'task',subject,channel,season,
   criteria:[...new Set(measures)],questions:questions.slice(0,3),sources:workspaceOnly?'workspace':'available',assumptions,deliverables:[]};
 }

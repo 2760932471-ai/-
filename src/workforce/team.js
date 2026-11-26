@@ -8,7 +8,7 @@ import {validateExternal,publicExternal,externalDefinitions,externalBlockers} fr
 import {recipes,matchingRecipes} from './commerce.js';
 import {randomUUID} from 'node:crypto';
 import {createGoal} from '../goals.js';
-import {validateEmployee,employeeReadiness,workforceView} from './employees.js';
+import {designRole,validateEmployee,employeeReadiness,workforceView} from './employees.js';
 import {validateModel,publicModel,requireChatModel} from './model.js';
 import {skillSample,skillDefinitions,skillInputHint} from './skills.js';
 import {financeFields,isSelectionGoal} from '../agents/builtins.js';
@@ -263,16 +263,35 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   let e;try{e=requireReady(d,id,chatModel);}catch(error){reportFailure(error);return;}
   if(!chatModel&&/你是谁|你能做什么|能做哪些|介绍一下自己|需要哪些资料/.test(source.text)){
    const defs=[...skillDefinitions,...externalDefinitions(d.externalSkills.map(publicExternal))];
-   g.messages.push({id:randomUUID(),role:'agent',employeeId:id,author:e.name,text:'我目前可以处理：\n'+e.skillIds.map(id=>{const s=defs.find(s=>s.id===id);return '- '+s.name+'：'+s.description+'\n  所需资料：'+skillInputHint(id);}).join('\n')+'\n可在资料页补齐输入，或继续 @ 我讨论。基础代码员工按已装配规则处理，不具备通用模型的自由对话能力。',replyTo:source.id,goalVersion:g.version,status:'succeeded',at:stamp()});return;
+   const role=e.profile||{};
+   const identity=['我是'+e.name+'。',role.position&&role.position!==e.name?'岗位定位：'+role.position:'',
+    role.audience?'服务对象：'+role.audience:'',role.responsibilities?'职责：'+role.responsibilities:'',
+    role.deliverable?'交付：'+role.deliverable:'',role.boundaries,role.persona,role.strategy].filter(Boolean).join('\n');
+   const skills=e.skillIds.map(id=>{
+    const skill=defs.find(s=>s.id===id);
+    return '- '+skill.name+'：'+skill.description+'\n  所需资料：'+skillInputHint(id);
+   }).join('\n');
+   g.messages.push({id:randomUUID(),role:'agent',employeeId:id,author:e.name,text:identity+'\n\n我目前可以处理：\n'+skills,replyTo:source.id,goalVersion:g.version,status:'succeeded',at:stamp()});return;
   }
   const selected=selectConversation(g,source);
   const question=people.map(id=>employee(d,id).name).sort((a,b)=>b.length-a.length).reduce((text,name)=>text.replaceAll('@'+name,'').replaceAll('＠'+name,''),source.text).replace(/(?<![a-zA-Z0-9_.+%-])[@＠](?:所有员工|所有人|全体成员|all(?=$|[\s，。！？、,:：;；]))/gi,'').trim();
   try{enqueueEmployee(d,id,{...inputs(g),...selected,question},{goalId:g.id,goalVersion:g.version,purpose:'chat',messageId:source.id,contextRevision:contextSettings(g).revision,...selection},chatModel);}catch(error){reportFailure(error);}
 
  }
+ function queueSkill(id,input,purpose){
+  return transaction(d=>{
+   const skill=skillDefinitions.find(s=>s.id===id);
+   if(!skill)fail('内置技能不存在',404);
+   const payload=purpose==='skill_test'?(input??skillSample(id)):input;
+   if(!payload||typeof payload!=='object'||Array.isArray(payload))fail('请提供本次技能运行所用的资料');
+   const run=enqueue(d,id,payload,{purpose},{id,name:skill.name,revision:skill.version||1,skillId:id,enabled:true,adapter:'skill'});
+   return {id:run.id,status:run.status};
+  });
+ }
  return {create,action,schedule,apply,pumpMessages,kickoff,autoAssign,syncPending,needsMatching,installLocalMatches,
   context:(id,text)=>{const g=getData().goals.find(g=>g.id===id)||fail('目标不存在');return {...contextSettings(g),...selectConversation(g,{text:text||g.text})};},
   view:()=>({...workforceView(getData(),models(getData()),getData().externalSkills.map(publicExternal)),recipes:recipes.map(r=>({...r,employeeId:getData().employees.find(e=>e.recipeId===r.id)?.id||null}))}),
+  designRole:input=>designRole(input,getData().externalSkills.map(publicExternal)),
   recommend:text=>{const d=getData();if(isSelectionGoal(text)){const ids=selectionTeam(d);return {method:'选品目标关键词匹配',intent:'selection',recipes:[],employeeIds:ids,missing:ids.length===3?[]:['市场研究、选品或运营协调员工'],labels:ids.map(id=>employee(d,id).name)};}const matches=matchingRecipes(String(text||''));return {method:'关键词与已装配能力匹配',recipes:matches,employeeIds:[...new Set(matches.flatMap(r=>d.employees.filter(e=>e.skillIds.some(id=>r.skillIds.includes(id))&&employeeReadiness(e,models(d),d.externalSkills.map(publicExternal)).ready).slice(0,1).map(e=>e.id)))],missing:matches.filter(r=>!d.employees.some(e=>e.skillIds.some(id=>r.skillIds.includes(id))&&employeeReadiness(e,models(d),d.externalSkills.map(publicExternal)).ready)).map(r=>r.name)};},
   install:recipeId=>transaction(d=>{const r=recipes.find(r=>r.id===recipeId)||fail('业务工作包不存在');const old=d.employees.find(e=>e.recipeId===r.id);if(old)return old;const e={id:randomUUID(),recipeId:r.id,name:r.employeeName,roleId:r.roleId,skillIds:r.skillIds,enabled:true,mode:'skills',modelId:null,instructions:r.output+'；先核验输入，保留证据，不执行业务写入',maxSteps:5,revision:1};d.employees.push(e);return e;}),
   saveExternal:(id,input)=>transaction(d=>{const previous=id?d.externalSkills.find(s=>s.id===id):null;if(id&&!previous)fail('外部能力不存在',404);const next=validateExternal(input,previous);next.id=previous?.id||'external_'+randomUUID().replaceAll('-','');if(previous)d.externalSkills[d.externalSkills.indexOf(previous)]=next;else d.externalSkills.push(next);return publicExternal(next);}),
@@ -281,6 +300,7 @@ export function createTeamManager({getData,transaction,enqueue,inputs,event,sour
   saveModel:(id,input)=>transaction(d=>{const previous=id?d.models.find(m=>m.id===id):null;if(id&&!previous)fail('模型不存在',404);const next=validateModel(input,previous);next.id=previous?.id||randomUUID();if(previous)d.models[d.models.indexOf(previous)]=next;else d.models.push(next);return publicModel(next);}),
   testModel:id=>transaction(d=>{const model=d.models.find(m=>m.id===id)||fail('模型不存在',404);return enqueue(d,id,{goal:'连接测试'},{purpose:'model_test'},{id,name:model.name,revision:model.revision,model,modelTest:true,enabled:true,adapter:'model'});}).then(r=>({id:r.id,status:r.status})),
   testEmployee:id=>transaction(d=>{const e=employee(d,id);const sample=skillSample(e.skillIds[0]);const r=enqueueEmployee(d,id,sample,{purpose:'employee_test'});return {id:r.id,status:r.status};}),
-  testSkill:(id,input)=>transaction(d=>{if(!skillDefinitions.some(s=>s.id===id))fail('Skill不存在',404);const r=enqueue(d,id,input??skillSample(id),{purpose:'skill_test'},{id,name:skillDefinitions.find(s=>s.id===id).name,revision:1,skillId:id,enabled:true,adapter:'skill'});return {id:r.id,status:r.status};})
+  testSkill:(id,input)=>queueSkill(id,input,'skill_test'),
+  runSkill:(id,input)=>queueSkill(id,input,'skill_run')
  };
 }

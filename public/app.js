@@ -1,3 +1,4 @@
+import {createOfficeExport} from './office-export.js';
 import {createPickBrowser} from './pick-browser.js';
 import {businessBrief,sourcingReport,sourcingIntent} from './sourcing.js';
 import {createFlowsUI} from './flows.js';
@@ -347,7 +348,7 @@ function goalTasks(g){
   ${g.criterion?`<div class="task-criterion"><strong>验收标准</strong><p>${esc(g.criterion)}</p></div>`:''}
   ${audit.length?`<details class="audit-list"><summary>操作记录 <span>${audit.length}</span></summary>${[...audit].reverse().map(a=>`<div class="audit-row"><small>${date(a.at)}</small><div><strong>${esc(a.action)} · v${a.version}</strong><p>${esc(a.detail)}</p></div></div>`).join('')}</details>`:''}</div>`;
 }
-function artifactCard(a,g){return `<article class="artifact-card"><div class="artifact-top">${icon('file')}${badge(artNames[a.status],a.status==='draft')}</div><h3>${esc(a.title)}</h3>${a.imageJobId?imagesUI.thumbnail(a.imageJobId):''}<p>${esc(g.text)}</p><small>v${a.version} · ${esc(g.scope.sku)}</small><p>${esc(a.evidence)}</p><div class="artifact-actions"><button class="text-button" data-preview="${a.id}" data-parent="${g.id}">预览完整内容 ↗</button><button class="text-button" data-download="${a.id}" data-parent="${g.id}">下载 ↓</button></div></article>`;}
+function artifactCard(a,g){return `<article class="artifact-card"><div class="artifact-top">${icon('file')}${badge(artNames[a.status],a.status==='draft')}</div><h3>${esc(a.title)}</h3>${a.imageJobId?imagesUI.thumbnail(a.imageJobId):''}<p>${esc(g.text)}</p><small>v${a.version} · ${esc(g.scope.sku)}</small><p>${esc(a.evidence)}</p><div class="artifact-actions"><button class="text-button" data-preview="${a.id}" data-parent="${g.id}">预览完整内容 ↗</button><button class="text-button" data-download="${a.id}" data-parent="${g.id}">下载${officeFormat(a)?' '+officeFormat(a):''} ↓</button></div></article>`;}
 function goalArtifacts(g){
  const report=['review','completed'].includes(g.stage)?sourcingReport(g):null;
  const images=report?.imageIds.map(id=>g.artifacts.find(a=>a.id===id)).filter(Boolean)||[];
@@ -397,7 +398,7 @@ function render(force=false){const next=JSON.stringify(state);if(!force&&next===
  renderSidebarRecent();
  $('#page-crumb').textContent=viewNames[state.view];$('#nav-count').textContent=state.goals.flatMap(g=>g.tasks).filter(t=>['waiting','approval','confirmation','acceptance'].includes(t.status)).length;document.querySelectorAll('.sidebar .nav-item[data-view],#navigation-dialog .nav-item[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view.split('/')[0]===state.view);b.setAttribute('aria-current',b.dataset.view.split('/')[0]===state.view?'page':'false');});const saved=positions[state.goal]||{bottom:true},log=$('.chat-log'),input=$('#chat-input');fitChatInput();if(log)log.scrollTop=saved.bottom?log.scrollHeight:saved.scroll;if(restoreTab){$('.goal-tabs [aria-selected=true]')?.focus({preventScroll:true});}else if(input&&saved.focus){input.focus({preventScroll:true});input.setSelectionRange(saved.start,saved.end);}imagesUI.hydrate();}
 function applyRoute(route){
- const aliases={applications:'flows',capabilities:'flows',connections:'ai-config/models',agents:'ai-config/legacy',sources:'ai-config/sources'};
+ const aliases={'flows/skills':'ai-config/skills',applications:'flows',capabilities:'flows',connections:'ai-config/models',agents:'ai-config/legacy',sources:'ai-config/sources'};
  route=Object.hasOwn(aliases,route)?aliases[route]:route;
  const [view,tab,section]=route.split('/');
  state.view=Object.hasOwn(viewNames,view)?view:'overview';
@@ -419,6 +420,7 @@ function receive(g){changeEpoch++;const i=state.goals.findIndex(x=>x.id===g.id);
 async function act(kind,extra={},id=state.goal){const result=await post(`goals/${id}/${kind==='offerDetail'&&extra.detail?.base64?'offer-photo':'actions'}`,{kind,expectedVersion:state.goals.find(g=>g.id===id)?.version,...extra});receive(result);return result;}
 async function refresh(){const epoch=changeEpoch;try{const health=await api('health');if(!canEnter(health))return;const [agents,goals,runs,workforce,sources,knowledge,workspaces,integrations,images,flows]=await Promise.all([api('agents'),api('goals'),api('runs'),api('workforce'),api('sources'),api('knowledge'),api('workspaces'),api('integrations'),api('images'),api('flows')]);if(busy||epoch!==changeEpoch)return;state.agents=agents;state.goals=goals;state.runs=runs;state.workforce=workforce;state.sources=sources;state.knowledge=knowledge;state.workspaces=workspaces;state.integrations=integrations;state.images=images;state.flows=flows;setupUI.update();await updateRunPreview();$('#connection-state').textContent='服务已连接';render();}catch(err){$('#connection-state').textContent='连接中断';if(!state.agents.length)$('#main').innerHTML='<div class="panel empty-state"><h2>暂时无法连接</h2><p>请确认服务已启动，页面将自动重试。</p></div>';}}
 let assignedEmployee=null;
+function assignEmployee(employee){openCreate('','analysis',null,null,employee);}
 function openCreate(text='',kind='analysis',only=null,source=null,assigned=null){assignedEmployee=assigned;sourceGoal=source;createMembersTouched=false;createKindManual=kind==='listing'||!!only;createRequestId=globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);createStep=1;createPermission='draft';$('#goal').value=text;$('#pick-example').hidden=!!assignedEmployee;$('#team-recommendation').textContent='';$('#goal-kind').value=kind;$('#create-store').value='未关联店铺';$('#create-store').readOnly=false;$('#create-connected-store').innerHTML='<option value="">未关联店铺 · 仅草案</option>'+(state.integrations?.stores||[]).filter(s=>s.enabled).map(s=>`<option value="${s.id}">${esc(s.name)} · ${s.platform==='taobao'?'淘宝 / 天猫':s.platform==='douyin'?'抖店':esc(s.platform)}</option>`).join('');$('#create-sku').value=kind==='listing'?'DEMO-JF-001':'全店汇总';$('#create-product').value=kind==='listing'?'角阀':'经营分析';$('#create-price').value='29.90';clearCreateError();$('#create-engine').value=only&&state.agents.some(a=>a.id===only)?'legacy':only?'team':'flow';$('#team-selection').value=only?'manual':'auto';syncTeamChoice();updateCreateMembers(kind,only);$('#goal-advanced').hidden=!only;$('#goal-advanced').open=!!only;showCreateStep();pickHint();$('#task-dialog').showModal();$('#goal').focus();}
 $('#pick-example').onclick=()=>{$('#create-engine').value='flow';$('#goal').value='在 1688 上找高性价比、高利润的露营灯';syncTeamChoice();clearCreateError();$('#goal').focus();$('#goal').setSelectionRange($('#goal').value.length-3,$('#goal').value.length);};
 function creationPickIntent(text){
@@ -491,12 +493,41 @@ $('#task-form').onsubmit=async e=>{
   return;
  }
  const b=button;b.disabled=true;b.textContent='正在创建…';busy=true;try{const g=await post('goals',{text:$('#goal').value,...($('#create-engine').value==='team'?{employeeIds:automatic?[]:members,teamSelection:automatic?'auto':'manual',startCollaboration:true}:{members}),kind:$('#goal-kind').value,permission:$('#goal-permission').value,sourceGoal,requestId:createRequestId,storeConnectionId:$('#create-connected-store').value||undefined,scope:{store:$('#create-store').value,sku:$('#create-sku').value,product:$('#create-product').value},proposal:$('#goal-kind').value==='listing'?{price:$('#create-price').value,title:$('#create-product').value}:undefined});receive(g);$('#task-dialog').close();openGoal(g.id);toast('任务已创建');}catch(err){$('#form-error').textContent=err.message;}finally{b.disabled=false;b.textContent='创建任务';busy=false;}};
-function download(a){const text=`# ${a.title}\n\n版本：v${a.version} · ${artNames[a.status]}\n\n> 根据录入资料准备，未自动核对外部平台\n\n${a.body}\n\n来源：${a.evidence}`;const url=URL.createObjectURL(new Blob([text],{type:'text/markdown;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=a.title+'-v'+a.version+'.md';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function setArtifactText(element,content){
+ const text=String(content??'');element.replaceChildren();
+ let offset=0;
+ for(const match of text.matchAll(/https?:\/\/[^\s<>"“”，。；、）]+/gi)){
+  let url;try{url=new URL(match[0]);}catch{continue;}
+  if(url.username||url.password)continue;
+  element.append(text.slice(offset,match.index));
+  const link=document.createElement('a');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.textContent=match[0];element.append(link);
+  offset=match.index+match[0].length;
+ }
+ element.append(text.slice(offset));
+}
+function officeFormat(a){
+ if(a.skillId==='document.outline')return 'Word';
+ if(a.skillId==='table.profile'&&Array.isArray(a.tableMetrics?.columns))return 'Excel';
+ return '';
+}
+function download(a,useOffice=false){
+ let file;
+ if(useOffice){
+  file=createOfficeExport(a.skillId,{status:'succeeded',artifacts:[a],metrics:a.tableMetrics});
+  if(!file){toast('这份结果缺少生成 Office 文件所需的信息');return;}
+ }else{
+  const text=`# ${a.title}\n\n版本：v${a.version} · ${artNames[a.status]}\n\n> 根据录入资料准备，未自动核对外部平台\n\n${a.body}\n\n来源：${a.evidence}`;
+  file={filename:a.title+'-v'+a.version+'.md',blob:new Blob([text],{type:'text/markdown;charset=utf-8'})};
+ }
+ const url=URL.createObjectURL(file.blob),link=document.createElement('a');
+ link.href=url;link.download=file.filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 $('#team-close').onclick=()=>$('#team-dialog').close();
 $('#team-edit-mode').onchange=()=>{$('#team-edit-members').hidden=$('#team-edit-mode').value==='auto';};
 document.addEventListener('click',e=>{if(!e.target.closest('[data-team-edit]'))return;const g=current();$('#team-dialog').dataset.goal=g.id;$('#team-dialog').dataset.version=g.version;$('#team-goal-text').value=g.text;$('#team-edit-mode').value=g.teamSelection||'manual';$('#team-edit-members').hidden=$('#team-edit-mode').value==='auto';$('#team-edit-error').textContent='';$('#team-member-options').innerHTML=state.workforce.employees.map(e=>`<label class="team-member-option"><input type="checkbox" name="teamEmployee" value="${esc(e.id)}" ${g.members.includes(e.id)?'checked':''} ${e.readiness.ready?'':'disabled'}><span>${esc(e.name)}<small>${esc(e.readiness.ready?e.skillIds.map(id=>state.workforce.skills.find(s=>s.id===id)?.name||id).join('、'):e.readiness.blockers.join('；'))}</small></span></label>`).join('');$('#team-dialog').showModal();});
 $('#team-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const g=await post(`goals/${$('#team-dialog').dataset.goal}/actions`,{kind:'setTeam',expectedVersion:Number($('#team-dialog').dataset.version),text:$('#team-goal-text').value,teamSelection:$('#team-edit-mode').value,employeeIds:[...document.querySelectorAll('[name=teamEmployee]:checked')].map(e=>e.value)});receive(g);$('#team-dialog').close();toast('总控已保存新的成员安排');}catch(error){$('#team-edit-error').textContent=error.message;}finally{b.disabled=false;}};
-$('#close-artifact').onclick=()=>$('#artifact-dialog').close();$('#download-preview').onclick=()=>{if(preview)download(preview);};$('#close-edit').onclick=()=>$('#edit-dialog').close();$('#close-reject').onclick=()=>$('#reject-dialog').close();
+$('#close-artifact').onclick=()=>$('#artifact-dialog').close();$('#download-preview').onclick=()=>{if(preview)download(preview);};$('#download-office').onclick=()=>{if(preview)download(preview,true);};$('#close-edit').onclick=()=>$('#edit-dialog').close();$('#close-reject').onclick=()=>$('#reject-dialog').close();
 $('#edit-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;busy=true;try{await act('revise',{title:$('#publish-title').value,price:$('#publish-price').value},$('#edit-dialog').dataset.goal);$('#edit-dialog').close();state.tab='tasks';render(true);toast('已生成新版本，旧审批已失效');}catch(err){$('#edit-error').textContent=err.message;}finally{b.disabled=false;busy=false;}};
 $('#reject-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;busy=true;try{await act('reject',{reason:$('#reject-reason').value,approvalId:state.goals.find(g=>g.id===$('#reject-dialog').dataset.goal)?.approval?.id},$('#reject-dialog').dataset.goal);$('#reject-dialog').close();toast('审批已退回，需重新准备');}catch(err){$('#reject-error').textContent=err.message;}finally{b.disabled=false;busy=false;}};
 document.addEventListener('input',e=>{if(e.target.id==='chat-input')drafts[e.target.form.dataset.goal]=e.target.value;});
@@ -522,7 +553,7 @@ document.addEventListener('click',async e=>{const b=e.target.closest('button');i
  if(b.dataset.employeeGoal){
   const employee=[...(state.flows?.employees||[]),...(state.workforce?.employees||[])].find(e=>e.id===b.dataset.employeeGoal);
   if(!employee?.enabled||!employee.readiness?.ready){toast('该员工当前无法接单，请查看岗位设置。');return;}
-  openCreate('','analysis',null,null,employee);
+  assignEmployee(employee);
  }
  if(b.hasAttribute('data-nav-more')){$('#navigation-dialog').showModal();b.setAttribute('aria-expanded','true');}
  if(b.hasAttribute('data-nav-close'))$('#navigation-dialog').close();
@@ -544,7 +575,7 @@ document.addEventListener('click',async e=>{const b=e.target.closest('button');i
  if(b.dataset.action){if(busy)return;busy=true;ownsAction=true;b.disabled=true;const g=current(),extra={};if(b.dataset.action==='approve'){extra.version=g.version;extra.approvalId=g.approval.id;}if(b.dataset.mismatch)extra.mismatch=true;await act(b.dataset.action,extra);if(b.dataset.action==='facts'){state.tab='tasks';render(true);}if(b.dataset.action==='observe'||b.dataset.action==='complete'){state.tab='review';render(true);}toast('操作已记录');}
  if(b.hasAttribute('data-edit')){const g=current();$('#edit-dialog').dataset.goal=g.id;$('#publish-title').value=g.proposal.title;$('#publish-price').value=g.proposal.price;$('#edit-error').textContent='';$('#edit-dialog').showModal();}
  if(b.hasAttribute('data-reject')){$('#reject-dialog').dataset.goal=state.goal;$('#reject-reason').value='';$('#reject-error').textContent='';$('#reject-dialog').showModal();}
- if(b.dataset.preview||b.dataset.download){const g=state.goals.find(x=>x.id===b.dataset.parent),a=g.artifacts.find(x=>x.id===(b.dataset.preview||b.dataset.download));if(a.imageJobId){await imagesUI.openJob(a.imageJobId);}else if(b.dataset.download)download(a);else{preview=a;$('#artifact-title').textContent=a.title;$('#artifact-meta').textContent=`v${a.version} · ${artNames[a.status]} · 数据来源见正文`;$('#artifact-body').textContent=a.body;$('#artifact-evidence').textContent='来源：'+a.evidence;$('#artifact-dialog').showModal();}}
+ if(b.dataset.preview||b.dataset.download){const g=state.goals.find(x=>x.id===b.dataset.parent),a=g.artifacts.find(x=>x.id===(b.dataset.preview||b.dataset.download));if(a.imageJobId){await imagesUI.openJob(a.imageJobId);}else if(b.dataset.download)download(a,!!officeFormat(a));else{preview=a;const format=officeFormat(a),button=$('#download-office');button.hidden=!format;button.textContent=format?'下载 '+format+' ↓':'';$('#download-preview').className=format?'secondary':'primary';$('#artifact-title').textContent=a.title;$('#artifact-meta').textContent=`v${a.version} · ${artNames[a.status]} · 数据来源见正文`;setArtifactText($('#artifact-body'),a.body);setArtifactText($('#artifact-evidence'),'来源：'+a.evidence);$('#artifact-dialog').showModal();}}
  if(b.hasAttribute('data-followup')){const g=current();openCreate('基于上一轮目标，分析商品贡献利润与退款情况，提出下一轮优化建议','analysis',null,g.id);}
  }catch(err){toast(err.message);}finally{if(ownsAction){busy=false;b.disabled=false;}}});
 $('#nav-open').setAttribute('aria-expanded','false');
@@ -553,7 +584,7 @@ window.matchMedia('(min-width:761px)').addEventListener('change',e=>{if(e.matche
 window.addEventListener('hashchange',()=>{const canonical=applyRoute(location.hash.slice(1));if(location.hash.slice(1)!==canonical)history.replaceState(null,'','#'+canonical);$('#navigation-dialog')?.close();render(true);});
 const runNames={queued:'排队中',running:'执行中',succeeded:'成功',needs_input:'等待资料',failed:'失败',interrupted:'已中断',discarded:'旧版本已丢弃',waiting_resume:'等待恢复'};
 let configEditing=null,testRunId=null,runPreviewId=null,createRequestId=null,createKindManual=false,createMembersTouched=false;
-function runRows(runs){return runs.length?runs.slice(0,100).map(r=>`<button class="task-row" data-run="${r.id}"><span class="avatar">${r.purpose==='test'?'测':'执'}</span><div class="task-text"><strong>${esc(r.agentName)} · ${['test','skill_test','model_test','employee_test','external_test'].includes(r.purpose)?'配置测试':r.purpose==='chat'?'群聊请求':'目标执行'}</strong><small>${date(r.createdAt)} · 配置v${r.configVersion} · ${r.durationMs===undefined?'待计时':r.durationMs+' ms'}${r.error?' · '+esc(r.error):''}</small></div>${badge(runNames[r.status]||r.status,['queued','running'].includes(r.status))}</button>`).join(''):'<div class="note">暂无运行记录。可以在 Agent 配置中执行测试，或确认目标计划。</div>';}
+function runRows(runs){return runs.length?runs.slice(0,100).map(r=>`<button class="task-row" data-run="${r.id}"><span class="avatar">${r.purpose==='test'?'测':'执'}</span><div class="task-text"><strong>${esc(r.agentName)} · ${['test','skill_test','model_test','employee_test','external_test'].includes(r.purpose)?'配置测试':r.purpose==='skill_run'?'技能运行':r.purpose==='chat'?'群聊请求':'目标执行'}</strong><small>${date(r.createdAt)} · 配置v${r.configVersion} · ${r.durationMs===undefined?'待计时':r.durationMs+' ms'}${r.error?' · '+esc(r.error):''}</small></div>${badge(runNames[r.status]||r.status,['queued','running'].includes(r.status))}</button>`).join(''):'<div class="note">暂无运行记录。可以在 Agent 配置中执行测试，或确认目标计划。</div>';}
 function platformEmployees(){return '<div class=section-title><h2>旧版规则 / HTTP 适配器</h2></div>'+`<div class="role-note"><div><h3>旧版规则模块与 HTTP 适配器</h3><p>商品校验与利润计算使用你录入的数据。外部 Agent 可通过 HTTP 适配器接入；当前内置 Agent 不依赖大模型。</p></div>${badge('服务端持久化',true)}</div><div class="agent-grid">${state.agents.map(a=>`<article class="panel agent-card"><div class="artifact-top"><span class="avatar">${esc(a.initials)}</span>${badge(a.enabled?'已启用':'已停用',a.enabled)}</div><h2>${esc(a.name)}</h2><p>${esc(a.role)}</p><div class="config-meta">${scopeRow('适配器',a.adapter==='builtin'?'内置代码 Agent':'外部 HTTP Agent')}${scopeRow('配置版本','v'+a.revision)}${scopeRow('超时',a.timeoutMs/1000+' 秒')}${scopeRow('能力',a.capabilities.join(' / '))}</div><div class="action-buttons"><button class="primary" data-config="${a.id}">配置与测试</button><button class="text-button" data-agent="${a.id}" ${a.enabled?'':'disabled'}>用于新目标 ↗</button></div></article>`).join('')}</div><section class="panel runtime-panel"><div class="section-title"><h3>最近调用</h3><button class="text-button" data-view="runs">全部运行记录 →</button></div>${runRows(state.runs.slice(0,5))}</section>`;}
 function runsView(){return heading('运行记录','每次 Agent 调用都保存配置版本、输入、结构化结果和异常。')+`<div class="panel">${runRows(state.runs)}</div>`;}
 function platformRuntime(g){const r=g.runtime||{};return `<section class="action-card"><div class="action-kicker">后端自动执行 · ${esc(runNames[r.status]||'等待调度')}</div><h3>${r.status==='failed'?'本步骤调用失败':r.status==='needs_input'?'需要补齐数据后继续':'数字员工正在按计划推进'}</h3><p>${esc(r.error||'无需反复点击生成。主协调器按顺序调用所选能力，并保存每一步的交付物。')}</p>${r.missing?.length?`<div class="note">待处理：${r.missing.map(esc).join('、')}</div>`:''}<div class="action-buttons">${['failed','needs_input'].includes(r.status)?`<button class="primary" data-tab="facts">检查并补充资料</button>${actionButton('retry','重试当前步骤',true)}${g.mode==='team'?actionButton('replan','重新安排分工',true):''}`:''}${g.kind==='listing'?'<button class="text-button" data-edit>调整发布内容</button>':''}${r.runId?`<button class="text-button" data-run="${r.runId}">查看本次调用 →</button>`:''}</div></section>`;}
@@ -607,7 +638,7 @@ const businessUI=createBusinessUI({state,api,esc,badge,toast,refresh,render,open
 const imagesUI=createImagesUI({state,api,esc,toast,refresh,render});
 const contentUI=createContentUI({state,api,esc,receive,openGoal,render,act});
 const setupUI=createSetupUI({state,api,esc,badge,toast,refresh,render,currentWorkspace:()=>sessionStorage.getItem('workspaceId')||'default',switchWorkspace:async id=>{sessionStorage.setItem('workspaceId',id);sessionStorage.removeItem('selectedGoal');history.replaceState(null,'','#overview/home');location.reload();}});
-const workforceUI=createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowledgeUI,sourcesUI,state,api,esc,badge,toast,refresh,render,navigate:go,legacyPage:platformEmployees,openRun:async id=>{runPreviewId=id;$('#run-input').textContent='正在载入…';$('#run-output').textContent='正在载入…';$('#run-diagnosis').textContent='';$('#run-pick-action').hidden=true;delete $('#run-data').dataset.run;$('#run-dialog').showModal();await updateRunPreview();}});
+const workforceUI=createWorkforceUI({imagesUI,setupUI,contentUI,businessUI,knowledgeUI,sourcesUI,state,api,esc,badge,toast,refresh,render,navigate:go,assignEmployee,legacyPage:platformEmployees,openRun:async id=>{runPreviewId=id;$('#run-input').textContent='正在载入…';$('#run-output').textContent='正在载入…';$('#run-diagnosis').textContent='';$('#run-pick-action').hidden=true;delete $('#run-data').dataset.run;$('#run-dialog').showModal();await updateRunPreview();}});
 
 const pickBrowser=createPickBrowser({state,act,esc,render});
 const flowsUI=createFlowsUI({expandedPanels,readQuotes:setupUI.readQuotes,pickBrowser,state,api,esc,badge,act,receive,refresh,render,toast,openCreate,knowledgeUI,sourcesUI,discussionUI,drafts});

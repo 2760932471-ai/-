@@ -1,11 +1,11 @@
-export function readBusinessTable(raw,{maxRows=200,maxChars=80000}={}){
+export function readBusinessTable(raw,{maxRows=200,maxChars=80000,keepEmptyRecords=false}={}){
  if(typeof raw!=='string'||!raw.trim()||raw.length>maxChars)throw new Error('请提供不超过 '+maxChars+' 字符的 CSV');
  const text=raw.replace(/^\uFEFF/,'');
  const rows=[];
  let row=[],cell='',quoted=false,closed=false;
  function finishRow(){
   row.push(cell.trim());
-  if(row.some(Boolean))rows.push(row);
+  if(row.some(Boolean)||keepEmptyRecords&&(row.length>1||closed))rows.push(row);
   row=[];cell='';closed=false;
  }
  for(let i=0;i<text.length;i++){

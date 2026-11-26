@@ -4,6 +4,17 @@ try{
  if(!offline){child=spawn(process.execPath,['src/server.js'],{env:{...process.env,PORT:'3091',DATA_DIR:dir,CODESPACES:'true',PLATFORM_TOKEN:'old-token'},stdio:['ignore','pipe','pipe']});await once(child.stdout,'data');}
  browser=await chromium.launch({executablePath:'/usr/bin/chromium',args:['--no-sandbox']});const page=await browser.newPage({viewport:{width:1440,height:960}});page.on('pageerror',e=>{errors.push(e.message);console.error(e.message);});page.setDefaultTimeout(8000);
  if(offline){const html=await readFile('deliverables/ai-platform-preview.html','utf8');await page.route(base+'/**',r=>r.fulfill({contentType:'text/html',body:html}));await page.context().setOffline(true);}
+ await page.goto(base+'/#flows/skills');
+ await page.locator('[data-launch-skill="web.search"]').waitFor();
+ assert.equal(new URL(page.url()).hash,'#ai-config/skills');
+ if(offline){
+  await page.locator('[data-launch-skill="web.read"]').click();
+  const dialog=page.locator('.quick-skill-dialog');
+  await dialog.getByLabel('网页地址').fill('https://example.org/');
+  await dialog.getByRole('button',{name:'运行技能'}).click();
+  await dialog.getByRole('alert').filter({hasText:'在完整服务版中使用网页搜索和读取'}).waitFor();
+  await dialog.getByRole('button',{name:'关闭技能'}).click();
+ }
  await page.goto(base+'/#employees');
  await page.getByRole('heading',{name:'数字员工',exact:true}).waitFor();
  assert.equal(new URL(page.url()).hash,'#employees');
