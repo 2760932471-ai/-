@@ -4,7 +4,7 @@ import {skillDefinitions} from '../workforce/skills.js';
 import {decisionBrief} from './brief.js';
 import {audienceRequest} from './audience.js';
 
-export const goalContractVersion=4;
+export const goalContractVersion=5;
 
 // Each requested output maps to an executable capability and an observable acceptance condition.
 const outputs = [
@@ -28,7 +28,7 @@ const localSkills=new Set(['table.profile','document.outline','service.triage','
 // Concrete work already attached to this task can resolve references such as
 // “这个”. Default workspace names and superseded files cannot.
 export function hasTaskMaterial(goal){
- return Boolean(goal.scope?.product||goal.references?.length||goal.proposal?.title||
+ return Boolean(goal.scope?.product||goal.attachments?.length||goal.references?.length||goal.proposal?.title||
   Object.values(goal.skillData||{}).some(value=>value!=null&&typeof value==='object'&&Object.keys(value).length)||
   goal.artifacts?.some(file=>file.status!=='superseded'&&file.version===goal.version));
 }
@@ -49,6 +49,19 @@ export function buildGoalContract(goal,{modelQuestions=[],researchRequested=fals
  const actions=positive.split('，').filter(clause=>!asksForMethod(clause)).join('，');
  const audience=audienceRequest(positive,excluded);
  const skills=resolveCatalogSkillRequests(brief.split('；使用场景：')[0],skillDefinitions).filter(skill=>skill.capability!=='commerce.sku_profit'||!criteria||/账单|订单明细/.test(actions));
+ // For an unqualified request about its files, choose the tool from their
+ // actual types. Never interpret filenames or extracted text as instructions.
+ if(goal.attachments?.length&&/附件|文件|文档|表格|工作表|这份|这几份|这些资料|\b(?:Excel|Word|PDF|CSV|XLSX?|DOCX?)\b/i.test(actions)&&
+  /整理|总结|汇总|提炼|概览|概括|梳理|要点|摘要|分析|统计|平均值|行数|列数|看看/.test(actions)&&!audience&&!criteria&&!comparisonGoal.test(actions)&&
+  skills.every(skill=>['table.profile','document.outline'].includes(skill.capability))){
+  const kinds=new Set(goal.attachments.map(file=>file.kind));
+  const documents=/文档|正文|文章|报告|Word|PDF|DOCX?/i.test(actions),tables=/表格|报表|工作表|Excel|CSV|XLSX?/i.test(actions);
+  const all=!documents&&!tables||/(?:所有|全部|这几份|这些|每[一份个张]+)附件/.test(actions);
+  const labels=[kinds.has('document')&&(all||documents)?'文档摘要':'',kinds.has('table')&&(all||tables)?'表格分析':''].filter(Boolean);
+  for(const skill of resolveCatalogSkillRequests(labels.join('，'),skillDefinitions)){
+   if(!skills.some(existing=>existing.capability===skill.capability))skills.push(skill);
+  }
+ }
  const compare=!audience&&!criteria&&(researchRequested||!skills.length&&comparisonGoal.test(actions)&&(!comparison.test(actions)||nonProduct.test(actions)));
  const profitDecision=!!criteria&&(profitComparison.test(positive)||criteria.periodGoal||criteria.minUnitMargin!=null||criteria.minMarginRate!=null);
  const decision=decisionBrief([actions,requestParts(goal.scenario?.answer).requested].filter(Boolean).join('，'),criteria,{compare,profit:profitDecision,excluded,modelQuestions:audience?[]:modelQuestions});

@@ -11,6 +11,10 @@ function moduleBundle(name,source,prelude=''){
 // silently become undefined only in the downloadable preview.
 const planningModules={
  'public/business-csv.js':'previewBusinessCsv',
+ 'public/task-attachment-limits.js':'previewAttachmentLimits',
+ 'public/task-attachment-content.js':'previewAttachmentContent',
+ 'public/task-attachment-context.js':'previewAttachmentContext',
+ 'public/task-attachment-ui.js':'previewAttachmentUI',
  'public/flows.js':'previewFlowsUI',
  'public/skill-library.js':'previewSkillLibrary',
  'public/office-export.js':'previewOfficeExport',
@@ -58,13 +62,14 @@ const planningModules={
  'src/taskflows/offer-search.js':'({searchPublicOffers:async()=>[],fetchOfferDetail:async()=>null})',
  'node:crypto':'({randomUUID:previewUUID})',
 };
+function bindPreviewImport(file,names,specifier){
+ const path=specifier.startsWith('.')?new URL(specifier,new URL(file,root)).href.slice(root.href.length):specifier;
+ if(!Object.hasOwn(planningModules,path))throw new Error('Missing preview dependency '+path+' for '+file);
+ return 'const {'+names.replace(/\s+as\s+/g,':')+'}='+planningModules[path]+';';
+}
 async function planningBundle(file){
  const code=await read(file);
- const bound=code.replace(/^import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"];?/gm,(_,names,specifier)=>{
-  const path=specifier.startsWith('.')?new URL(specifier,new URL(file,root)).href.slice(root.href.length):specifier;
-  if(!Object.hasOwn(planningModules,path))throw new Error('Missing preview dependency '+path+' for '+file);
-  return 'const {'+names.replace(/\s+as\s+/g,':')+'}='+planningModules[path]+';';
- });
+ const bound=code.replace(/^import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"];?/gm,(_,names,specifier)=>bindPreviewImport(file,names,specifier));
  if(/^import\b/m.test(bound))throw new Error('Unsupported preview import in '+file);
  return moduleBundle(planningModules[file],bound);
 }
@@ -78,6 +83,10 @@ export async function invokeAgent(config,input){if(!config.enabled)throw new Err
 `,"const {builtins,seeds}=previewBuiltins;const process={env:{}};const isIP=s=>s.includes(':')?6:/^\\d+(?:\\.\\d+){3}$/.test(s)?4:0;");
 const catalog=moduleBundle('previewCatalog',await read('src/workforce/catalog.js'));
 const businessCsv=await planningBundle('public/business-csv.js');
+const attachmentLimits=await planningBundle('public/task-attachment-limits.js');
+const attachmentContent=await planningBundle('public/task-attachment-content.js');
+const attachmentContext=await planningBundle('public/task-attachment-context.js');
+const attachmentUI=await planningBundle('public/task-attachment-ui.js');
 const generalSkills=await planningBundle('src/workforce/general-skills.js');
 const commerce=await planningBundle('src/workforce/commerce.js');
 const external=moduleBundle('previewExternal',await read('src/workforce/external.js'),'const process={env:{}};');
@@ -135,13 +144,15 @@ const flowContract=await planningBundle('src/taskflows/contract.js');
 const flowDeliveries=await planningBundle('src/taskflows/deliveries.js');
 const flowPlanner=await planningBundle('src/taskflows/planner.js');
 const flowMemory=await planningBundle('src/taskflows/memory.js');
-const decision=moduleBundle('previewDecision',await read('src/taskflows/decision.js'),'const {parseBusinessCsv}=previewCommerce;');
+const decision=await planningBundle('src/taskflows/decision.js');
 const discussionSkills=await planningBundle('src/taskflows/discussion-skills.js');
 const flowManager=await planningBundle('src/taskflows/manager.js');
 const officeExport=await planningBundle('public/office-export.js');
 const skillLibrary=await planningBundle('public/skill-library.js');
 const flowsUI=await planningBundle('public/flows.js');
-const platform=moduleBundle('previewPlatform',await read('src/platform.js'),`const {requestParts,webSkillInput,workspaceSourcesOnly}=previewGoalLanguage;const runWebSkill=async()=>{const message='免安装预览无法访问外部网页。请在完整服务版中使用网页搜索和读取。';return {status:'needs_input',summary:message,missing:[message],artifacts:[],metrics:{}};};const {createTaskflowManager}=previewFlowManager;const {prepareContent,imageOutputs,assertContentEvidence}=previewContentPreparation;const {createProductionManager}=previewProduction;const {createImages}=previewImages;const imageFiles=()=>({save:async()=>{},read:async()=>{throw new Error('预览没有生成图片');}});const {createStoreOperations}=previewStoreOperations;const {createIntegrations}=previewIntegrations;const {createResearchManager,researchInputs,assertResearch,collectResearch,isResearchGoal}=previewResearch;const {contentPacks,validateCopyBrief}=previewContent;const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {createPlanningManager,assertPlanCurrent}=previewPlanning;const {discussionMembers,contextSettings,selectConversation}=previewConversation;const {runEmployee}=previewEmployeeRuntime;const {callModel,requireChatModel}=previewModel;const {executeSkill,skillDefinitions}=previewSkills;const {externalDefinitions,externalBlockers,publicExternal}=previewExternal;const invokeExternal=async()=>{throw new Error('静态预览不能调用外部 Agent，请启动完整后端');};const {initialSources,createSourceManager}=previewSources;const {initialKnowledge,createKnowledgeManager}=previewKnowledge;`);
+const platformSource=(await read('src/platform.js')).replace(/^import\s*\{([^}]+)\}\s*from\s*['"](\.\.\/public\/task-attachment-[^'"]+)['"];?/gm,
+ (_,names,specifier)=>bindPreviewImport('src/platform.js',names,specifier));
+const platform=moduleBundle('previewPlatform',platformSource,`const readPdfAttachment=undefined;const {requestParts,webSkillInput,workspaceSourcesOnly}=previewGoalLanguage;const runWebSkill=async()=>{const message='免安装预览无法访问外部网页。请在完整服务版中使用网页搜索和读取。';return {status:'needs_input',summary:message,missing:[message],artifacts:[],metrics:{}};};const {createTaskflowManager}=previewFlowManager;const {prepareContent,imageOutputs,assertContentEvidence}=previewContentPreparation;const {createProductionManager}=previewProduction;const {createImages}=previewImages;const imageFiles=()=>({save:async()=>{},read:async()=>{throw new Error('预览没有生成图片');}});const {createStoreOperations}=previewStoreOperations;const {createIntegrations}=previewIntegrations;const {createResearchManager,researchInputs,assertResearch,collectResearch,isResearchGoal}=previewResearch;const {contentPacks,validateCopyBrief}=previewContent;const randomUUID=previewUUID;const {readFile,mkdir,writeFile,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createGoal,goalAction,tickGoal}=previewGoals;const {defaultConfigs,publicConfig,validateConfig,invokeAgent}=previewRegistry;const {financeFields,testSample}=previewBuiltins;const {defaultEmployees}=previewEmployees;const {createTeamManager}=previewTeam;const {createPlanningManager,assertPlanCurrent}=previewPlanning;const {discussionMembers,contextSettings,selectConversation}=previewConversation;const {runEmployee}=previewEmployeeRuntime;const {callModel,requireChatModel}=previewModel;const {executeSkill,skillDefinitions}=previewSkills;const {externalDefinitions,externalBlockers,publicExternal}=previewExternal;const invokeExternal=async()=>{throw new Error('静态预览不能调用外部 Agent，请启动完整后端');};const {initialSources,createSourceManager}=previewSources;const {initialKnowledge,createKnowledgeManager}=previewKnowledge;`);
 const workspaces=moduleBundle('previewWorkspaces',await read('src/workspaces.js'),`const randomUUID=previewUUID;const {readFile,writeFile,mkdir,rename}=previewFS;const path={join:(...parts)=>parts.join('/')};const {createPlatform}=previewPlatform;`);
 const bootstrap=`
 const workspaceManager=await previewWorkspaces.createWorkspaceManager('/preview');
@@ -204,6 +215,7 @@ const previewAPI=async(route,options={})=>{
  }
  if(resource==='goals'){
   if(!id)return method==='POST'?localPlatform.create(input):localPlatform.goals();
+  if(action==='attachments'&&method==='GET')return localPlatform.readGoalAttachment(id,route.split('/')[3]);
   if(action?.split('?')[0]==='context'&&method==='GET')return localPlatform.workforce.context(id,new URLSearchParams(action.split('?')[1]||'').get('question'));
   if(action==='planning'&&method==='POST')return localPlatform.planning.propose(id,input);
   if(action==='actions'&&method==='POST')return localPlatform.action(id,input);
@@ -218,7 +230,7 @@ let app=await read('public/app.js');
 if(!/^async function api\(route, options\).*$/m.test(app))throw new Error('API binding changed; review preview builder');
 app=app.replace(/^import .*;\n/gm,'').replace(/^async function api\(route, options\).*$/m,'async function api(route,options){return structuredClone(await previewAPI(route,options));}').replaceAll('sessionStorage','previewSession');
 const copyReplacements=[['外部 Agent 可通过 HTTP 适配器接入','完整版可通过 HTTP 适配器接入外部 Agent；预览仅运行内置能力'],['代码 Agent 与统一 HTTP 接口已接入；业务连接逐项建设。','此文件使用本地代码 Agent；真实服务请使用完整启动包。'],['在 Agent 配置中选择 HTTP 适配器，设置 HTTPS 地址、服务端密钥变量名与允许域名。','请运行完整后端，再设置 HTTPS 接口、密钥环境变量与允许域名。'],['服务已连接','本地预览已就绪'],['目标、任务与协作空间已保存到服务端','目标、任务与协作空间已保存到当前浏览器'],['服务端持久化','浏览器本地保存'],['使用服务端已保存的配置','使用当前浏览器已保存的配置'],['后端自动执行','浏览器规则执行'],['数据保存在后端','数据保存在当前浏览器'],['等待后端执行','等待本地执行'],['代码 / HTTP 能力','本地代码能力']];
-let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,goalLanguage,businessCsv,generalSkills,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,deliveryReview,contentPreparation,production,content,selectsUI,contentUI,skills,roleDesign,employees,model,runtime,planning,planningUI,matching,research,team,officeExport,skillLibrary,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,marketComparison,sourcing,offerCards,pickBrowser,audience,flowCatalog,flowBrief,flowContract,flowDeliveries,flowAcceptance,flowPlanner,flowMemory,flowInquiry,decision,discussionSkills,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createOfficeExport}=previewOfficeExport;const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
+let code=[await read('scripts/preview-runtime.js'),builtins,goals,registry,catalog,goalLanguage,businessCsv,attachmentLimits,attachmentContent,attachmentContext,attachmentUI,generalSkills,commerce,external,starter,conversation,discussionUI,sources,knowledgeRetrieval,deliveryReview,contentPreparation,production,content,selectsUI,contentUI,skills,roleDesign,employees,model,runtime,planning,planningUI,matching,research,team,officeExport,skillLibrary,workforceUI,sourcesUI,starters,knowledge,knowledgeUI,businessUI,imageLayout,images,imagesUI,storeOperations,storeUI,market,integrations,voucherUI,cloudUI,noticesUI,setupUI,offerPhotoModule,marketComparison,sourcing,offerCards,pickBrowser,audience,flowCatalog,flowBrief,flowContract,flowDeliveries,flowAcceptance,flowPlanner,flowMemory,flowInquiry,decision,discussionSkills,flowManager,flowsUI,platform,workspaces,bootstrap,'const {createTaskAttachmentUI}=previewAttachmentUI;const {createOfficeExport}=previewOfficeExport;const {createPickBrowser}=previewPickBrowser;const {businessBrief,sourcingReport,sourcingIntent}=previewSourcing;const {createFlowsUI}=previewFlowsUI;const {createImagesUI}=previewImagesUI;const {initializeSelects}=previewSelects;const {createSetupUI}=previewSetupUI;const {createContentUI}=previewContentUI;const {createDiscussionUI}=previewDiscussionUI;const {createPlanningUI}=previewPlanningUI;const {createWorkforceUI}=previewWorkforceUI;const {createSourcesUI}=previewSourcesUI;const {createKnowledgeUI}=previewKnowledgeUI;const {createBusinessUI}=previewBusinessUI;',app].join('\n');
 for(const [from,to]of copyReplacements)code=code.replaceAll(from,to);
 code=code.replaceAll('href="/cloud-browser.zip"', 'href="data:application/zip;base64,'+(await readFile(new URL('public/cloud-browser.zip',root))).toString('base64')+'"');
 let html=await read('public/index.html');const css=[await read('public/style.css'),await read('public/shell.css'),await read('public/employees.css')].join('\n');

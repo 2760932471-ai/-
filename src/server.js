@@ -1,3 +1,4 @@
+import {attachmentLimits} from '../public/task-attachment-limits.js';
 import './environment.js';
 import {pushOne,destination} from './stock-push.js';
 import {accessPolicy} from './access-policy.js';
@@ -141,7 +142,14 @@ const server = http.createServer(async (req, res) => {
     }
     if(url.pathname==='/api/goal-preview'&&req.method==='POST')return json(res,200,previewGoal((await body(req)).text));
     if(url.pathname==='/api/goals'&&req.method==='GET')return json(res,200,platform.goals());
-    if(url.pathname==='/api/goals'&&req.method==='POST')return json(res,201,await platform.create(await body(req)));
+    if(url.pathname==='/api/goals'&&req.method==='POST'){
+      const limit=4*Math.ceil(attachmentLimits.totalBytes/3)+4*attachmentLimits.count+512000;
+      const input=await body(req,limit);
+      if(Buffer.byteLength(JSON.stringify({...input,attachments:undefined}))>512000)return json(res,413,{error:'任务描述与参数超过大小限制'});
+      return json(res,201,await platform.create(input));
+    }
+    const attachmentMatch=url.pathname.match(/^\/api\/goals\/([^/]+)\/attachments\/([^/]+)$/);
+    if(attachmentMatch&&req.method==='GET')return json(res,200,await platform.readGoalAttachment(attachmentMatch[1],attachmentMatch[2]));
     const contextMatch=url.pathname.match(/^\/api\/goals\/([^/]+)\/context$/);
     if(contextMatch&&req.method==='GET')return json(res,200,platform.workforce.context(contextMatch[1],url.searchParams.get('question')));
     const planningMatch=url.pathname.match(/^\/api\/goals\/([^/]+)\/planning$/);
@@ -177,7 +185,7 @@ const server = http.createServer(async (req, res) => {
       await save(); return json(res, 200, task);
     }
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: '接口不存在' });
-    const files = { '/office-export.js':['office-export.js','text/javascript'], '/skill-library.js':['skill-library.js','text/javascript'], '/business-csv.js':['business-csv.js','text/javascript'], '/employees.css':['employees.css','text/css'], '/shell.css':['shell.css','text/css'], '/offer-photos.js':['offer-photos.js','text/javascript'], '/offer-cards.js':['offer-cards.js','text/javascript'], '/goal-language.js':['goal-language.js','text/javascript'], '/sourcing.js':['sourcing.js','text/javascript'], '/market-comparison.js':['market-comparison.js','text/javascript'], '/pick-browser.js':['pick-browser.js','text/javascript'], '/stock-notices.js':['stock-notices.js','text/javascript'], '/vouchers.js':['vouchers.js','text/javascript'], '/cloud-browser.zip':['cloud-browser.zip','application/zip'], '/cloud-browser.js':['cloud-browser.js','text/javascript'], '/product-demo.png':['product-demo.png','image/png'], '/flows.js': ['flows.js','text/javascript'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const files = { '/task-attachment-ui.js':['task-attachment-ui.js','text/javascript'], '/task-attachment-content.js':['task-attachment-content.js','text/javascript'], '/task-attachment-limits.js':['task-attachment-limits.js','text/javascript'], '/office-export.js':['office-export.js','text/javascript'], '/skill-library.js':['skill-library.js','text/javascript'], '/business-csv.js':['business-csv.js','text/javascript'], '/employees.css':['employees.css','text/css'], '/shell.css':['shell.css','text/css'], '/offer-photos.js':['offer-photos.js','text/javascript'], '/offer-cards.js':['offer-cards.js','text/javascript'], '/goal-language.js':['goal-language.js','text/javascript'], '/sourcing.js':['sourcing.js','text/javascript'], '/market-comparison.js':['market-comparison.js','text/javascript'], '/pick-browser.js':['pick-browser.js','text/javascript'], '/stock-notices.js':['stock-notices.js','text/javascript'], '/vouchers.js':['vouchers.js','text/javascript'], '/cloud-browser.zip':['cloud-browser.zip','application/zip'], '/cloud-browser.js':['cloud-browser.js','text/javascript'], '/product-demo.png':['product-demo.png','image/png'], '/flows.js': ['flows.js','text/javascript'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/workforce.js': ['workforce.js', 'text/javascript'], '/sources.js': ['sources.js', 'text/javascript'], '/knowledge.js': ['knowledge.js', 'text/javascript'], '/business.js': ['business.js', 'text/javascript'], '/content.js': ['content.js', 'text/javascript'], '/planning.js': ['planning.js', 'text/javascript'], '/discussion.js': ['discussion.js', 'text/javascript'], '/setup.js': ['setup.js', 'text/javascript'], '/store-operations.js': ['store-operations.js', 'text/javascript'], '/images.js': ['images.js','text/javascript'], '/selects.js': ['selects.js','text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const file = files[url.pathname]; if (!file) return json(res, 404, { error: '页面不存在' });
     res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" }); res.end(await readFile(path.join(root, 'public', file[0])));
   } catch (error) { json(res, error.status || 400, { error: error.message }); }

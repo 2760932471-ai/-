@@ -1,3 +1,7 @@
+import {attachmentEvidence,withAttachmentMaterial} from '../public/task-attachment-context.js';
+import {attachmentLimits} from '../public/task-attachment-limits.js';
+import {inspectTaskAttachment} from '../public/task-attachment-content.js';
+import {readPdfAttachment} from './task-attachment-pdf.js';
 import {requestParts,webSkillInput,workspaceSourcesOnly} from '../public/goal-language.js';
 import {runWebSkill} from './workforce/web-skills.js';
 import {createTaskflowManager} from './taskflows/manager.js';
@@ -31,6 +35,32 @@ import {financeFields,testSample} from './agents/builtins.js';
 const now=()=>new Date().toISOString();
 const event=(g,text,card)=>g.messages.push({id:randomUUID(),role:'coordinator',author:g.mode==='flow'?'目标总控':'数字员工',text,card,at:now()});
 const conflict=message=>Object.assign(new Error(message),{status:409});
+// Decode and fingerprint before entering the workspace transaction. Only metadata
+// and extracted task material belong in platform.json; the original bytes are
+// stored separately and retrieved using the task and attachment IDs together.
+async function prepareGoalUploads(value){
+ if(value===undefined)return [];
+ if(!Array.isArray(value)||value.length>attachmentLimits.count)throw Error('每个任务最多可添加 '+attachmentLimits.count+' 个附件');
+ const uploads=[];
+ let total=0;
+ for(const item of value){
+  const name=typeof item?.name==='string'?item.name.trim():'';
+  if(!name||name.length>240||/[\u0000-\u001f\u007f/\\]/.test(name)||name==='.'||name==='..')throw Error('附件文件名无效');
+  const encoded=item.base64;
+  if(typeof encoded!=='string'||!encoded.length)throw Error('附件“'+name+'”没有文件内容');
+  if(encoded.length>4*Math.ceil(attachmentLimits.fileBytes/3))throw Error('附件“'+name+'”超过单个文件 8 MiB 的限制');
+  if(encoded.length%4!==0||!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded))throw Error('附件“'+name+'”编码无效');
+  const size=encoded.length/4*3-(encoded.endsWith('==')?2:encoded.endsWith('=')?1:0);
+  total+=size;
+  if(size>attachmentLimits.fileBytes||total>attachmentLimits.totalBytes)throw Error('单个附件最多 8 MiB，每个任务附件合计最多 16 MiB');
+  const binary=atob(encoded),bytes=new Uint8Array(size);
+  for(let i=0;i<size;i++)bytes[i]=binary.charCodeAt(i);
+  const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
+  const sha256=Array.from(digest,byte=>byte.toString(16).padStart(2,'0')).join('');
+  uploads.push({name,mime:typeof item.mime==='string'?item.mime:'',size,sha256,bytes,encoded});
+ }
+ return uploads;
+}
 export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callModel,sourceTransport,embed,embeddingConfig,externalCall=invokeExternal,searchCall,webPageRead,storeCall,nativeStoreCall,imageCall,imageReady,imageTest,flowSkillCall,offerSearch,offerDetail,photoDownload}={}){
  await mkdir(dataDir,{recursive:true});const file=path.join(dataDir,'platform.json');
  let data;try{data=JSON.parse(await readFile(file,'utf8'));if(data.schemaVersion!==1||!Array.isArray(data.goals)||!Array.isArray(data.agents)||!Array.isArray(data.runs))throw new Error('平台存储格式错误');}catch(e){if(e.code!=='ENOENT')throw e;let goals=[];try{goals=JSON.parse(await readFile(path.join(dataDir,'goals.json'),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}data={schemaVersion:1,agents:defaultConfigs(),goals,runs:[],requests:{}};}
@@ -44,8 +74,9 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
  const findGoal=(d,id)=>{const g=d.goals.find(g=>g.id===id);if(!g)throw Object.assign(new Error('目标不存在'),{status:404});return g;};
  const findAgent=(d,id)=>{const a=d.agents.find(a=>a.id===id);if(!a)throw Object.assign(new Error('Agent不存在'),{status:404});return a;};
  const sources=createSourceManager({getData:()=>data,transaction,transport:sourceTransport});
+ const taskFiles=knowledgeMediaFiles(path.join(dataDir,'task-files'));
  const knowledge=createKnowledgeManager({getData:()=>data,transaction,mediaFiles:knowledgeMediaFiles(dataDir),embed,configuration:embeddingConfig});
- const images=createImages({getData:()=>data,transaction,knowledge,files:imageFiles(dataDir),photoDownload,imageCall,imageReady,imageTest});
+ const images=createImages({getData:()=>data,transaction,knowledge,files:imageFiles(dataDir),readGoalAttachment,photoDownload,imageCall,imageReady,imageTest});
  const planning=createPlanningManager({getData:()=>data,transaction,inputs,modelCall,event});
  const integrations=createIntegrations({getData:()=>data,transaction,searchCall,storeCall,nativeStoreCall});
  const storeOperations=createStoreOperations({getData:()=>data,transaction,nativeStoreCall});
@@ -109,10 +140,38 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   g.runtime={status:'idle',completed:[...(g.runtime.completed||[]),r.agentId]};
   event(g,`${r.agentName}：${r.result.summary}`,'draft');schedule(d,g);
  }
- async function create(input){return transaction(async d=>{
-  if(!/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId||''))throw new Error('缺少有效创建请求编号');
-  const signature=JSON.stringify({...input,requestId:undefined});
-  if(Object.hasOwn(d.requests,input.requestId)){const old=d.requests[input.requestId];if(old.signature!==signature)throw conflict('同一创建请求不能更换内容');return findGoal(d,old.goalId);}
+ async function readGoalAttachment(goalId,attachmentId){
+  const attachment=findGoal(data,goalId).attachments?.find(file=>file.id===attachmentId);
+  if(!attachment)throw Object.assign(new Error('当前任务中没有这个附件'),{status:404});
+  const base64=await taskFiles.get(attachment.id);
+  if(typeof base64!=='string')throw new Error('附件原件读取失败');
+  return {name:attachment.name,mime:attachment.mime,base64};
+ }
+ async function create(input){
+  if(!/^[a-zA-Z0-9_-]{8,100}$/.test(input?.requestId||''))throw new Error('缺少有效创建请求编号');
+  const uploads=await prepareGoalUploads(input.attachments);
+  const signature=JSON.stringify({...input,requestId:undefined,attachments:uploads.length?uploads.map(({name,sha256})=>({name,sha256})):undefined});
+  if(new TextEncoder().encode(signature).length>512000)throw Error('任务创建参数过长');
+  const requestId=input.requestId;
+  const previous=d=>{
+   if(!Object.hasOwn(d.requests,requestId))return null;
+   const old=d.requests[requestId];
+   if(old.signature!==signature)throw conflict('同一创建请求不能更换内容');
+   return findGoal(d,old.goalId);
+  };
+  const existing=previous(data);
+  if(existing)return structuredClone(existing);
+  const attachments=[];
+  for(const {name,mime,bytes,size} of uploads){
+   const content=await inspectTaskAttachment({name,mime,bytes},{readPdf:readPdfAttachment});
+   attachments.push({...content,id:randomUUID(),name,size});
+  }
+  input={...input,attachments};
+  const written=[];
+  try{return await transaction(async d=>{
+  // A concurrent retry may have finished while the documents were parsed.
+  const duplicate=previous(d);
+  if(duplicate)return duplicate;
   let employee;
   if(input.assignedEmployeeId!==undefined){
    if(flows.view().employees.some(e=>e.id===input.assignedEmployeeId)){
@@ -135,6 +194,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(!isFlow&&!isTeam&&!input.members?.includes(required))throw new Error(`请邀请${required==='product'?'商品运营':'经营分析'} Agent 参与此目标`);
   for(const id of isFlow||isTeam?[]:input.members){if(!findAgent(d,id).enabled)throw new Error('所选Agent已停用');}
   const g=isFlow?flows.create(d,input):isTeam?team.create(d,creationInput):createGoal(input);if(!isTeam&&!isFlow){g.mode='platform';g.runtime={status:'idle',completed:[]};}
+  if(attachments.length)g.attachments=attachments;
   if(employee){
    g.assignedEmployeeId=employee.id;g.assignedEmployeeName=employee.name;
    g.scope={store:'未关联店铺',sku:input.kind==='listing'?'':'目标范围',product:'',platform:'按任务提供资料',window:7};
@@ -148,8 +208,16 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   if(input.contentDraft){const pack=contentPacks.find(p=>p.id===input.contentDraft);if(!isTeam||!pack||g.members.length!==1||g.members[0]!==pack.employeeId)throw new Error('请选择对应的内容员工');const e=d.employees.find(e=>e.id===pack.employeeId);if(e.mode!=='skills'||e.skillIds.length!==1||e.skillIds[0]!==pack.skillId)throw new Error('内容快捷入口只运行对应代码能力；员工配置已改变，请使用新建目标');if(input.automaticContent){const b=input.copyBrief||{};if(typeof b.productName!=='string'||!b.productName.trim()||b.productName.length>80)throw new Error('请说明商品名称');for(const k of ['channel','audience'])if(b[k]!==undefined&&(typeof b[k]!=='string'||b[k].length>(k==='channel'?40:120)))throw new Error('制作偏好格式无效');g.skillData={copyBrief:{productName:b.productName,channel:b.channel||'全渠道',audience:b.audience||'',confirmed:false}};}else g.skillData={copyBrief:validateCopyBrief(input.copyBrief)};g.contentDraft=pack.id;g.proposal=null;team.action(d,g,{kind:'plan',expectedVersion:g.version});}
   if(isTeam&&g.teamSelection==='auto'&&!input.contentDraft)team.autoAssign(d,g,{initial:true});
   if(isTeam&&(input.startCollaboration||g.teamSelection==='auto')&&!input.contentDraft)await team.kickoff(d,g);
-  d.goals.unshift(g);d.requests[input.requestId]={goalId:g.id,signature};return g;
- });}
+  for(const [index,attachment] of attachments.entries()){
+   written.push(attachment.id);
+   await taskFiles.put(attachment.id,uploads[index].encoded);
+  }
+  d.goals.unshift(g);d.requests[requestId]={goalId:g.id,signature};return g;
+  });}catch(error){
+   await Promise.allSettled(written.map(id=>taskFiles.remove(id)));
+   throw error;
+  }
+ }
  async function action(id,input){
   const goal=findGoal(data,id);
   if(goal.mode==='flow'&&input.kind==='message')input=await flows.routeMessage(goal,input);
@@ -236,7 +304,9 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
       run.input.knowledgeRecall=recall;await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.input.knowledgeRecall=recall;(r.trace??=[]).push({phase:'retrieval',status:'succeeded',algorithm:recall.algorithm,hits:recall.hits.length,at:now()});});
      }
 
-     result=await runEmployee(run.config.employee,run.config.model,run.input,{discussion:!!run.chatModelId,modelCall,definitions:[...skillDefinitions,...externalDefinitions((run.config.externalSkills||[]).map(publicExternal))],skillCall:async(id,input)=>{if(!id.startsWith('external_'))return workspaceSkill(id,input);const s=(run.config.externalSkills||[]).find(s=>s.id===id),current=data.externalSkills.find(s=>s.id===id);if(!s||current?.revision!==s.revision||externalBlockers(current&&publicExternal(current)).length)throw new Error('外部能力配置已变化或尚未就绪，请检查后重试');const result=await externalCall(s,input);const latest=data.externalSkills.find(x=>x.id===id);if(latest?.revision!==s.revision||!latest.enabled)throw new Error('外部能力在调用期间变更或停用，结果未应用');return result;},onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{if(run.chatModelId)requireChatModel(data,run.chatModelId,run.chatModelRevision);const g=data.goals.find(g=>g.id===run.goalId);if(g){sources.resolve(g);if(run.purpose==='draft')assertPlanCurrent(data,g);}knowledge.assertRecall(run.input.knowledgeRecall);assertResearch(data,run.input.candidateDiscovery);assertContentEvidence(data,run.input.autoContent);return (!run.contextRevision||contextSettings(g).revision===run.contextRevision)&&data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
+     const attachments=data.goals.find(goal=>goal.id===run.goalId)?.attachments;
+     const employeeInput=attachments?.length&&run.config.employee.mode==='model'?{...run.input,attachmentEvidence:attachmentEvidence(attachments)}:run.input;
+     result=await runEmployee(run.config.employee,run.config.model,employeeInput,{discussion:!!run.chatModelId,modelCall,definitions:[...skillDefinitions,...externalDefinitions((run.config.externalSkills||[]).map(publicExternal))],skillCall:async(id,input)=>{if(!id.startsWith('external_'))return workspaceSkill(id,withAttachmentMaterial(id,input,attachments));const s=(run.config.externalSkills||[]).find(s=>s.id===id),current=data.externalSkills.find(s=>s.id===id);if(!s||current?.revision!==s.revision||externalBlockers(current&&publicExternal(current)).length)throw new Error('外部能力配置已变化或尚未就绪，请检查后重试');const result=await externalCall(s,input);const latest=data.externalSkills.find(x=>x.id===id);if(latest?.revision!==s.revision||!latest.enabled)throw new Error('外部能力在调用期间变更或停用，结果未应用');return result;},onStep:step=>transaction(d=>{const r=d.runs.find(r=>r.id===run.id);(r.trace??=[]).push(step);}),shouldContinue:()=>{if(run.chatModelId)requireChatModel(data,run.chatModelId,run.chatModelRevision);const g=data.goals.find(g=>g.id===run.goalId);if(g){sources.resolve(g);if(run.purpose==='draft')assertPlanCurrent(data,g);}knowledge.assertRecall(run.input.knowledgeRecall);assertResearch(data,run.input.candidateDiscovery);assertContentEvidence(data,run.input.autoContent);return (!run.contextRevision||contextSettings(g).revision===run.contextRevision)&&data.employees.find(e=>e.id===run.agentId)?.enabled&&(!g||g.version===run.goalVersion&&(!g.paused||run.purpose==='chat'));}});
     }else if(run.config.externalTest){const current=data.externalSkills.find(s=>s.id===run.agentId);if(!current?.enabled||current.revision!==run.configVersion)throw new Error('外部配置已变化，请重新测试');result=await externalCall(run.config.external,run.input);}
     else if(run.config.modelTest){const answer=await modelCall(run.config.model,[{role:'user',content:'请回复：模型连接正常。'}],[]);result={status:'succeeded',summary:'模型连接测试通过',missing:[],artifacts:[{title:'连接测试',body:answer.message.content||'收到有效响应',evidence:'所配置模型接口实际响应'}],metrics:{}};}
     else if(run.config.skillId){
@@ -245,7 +315,7 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
       run.input.knowledgeRecall=await knowledge.search({...g.knowledge,mode:'bm25',query:run.input.question,sku:''});
       await transaction(d=>{d.runs.find(r=>r.id===run.id).input.knowledgeRecall=run.input.knowledgeRecall;});
      }
-     result=await workspaceSkill(run.config.skillId,run.input);
+     result=await workspaceSkill(run.config.skillId,withAttachmentMaterial(run.config.skillId,run.input,data.goals.find(g=>g.id===run.goalId)?.attachments));
     }
     else{const currentConfig=data.agents.find(a=>a.id===run.agentId);if(!currentConfig?.enabled)throw new Error('Agent在运行前已停用');result=await invoke(run.config,run.input);}}catch(e){error=e.name==='TimeoutError'||e.name==='AbortError'?'Agent调用超时，可检查配置后重试':run.config.adapter==='http'?(String(e.message).startsWith('Agent')||String(e.message).startsWith('该Agent')||String(e.message).startsWith('服务端')?e.message:'外部Agent请求失败，请检查连接和服务端配置'):e.message;}
     await transaction(d=>{const r=d.runs.find(r=>r.id===run.id);r.finishedAt=now();r.durationMs=Date.parse(r.finishedAt)-Date.parse(r.startedAt);r.status=error?'failed':result.status;r.error=error||null;r.result=result||null;if(!error&&r.goalId){try{if(r.chatModelId)requireChatModel(d,r.chatModelId,r.chatModelRevision);if(r.purpose==='draft')assertPlanCurrent(d,findGoal(d,r.goalId));sources.resolve(findGoal(d,r.goalId),d);knowledge.assertRecall(r.input.knowledgeRecall,d);assertResearch(d,r.input.candidateDiscovery);assertContentEvidence(d,r.input.autoContent);}catch(e){r.error=e.message;r.status='failed';r.result=null;}}applyRun(d,r);});
@@ -253,9 +323,13 @@ export async function createPlatform(dataDir,{invoke=invokeAgent,modelCall=callM
   }finally{pumping=false;}
  }
  return {
-  goals:()=>structuredClone(data.goals.map(g=>({...g,autoContent:prepareContent(data,g)}))),agents:()=>data.agents.map(publicConfig),runs:()=>data.runs.map(({config,input,result,...r})=>r),
+  goals:()=>structuredClone(data.goals.map(goal=>{
+   const summary={...goal,autoContent:prepareContent(data,goal)};
+   if(goal.attachments)summary.attachments=goal.attachments.map(({text,sheets,...file})=>file);
+   return summary;
+  })),agents:()=>data.agents.map(publicConfig),runs:()=>data.runs.map(({config,input,result,...r})=>r),
   run:id=>{const r=data.runs.find(r=>r.id===id);if(!r)throw Object.assign(new Error('运行记录不存在'),{status:404});const {config,...safe}=r;return structuredClone(safe);},
-  create,action,pump,flows,workforce:team,sources,knowledge,planning,integrations,storeOperations,images,
+  create,readGoalAttachment,action,pump,flows,workforce:team,sources,knowledge,planning,integrations,storeOperations,images,
   saveAgent:(id,input)=>transaction(d=>{const prev=findAgent(d,id);const next=validateConfig(input,prev);d.agents[d.agents.indexOf(prev)]=next;return publicConfig(next);}),
   testAgent:(id,input)=>transaction(d=>{if(input!==undefined&&(!input||typeof input!=='object'||Array.isArray(input)))throw new Error('测试输入必须为JSON对象');const run=enqueue(d,id,input??testSample(id),{purpose:'test'});return {id:run.id,status:run.status};}),
   sample:id=>{findAgent(data,id);return testSample(id);},

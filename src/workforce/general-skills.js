@@ -77,20 +77,30 @@ function outlineDocument(text){
 
 export function executeGeneral(id,input){
  const table=id==='table.profile',material=table?input?.table:input?.document;
+ if(Array.isArray(material?.files)){
+  if(!material.files.length||material.files.length>200||material.files.some(file=>!file||Array.isArray(file.files)))
+   return {status:'needs_input',summary:'资料列表格式无效。',missing:['请提供一组文档或表格。'],artifacts:[],metrics:{}};
+  const results=material.files.map(file=>executeGeneral(id,{[table?'table':'document']:file}));
+  const missing=results.flatMap(r=>r.missing);
+  const artifacts=results.flatMap(r=>r.artifacts.map(a=>({...a,title:a.title+' · '+a.evidence})));
+  const summary='已完成 '+artifacts.length+'/'+results.length+' 项资料的'+(table?'概览':'提要');
+  return {status:missing.length?'needs_input':'succeeded',summary:missing.length?summary+'。'+missing.join('；'):summary,
+   missing,artifacts,metrics:{fileCount:results.length,completed:artifacts.length}};
+ }
  const value=table?material?.csv:material?.text;
  const title=table?'表格概览':'文档提要';
  const question=table?'请粘贴带列名的 CSV，或在任务资料中补充表格。':'请粘贴要整理的文档正文，或在任务资料中补充原文。';
  try{
-  if(typeof value!=='string'||!value.trim())throw Error(question);
+  if(typeof value!=='string'||!value.trim())throw Error(material?.note||question);
   if(value.length>inputLimit)throw Error('单次最多处理 60000 字符，请缩短资料后重试。');
   if(material.source!=null&&(typeof material.source!=='string'||material.source.length>160))throw Error('来源请填写 160 字符以内的名称。');
   const {body,metrics}=table?profileTable(value):outlineDocument(value);
   const evidence=material.source?.trim()||'本次提供的'+(table?' CSV':'文档');
-  const artifact={title,body,evidence,skillId:id};
+  const artifact={title,body:material.note?body+'\n\n读取范围：'+String(material.note).slice(0,350):body,evidence,skillId:id};
   if(table)artifact.tableMetrics=metrics;
   return {status:'succeeded',summary:title,artifacts:[artifact],metrics,missing:[]};
  }catch(error){
-  const summary=error.message===question?question:error.message+' '+question;
+  const summary=(material?.source?'「'+material.source+'」':'')+(error.message===question?question:error.message+' '+question);
   return {status:'needs_input',summary,question,missing:[summary],artifacts:[],metrics:{}};
  }
 }

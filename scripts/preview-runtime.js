@@ -21,12 +21,39 @@ function knowledgeMediaFiles(root){
   });
   try{return await new Promise((resolve,reject)=>{
    const tx=db.transaction('files',mode==='get'?'readonly':'readwrite'),store=tx.objectStore('files'),key=root+'/'+id;
-   const req=mode==='get'?store.get(key):mode==='put'?store.add(value,key):store.delete(key);
-   tx.oncomplete=()=>resolve(req.result);tx.onabort=()=>reject(tx.error||new Error('浏览器无法保存媒体文件'));
+   let req;
+   if(mode==='deleteMany'){
+    for(const fileId of id)store.delete(root+'/'+fileId);
+   }else{
+    req=mode==='get'?store.get(key):mode==='put'?store.add(value,key):store.delete(key);
+   }
+   tx.oncomplete=()=>resolve(req?.result);tx.onabort=()=>reject(tx.error||new Error('浏览器无法保存媒体文件'));
   });}finally{db.close();}
  }
- return {put:(id,v)=>access(id,'put',v),get:id=>access(id,'get'),remove:id=>access(id,'delete')};
+ return {put:(id,v)=>access(id,'put',v),get:id=>access(id,'get'),remove:id=>access(id,'delete'),removeMany:ids=>access(ids,'deleteMany')};
 }
 const previewBar=document.querySelector('#preview-status');
-previewBar.textContent=previewPersistent?'V0.36.0 · 本地预览 · 数据仅存于此浏览器，未连接店铺和外部 Agent':'V0.36.0 · 免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
-document.querySelector('#preview-reset').onclick=()=>{if(!confirm('清空当前工作空间的目标、消息和配置？其他工作空间和完整后端不受影响。'))return;if(previewPersistent){const id=previewSession.getItem('workspaceId')||'default';localStorage.removeItem(id==='default'?previewKey:previewStorageKey('/preview/workspaces/'+id+'/platform.json'));}location.reload();};
+previewBar.textContent=previewPersistent?'V0.37.0 · 本地预览 · 数据仅存于此浏览器，未连接店铺和外部 Agent':'V0.37.0 · 免安装交互预览 · 浏览器禁止存储，本次数据刷新即清空 · 未连接真实店铺';
+document.querySelector('#preview-reset').onclick=async event=>{
+ if(!confirm('清空当前工作空间的目标、附件、消息和配置？其他工作空间和完整后端不受影响。'))return;
+ const button=event.currentTarget;
+ button.disabled=true;
+ try{
+  const workspace=previewSession.getItem('workspaceId')||'default';
+  const root=workspace==='default'?'/preview':'/preview/workspaces/'+workspace;
+  const file=root+'/platform.json';
+  let snapshot=null;
+  try{snapshot=JSON.parse(await previewFS.readFile(file));}catch{}
+  const attachments=(snapshot?.goals||[]).flatMap(goal=>goal.attachments||[]);
+  if(attachments.length){
+   const files=knowledgeMediaFiles(root+'/task-files');
+   await files.removeMany(attachments.map(item=>item.id));
+  }
+  if(previewPersistent)localStorage.removeItem(previewStorageKey(file));
+  previewMemory.delete(file);
+  location.reload();
+ }catch{
+  previewBar.textContent='清理本地预览时遇到错误，请检查浏览器的站点存储设置后刷新。';
+  button.disabled=false;
+ }
+};

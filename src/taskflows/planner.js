@@ -1,3 +1,4 @@
+import {attachmentInventory} from '../../public/task-attachment-context.js';
 import {assignFlowCapability,flowCapabilities,flowTemplates} from './catalog.js';
 import {buildGoalContract,hasTaskMaterial} from './contract.js';
 import {attachAcceptanceChecks} from './acceptance.js';
@@ -244,7 +245,7 @@ export async function proposeFlow(goal,settings,model,modelCall,templates=[],pre
   goal:contract.brief,decision:contract.decision,requirements:contract.requirements,specialists,criteria:contract.criteria,pending:contract.pending,
   unresolvedRequests:contract.unresolvedRequests,excludedCapabilities:contract.excludedCapabilities,
   scope:goal.scope,contextAvailable:{
-   attachedReferences:goal.references?.length||0,
+   attachedReferences:goal.references?.length||0,...(goal.attachments?.length?{uploadedFiles:attachmentInventory(goal.attachments)}:{}),
    taskFiles:(goal.artifacts||[]).filter(f=>f.version===goal.version&&f.status!=='superseded').slice(-12).map(f=>f.title),
    suppliedData:Object.keys(goal.skillData||{})
   },previousMethods,previousBlockers:goal.flow?.repairContext||null,

@@ -1,3 +1,4 @@
+import {attachmentEvidence,taskImageReference,withAttachmentMaterial} from '../../public/task-attachment-context.js';
 import {employeeProfileForTask,serviceQuestionFromGoal,webSkillInput} from '../../public/goal-language.js';
 import {offerPhoto,offerPhotos} from '../../public/offer-photos.js';
 import {businessBrief,decisionOrder,selectedOffer,sourcingPriority,goalSelection,comparisonSummary,offerFacts,sourcingReport,sourcingIntent,cleanOffers} from '../../public/sourcing.js';
@@ -443,6 +444,7 @@ export function createTaskflowManager({getData,transaction,inputs,enqueue,event,
  }
  async function perform(g,n){
   const d=getData();
+  const taskSkill=(id,input)=>skillCall(id,withAttachmentMaterial(id,input,g.attachments));
   const upstream=new Set();
   const visit=id=>{if(upstream.has(id))return;upstream.add(id);g.flow.nodes.find(step=>step.id===id)?.dependsOn.forEach(visit);};
   n.dependsOn.forEach(visit);
@@ -625,7 +627,8 @@ export function createTaskflowManager({getData,transaction,inputs,enqueue,event,
    const recall=await knowledge.search({...g.knowledge,...(workspaceOnly?{mode:'bm25'}:{}),query:g.text,sku:''});let web=null,notice='';
    const plannedResearch=g.flow.nodes.some(step=>step.capability==='research.compare');
    if(!workspaceOnly&&!plannedResearch&&integrations.view().search.ready){try{web=await integrations.query({query:g.text.slice(0,500),site:/1688/.test(brief)?'1688.com':''});}catch{notice='外部搜索失败，本次只保留可读取的本地来源。';}}
-   const discovery=collectResearch(getData(),g),body=[...recall.hits.map(h=>`[${h.id}] ${h.title} v${h.revision}\n${h.text}\n来源：${h.source}`),...(web?.results||[]).map((r,i)=>`[web-${i}] ${r.title}\n${r.snippet}\n${r.url}（未核验网页线索）`),...discovery.candidates.map(c=>`${c.name||c.sku}：${c.price} 元；${c.source}`)].join('\n\n');
+   const attached=attachmentEvidence(g.attachments).map(row=>row.source+'\n'+row.text);
+   const discovery=collectResearch(getData(),g),body=[...attached,...recall.hits.map(h=>`[${h.id}] ${h.title} v${h.revision}\n${h.text}\n来源：${h.source}`),...(web?.results||[]).map((r,i)=>`[web-${i}] ${r.title}\n${r.snippet}\n${r.url}（未核验网页线索）`),...discovery.candidates.map(c=>`${c.name||c.sku}：${c.price} 元；${c.source}`)].join('\n\n');
    return {...output('证据收集记录',body||'当前没有匹配资料；后续任务必须明确缺口，不能虚构事实。'),recall,discovery,notice,web};
   }
   const {pick,criteria,rows,winner}=goalSelection(g,steps);
@@ -644,6 +647,9 @@ export function createTaskflowManager({getData,transaction,inputs,enqueue,event,
   if(discovery?.status==='found'&&!input.candidates)input.candidates=discovery.candidates;
   if(n.capability==='analysis.reason'){
    const {crmAudience,...goalData}=g.skillData||{};
+   if(g.attachments?.length&&g.attachments.every(file=>file.kind==='image')&&/图片|照片|这张图|这幅图|图中|图里|截图/.test(brief)&&!g.flow.nodes.some(step=>step.capability.startsWith('image.'))){
+    return blocked('已收到图片附件。本任务的分析步骤只读取文字资料，尚未识别图片内容。可提供需要分析的文字或数据。');
+   }
    if(!g.flow.model&&!researchStep){
     const hasSource=observations.some(file=>file.body&&!file.body.startsWith('当前没有匹配资料'))||Object.keys(goalData).length>0;
     const reason=hasSource?'本轮已有资料，但尚未形成分析结论。':'本轮没有找到可引用的业务资料，尚不能给出有依据的结论。';
@@ -651,7 +657,7 @@ export function createTaskflowManager({getData,transaction,inputs,enqueue,event,
    }
    const webSources=steps.filter(step=>step.status==='succeeded'&&step.capability==='web.search')
     .flatMap(step=>d.runs.find(run=>run.id===step.runId)?.result?.metrics?.sources||[]);
-   return analyzeDecision({goal:g,node:n,input:{...input,goalData,webSources},modelCall,knowledge,integrations,skillCall,toolCatalog:flowCapabilities});
+   return analyzeDecision({goal:g,node:n,input:{...input,goalData,webSources},modelCall,knowledge,integrations,skillCall:taskSkill,toolCatalog:flowCapabilities});
   }
   if(n.capability.startsWith('copy.')&&ranked.length){
    const prep=prepareContent(d,{...g,text:brief,research:discovery},{rankedCandidates});
@@ -667,12 +673,18 @@ export function createTaskflowManager({getData,transaction,inputs,enqueue,event,
    const priority=sourcingPriority(criteria,brief);
    const reasons={repeat:'优先比较供应商披露的回购率。',supply:'优先核对履约记录与发货时效。',minimumOrder:'按同单位起订量核对小批量试单条件。',periodMargin:'按可核对的同期间销量与估算单件收益比较期间贡献。',unitMargin:'按售价、同规格采购成本与可核对的费用比较估算单件收益。',quote:'按 1688 展示报价与可见回购率初筛。'};
    const selectionReason=(researchStep&&comparisonSummary(rows,winner,criteria))||reasons[priority];
-   const prep=prepareContent(d,{...g,text:brief,research:discovery},ranked.length?{rankedCandidates,selectionReason}:undefined);if(prep.missing.length)return blocked(prep.missing.join('；'));
+   const referenceRequest=n.clarification?.answer||[brief,...(n.imageEdits||[])].join('，');
+   const choice=taskImageReference(g.attachments,referenceRequest,pick?winner.sku:'');
+   if(choice.issue)return {...blocked(choice.issue),question:choice.issue};
+   const scoped=choice.file&&!ranked.length&&!g.scope?.product?{...g,scope:{...g.scope,product:'附件所示商品'}}:g;
+   const prep=prepareContent(d,{...scoped,text:brief,research:discovery},ranked.length?{rankedCandidates,selectionReason}:undefined);
+   if(choice.file)prep.attachmentId=choice.file.id;
+   if(prep.missing.length)return blocked(prep.missing.join('；'));
    if(/找|搜|选品/.test(brief)&&!prep.candidate)return blocked('尚未找到有来源的候选商品记录，不能虚构在售商品图片。');
    if(pick&&prep.candidate?.sku!==winner.sku)return blocked('图片素材与所选 SKU 不一致，请核对本轮商品。');
    const config=images.view().config;if(!config.enabled||!config.credentialConfigured)return {...blocked('图片服务未就绪，请在 AI基础能力配置连接图片模型。'),preparation:prep};
    const listing=ranked.length&&/上架|淘宝|天猫/.test(brief)&&!/概念图|概念稿/.test(brief);
-   if(pick&&!prep.referenceId&&(listing||n.requireReference||prep.offerPhoto)){
+   if(pick&&!prep.attachmentId&&!prep.referenceId&&(listing||n.requireReference||prep.offerPhoto)){
     const sku=prep.candidate?.sku;
     let saved=[pick.downloadedPhoto,n.preparation?.downloadedPhoto].find(file=>file&&file.sku===sku);
     const chosen=ranked.find(row=>row.sku===sku);
@@ -697,7 +709,7 @@ export function createTaskflowManager({getData,transaction,inputs,enqueue,event,
     }
     prep.offerPhoto=saved.url;prep.downloadedPhoto=saved;
    }
-   const j=await images.create({editNotes:n.imageEdits,requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+brief].filter(Boolean).join('\n').slice(0,2400),mode:prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
+   const j=await images.create({editNotes:n.imageEdits,requestId:n.imageRetryId||'flow-image-'+g.id+'-'+g.version+'-'+n.id,goalId:g.id,outputKind:kind,description:[n.objective,'商品：'+prep.productName,prep.candidate?'商品来源：'+prep.candidate.source:'','渠道：'+prep.channel,'来源事实：'+prep.facts.join('；'),prep.boundary,'用户画面要求：'+brief].filter(Boolean).join('\n').slice(0,2400),mode:prep.attachmentId||prep.referenceId||prep.offerPhoto?'reference':'concept',referenceId:prep.referenceId,size:kind==='main'?'1024x1024':'1024x1536',confirmed:true},{preparation:prep});
    return {status:'waiting_external',summary:'图片请求已提交，等待真实图片结果',imageJobId:j.id,preparation:prep,artifacts:[]};
   }
   if(n.capability==='content.review'){
@@ -728,12 +740,15 @@ export function createTaskflowManager({getData,transaction,inputs,enqueue,event,
    const delivered=observations.filter(a=>!evidenceIds.has(a.taskId));
    const analysisIds=new Set(steps.filter(step=>step.capability==='analysis.reason').map(step=>step.id));
    const sections=delivered.map(a=>a.imageJobId?a.title:a.title+'\n'+a.body.trim().slice(0,analysisIds.has(a.taskId)?3500:300));
+   if(/附件|图片|照片/.test(brief)&&g.attachments?.some(file=>file.kind==='image')&&steps.some(n=>['document.outline','table.profile'].includes(n.capability))&&!steps.some(n=>n.capability.startsWith('image.'))){
+    sections.push('图片附件已保留原件，本次只分析了文档和表格中的可读内容。');
+   }
    const summary=(sections.length?'本次交付如下。\n\n'+sections.join('\n\n'):'本次可交付的依据如下。\n\n'+observations.map(a=>a.body.trim().slice(0,300)).join('\n\n'))+notes;
    const evidence=observations.map(a=>'## '+a.title+'\n'+a.body+'\n来源：'+a.evidence).join('\n\n');
    return {...output('目标交付汇总',summary+'\n\n'+evidence),report:{text:summary,artifactIds:delivered.map(a=>a.id),imageIds:delivered.filter(a=>a.imageJobId).map(a=>a.id)}};
   }
   if(n.capabilityProposal){return {status:'needs_capability',summary:'新能力已提出，尚未完成隔离实现与验证；不会直接运行模型生成的代码。',artifacts:[{title:'新能力设计：'+n.capability,body:[n.capabilityProposal.description,n.capabilityProposal.implementation,'验证要求：'+n.capabilityProposal.tests].join('\n\n'),evidence:'总控提出的能力设计，尚未实现或执行'}]};}
-  return skillCall(n.capability,n.candidates?{...input,candidates:n.candidates}:input);
+  return taskSkill(n.capability,n.candidates?{...input,candidates:n.candidates}:input);
  }
  // A matching image can remain succeeded while its unchanged SKU is being
  // rechecked. Its consumers still have to wait for that upstream investigation.

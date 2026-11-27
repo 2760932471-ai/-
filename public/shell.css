@@ -215,3 +215,45 @@ main:not(.conversation-page) .global-filters .active {
 .history-open:hover {text-decoration:underline;text-underline-offset:3px}
 .history-open svg {flex:none;width:13px}
 .chat-queue:empty {display:none}
+
+/* Files selected before a task is created, and the saved originals in its materials. */
+.attachment-picker { min-width: 0; margin-top: 8px; border-radius: 9px; }
+.attachment-picker.is-dragging { outline: 2px dashed var(--shell-blue); outline-offset: 3px; background: var(--tint); }
+.attachment-picker-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.attachment-picker-bar small { color: var(--shell-muted); font-size: 12px; }
+.attach-files-button, .attachment-download, .message-attachments {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px;
+  border: 0; border-radius: 7px; padding: 6px 9px; background: transparent; color: var(--shell-blue); font-size: 13px;
+}
+.attach-files-button { color: var(--shell-ink); font-weight: 550; padding-inline: 10px; background: var(--canvas); }
+.attach-files-button:hover, .remove-task-file:hover, .attachment-download:hover, .message-attachments:hover { background: var(--tint); color: var(--shell-blue); }
+.attach-files-button svg, .attachment-download svg, .message-attachments svg { width: 16px; height: 16px; }
+.task-file-list, .task-attachment-section ul { padding: 0; list-style: none; margin: 10px 0 0; }
+.task-file-list { display: grid; gap: 6px; }
+.task-file-list li, .task-attachment-section li { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.task-file-list li { padding: 4px 5px 4px 9px; border: 1px solid var(--shell-line); border-radius: 8px; }
+.attachment-mark { display: grid; place-items: center; width: 32px; height: 32px; flex: none; overflow: hidden; border-radius: 6px; background: var(--tint); color: var(--shell-blue); }
+.attachment-mark img { width: 100%; height: 100%; object-fit: cover; }
+.attachment-mark svg { width: 17px; height: 17px; }
+.attachment-file-info { flex: 1; min-width: 0; }
+.attachment-file-info strong, .attachment-file-info small { display: block; }
+.attachment-file-info strong { font-size: 13px; font-weight: 550; overflow-wrap: anywhere; line-height: 1.5; }
+.attachment-file-info small { font-size: 12px; color: var(--shell-muted); overflow-wrap: anywhere; line-height: 1.5; }
+.remove-task-file { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border: 0; border-radius: 6px; padding: 0; color: var(--shell-muted); background: transparent; }
+.remove-task-file svg { width: 15px; height: 15px; }
+.attachment-picker-error { margin-top: 6px; font-size: 12px; color: #a43330; overflow-wrap: anywhere; }
+.attachment-picker-error:empty { display: none; }
+.task-attachment-section { margin: 0 0 22px; }
+.task-attachment-section h3 { display: flex; align-items: baseline; gap: 8px; }
+.task-attachment-section h3 span { color: var(--shell-muted); font-size: 12px; font-weight: 500; }
+.task-attachment-section ul { border: 1px solid var(--shell-line); border-radius: 10px; overflow: hidden; background: white; }
+.task-attachment-section li { padding: 8px 12px; }
+.task-attachment-section li + li { border-top: 1px solid var(--shell-line); }
+.attachment-download { flex: none; }
+.message-attachments { min-height: 32px; margin-top: 4px; color: var(--shell-muted); font-size: 12px; }
+.message-attachments svg:last-child { width: 12px; }
+@media (max-width: 600px) {
+  .attach-files-button, .attachment-download, .remove-task-file, .message-attachments { min-height: 44px; }
+  .remove-task-file { width: 44px; }
+  .task-attachment-section li { padding-inline: 8px; }
+}

@@ -1,4 +1,8 @@
-# AI数字员工协作工作台 · V0.36.0
+# AI数字员工协作工作台 · V0.37.0
+
+新建任务时，点击「添加附件」或将文件拖入输入区，可以一起提交 JPG、PNG、WebP、DOCX、PDF、TXT、Markdown、XLSX 和 CSV。比如附上周会记录和配送统计表，要求总控提炼会议决定、计算平均配送量。创建后在任务的「资料」页可以下载原件。每个任务最多选择 8 个文件，单个上限 8 MiB，合计上限 16 MiB。
+
+Word 和 Excel 在完整版和离线预览中均可提取内容。完整版使用服务器上的 `pdftotext` 读取文字型 PDF；扫描件、加密 PDF、未安装该工具及离线预览的情况会显示读取状态并保留原件。图片可用作生图参考，当前生图服务接收的单张参考图上限为 5 MiB。
 
 在「AI基础能力配置 → Skill」可以查看和试用内置技能。「网页搜索」返回标题、网址和摘要，「网页正文读取」打开公开 HTTPS 页面并保留原文出处。在任务里直接说“上网查某个主题的公开资料，然后阅读第一条网页”，总控会调用相应技能。已连接工作空间搜索服务时优先使用该服务，未配置时会尝试 Bing、DuckDuckGo 的公开搜索。搜索或读取受限时，任务会显示具体原因。该入口也提供表格概览、文档提要、售后分诊、单件保本价和库存覆盖测算。
 
@@ -22,7 +26,7 @@ V0.27 的通用分析可以针对影响决策的问题补查一轮知识库与�
 
 在任务讨论中直接发送改图意见即可沿用已选商品和参考图重新出图。知识库支持 JPG、PNG、WebP 图片（8 MB）以及 MP4、WebM 视频（32 MB），通过标题、说明和字幕检索并打开原件。
 
-[下载 V0.36.0 启动包](deliverables/ai-platform-0.36.0.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
+[下载 V0.37.0 启动包](deliverables/ai-platform-0.37.0.zip) · [账号登录与部署说明](docs/完整平台部署与真实生图.md)
 
 图片生成支持 Codex 桥接。服务端完成 `npm run setup:codex` 和 `npx --no-install codex login --device-auth` 后，用 `ENABLE_CODEX_LOCAL=1 npm start` 启动。在「AI基础能力配置 → 图片生成」选择「Codex 桥接 · ChatGPT 账户」，启用并保存。「检查 Codex 连接」读取登录状态与账户服务，不生成图片。目标任务通过原生图片工具生成，收到 PNG 后交付；模型或账户没有生图权限时会显示失败。
 
@@ -167,7 +171,7 @@ npm run pack
 npm run deploy:preview
 ```
 
-`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.36.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
+`demo`更新当前预览；`pack`需要Python3并生成`deliverables/ai-platform-0.37.0.zip`；`deploy:preview`只向gh-pages发布HTML及.nojekyll。推送成功不等于Pages站点已经构建上线。
 
 `src/workforce/`包含能力目录、Skill、员工配置、模型/API/Codex适配、执行循环与团队任务。`public/workforce.js`为员工和能力中心界面。旧版规则与模拟发布保留兼容，V0.2说明及PRD中未实现条款不能当作本版已交付能力。
 

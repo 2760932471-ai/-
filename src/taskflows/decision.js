@@ -1,3 +1,4 @@
+import {attachmentEvidence} from '../../public/task-attachment-context.js';
 import {parseBusinessCsv} from '../workforce/commerce.js';
 
 // The optional units column is the number of sale units for the ledger period.
@@ -144,7 +145,9 @@ async function compareResearch(goal,node,study,modelCall,tools){
   kind:'tool',url:record.sources[0]?.url,observedAt:record.at
   }));
  });
- facts.push(...skillFacts);
+ const docs=(goal.attachments||[]).filter(f=>f.kind==='document'&&f.text);
+ const taskFacts=attachmentEvidence(docs).map((row,i)=>({...row,id:'attachment-'+docs[i].id,kind:'attachment'}));
+ facts.push(...taskFacts,...skillFacts);
  const gaps=(study.gaps||[]).map(gap=>typeof gap==='string'?gap:gap.question||gap.query||gap.reason).filter(Boolean);
  const unavailable=gaps.slice(0,3).join('、');
  if(!facts.length&&(!goal.flow.model||!modelCall||!tools.context.tools.length)){
